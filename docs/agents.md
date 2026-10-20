@@ -139,7 +139,9 @@ tdo perspective ls | show <name> | rm <name>
 
 # Administration
 tdo init | tdo migrate [--yes] | tdo config | tdo doctor | tdo version
+tdo config set <key> <value>              # e.g. turso.url, provider
 tdo login [--provider NAME] [--database NAME] [--remove] [--show] [--yes]
+          [--no-save]
 tdo export [--csv] [--all] | tdo import <file> [--new-ids]
 ```
 
@@ -324,6 +326,7 @@ Per command:
 | `import` | `{"imported":n,"skipped":n,"perspectives_imported":n,"perspectives_skipped":n}` |
 | `version` | `{"version":"…","commit":"…","go":"…"}` |
 | `config` | the resolved configuration, with every secret redacted |
+| `config set` | `{"config_file":"/home/you/.config/todocloud/config.toml","created":false,"wrote":true,"changes":[{"key":"turso.url","value":"libsql://example.turso.io","previous":"","added":true,"changed":true}]}` |
 | any failure | `{"error":{"code":"…","message":"…"}}` |
 
 **`export` is the one exception to the task shape**: its `tasks` are the
@@ -495,8 +498,14 @@ On a terminal the prompt is not echoed; when stdin is a pipe, one line is read
 with no prompt, which is what a script or an agent uses.
 
 ```json
-{"provider":"turso","account":"turso.token","backend":"keychain","stored":true,"source":"turso-cli","database":"<name>"}
+{"provider":"turso","account":"turso.token","backend":"keychain","stored":true,"source":"turso-cli","database":"<name>","config_file":"/home/you/.config/todocloud/config.toml","config_written":true,"config_keys":["provider","turso.url"]}
 ```
+
+The three `config_*` keys describe the config file `tdo login` maintained for
+you, and are always present on the minting paths: `config_file` is the file it
+wrote (empty when it wrote none), `config_written` says whether the file
+changed, and `config_keys` names the keys that changed. They are absent from
+the `--show` and `--remove` shapes, which write no configuration.
 
 - minted by the Turso CLI: the shape above.
 - pasted on stdin: the same without `database`, with `"source":"stdin"`.
@@ -510,6 +519,42 @@ with no prompt, which is what a script or an agent uses.
 
 `tdo login` for `sqlite` is a usage error (exit 2): a local file needs no
 credential.
+
+#### What `tdo login` writes to your config file
+
+After minting a Turso token, `tdo login` writes `provider = "turso"` and the
+`[turso] url` into your config file, so there is no line to paste. It never
+writes a token: the token goes to the OS keychain, and the writer refuses a
+key named `token` (or `api_token`, `secret`, `password`, `key`) outright.
+
+It says on stderr which file it wrote and which keys changed; `--no-save`
+skips the write and prints the lines instead. **A refused or failed write is
+not a failed login**: the token is already stored, so `tdo login` warns, prints
+the lines to paste and still exits **0**, with `"config_written":false`.
+
+#### `config set`
+
+```
+tdo config set turso.url libsql://example.turso.io
+tdo config set provider turso
+```
+
+A dotted key is `table.key`; a bare key is top level. The file is edited in
+place — comments, blank lines, key order and spacing survive, and no table or
+key you did not name is touched — and replaced atomically at mode `0600` in a
+`0700` directory. It is created, with a comment header, when it does not exist.
+
+Four things are refused rather than written:
+
+- a key that holds a credential (`token`, `api_token`, `secret`, `password`,
+  `key`) — **exit 2**, pointing at `tdo login`;
+- a file inside a git repository — **exit 3**;
+- any path that is neither `~/.config/todocloud/config.toml` nor the file named
+  by `$TODOCLOUD_CONFIG`, which includes every `--config PATH` — **exit 3**;
+- a file this reader cannot parse, since rewriting it would lose it — exit 3.
+
+`tdo config` with no arguments is unchanged: it prints the resolved
+configuration and writes nothing.
 
 #### `--yes`, and the two paths that confirm
 

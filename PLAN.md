@@ -392,6 +392,7 @@ tdo perspective ls / rm <name> / show <name>
 
 # Administration (unchanged)
 tdo init / migrate / config / login / doctor / version
+tdo config set <key> <value>              # maintain the config file (§5)
 tdo export [--csv] [--all] / tdo import <file> [--new-ids]
 ```
 
@@ -507,7 +508,9 @@ Hard rules, enforced in code:
   passes request headers through a redactor before writing them.
 - **The only credential `tdo` writes is the one `tdo login` puts in the OS
   keychain.** `tdo` must never write a credential into a file it manages, and
-  never writes one to disk in plaintext. `tdo login` reads the token from stdin
+  never writes one to disk in plaintext. `tdo` does maintain the config file
+  itself (§5.0), which is why the writer refuses a secret-shaped key in code
+  rather than by convention. `tdo login` reads the token from stdin
   only; for Turso it does not read one at all, delegating to the Turso CLI to
   mint a per-database token. See §5.1.
 - **A secret is never passed to a subprocess in `argv`** — it travels on the
@@ -517,6 +520,40 @@ Hard rules, enforced in code:
   themselves and exits 0.
 - Config files are opened with a permission check: warn loudly if a file
   containing a token is group/world-readable.
+
+### 5.0 Writing the config file
+
+`tdo` maintains the config file rather than printing lines to paste: `tdo
+config set <key> <value>` is the general command, and `tdo login` uses the same
+writer to record the `provider` and the `[turso] url` it just learned
+(`--no-save` opts out). Dotted keys map to `table.key`; a bare key is top
+level.
+
+The writer is the other half of the hand-written TOML subset — there is no TOML
+library and there must not be one (`CLAUDE.md` §3) — and it holds to four
+rules:
+
+- **It edits in place.** Comments, blank lines, key order, spacing and every
+  table or key it was not asked about survive byte for byte. Setting an
+  existing key replaces its value; a new key joins its table; a missing table
+  is appended. A file the reader cannot parse is refused, not rewritten.
+- **It writes atomically**, through a temporary file in the same directory
+  renamed over the target, at mode 0600 in a 0700 directory whatever the
+  umask — the same treatment the store gives the database.
+- **It refuses exactly where the reader refuses a token**: anywhere inside a
+  git repository, and any path that is neither the XDG config file nor
+  `$TODOCLOUD_CONFIG` (so `--config PATH` never names a file tdo writes).
+  Unlike the reader it has no fallback to the process's home directory: an
+  environment that names none is a refusal, so nothing can reach a real config
+  file from a stripped environment.
+- **It never writes a credential.** A key named `token`, or any other name on
+  the reader's secret-shaped list, is refused inside the writer so that a
+  future caller cannot reach disk with one. `tdo config set turso.token …` is
+  exit 2 pointing at `tdo login`.
+
+A write is never silent: the file and the keys that changed are named on
+stderr (`tdo login`) or on stdout (`tdo config set`), and `tdo config` with no
+arguments still only reads.
 
 ### 5.1 `tdo login`
 
@@ -541,7 +578,10 @@ pipe, one line is read with no prompt, which is what a script or an agent uses.
   the token is narrower than one a user would create by hand. The database comes
   from `--database`, else from the configured Turso URL, else from
   `turso db list` when it holds exactly one database; otherwise exit 2 asking
-  for `--database`. `turso` installed but not logged in is exit 3
+  for `--database`. The `provider` and the URL are then written to the config
+  file (§5.0) and the write is reported on stderr; a refused or failed write
+  is **not** a failed login — the token is already stored, so it warns, prints
+  the lines to paste and exits 0. `turso` installed but not logged in is exit 3
   (`turso auth login`). `turso` missing prints install instructions and falls
   back to stdin, exit 0. A minted token that cannot be stored is **discarded
   rather than printed**, with instructions to mint one by hand, exit 0.

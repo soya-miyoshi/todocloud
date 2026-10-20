@@ -30,7 +30,8 @@ the database you configured. Specifically:
   the keychain binary or to a provider's CLI, the token travels on stdin.
 - `tdo` writes a credential to the OS keychain when you run `tdo login`, and
   nowhere else. It never writes a credential into a file it manages, and never
-  writes one to disk in plaintext.
+  writes one to disk in plaintext. This holds even though `tdo` now maintains
+  your config file — see *What `tdo` writes into your config file* below.
 - `tdo` never prints credentials. Tokens are held in a type whose string,
   formatting and JSON representations are `[REDACTED]`; this applies to
   `--debug` output as well. `tdo config` shows the resolved configuration with
@@ -58,6 +59,40 @@ The supported spelling is exactly `token`; any other secret-shaped key
 A refused token produces a loud warning on **stderr** naming the file, the line
 and what to do instead — never the value. A config file that holds no token
 produces no warning at all, whatever its mode or location.
+
+### What `tdo` writes into your config file
+
+`tdo config set <key> <value>` and `tdo login` write to the config file. What
+goes in it is only ever non-secret configuration:
+
+- **What is written**: `provider`, `[turso] url`, `[sqlite] path`, the D1
+  account and database ids — the keys you could paste in by hand. A database
+  URL is not a credential.
+- **What is never written**: any credential. The writer refuses a key named
+  `token`, `api_token`, `secret`, `password` or `key` — the reader's own list —
+  before it touches the disk, so no future code path can put a token in the
+  file by mistake. `tdo config set turso.token …` exits 2 and tells you to run
+  `tdo login`, which stores the token in the OS keychain instead.
+- **Where it is written**: `~/.config/todocloud/config.toml` or the file named
+  by `$TODOCLOUD_CONFIG`, and nowhere else — exactly the two locations a token
+  may be *read* from. A `--config PATH` is refused for writing for the same
+  reason it is refused for a token: an arbitrary path is too easily one inside
+  a repository.
+- **Never inside a git repository**: if a `.git` is found walking up from the
+  target, the write is refused. That guard is what keeps a maintained config
+  file out of a dotfiles repo that gets pushed.
+- **How it is written**: in place, so your comments, blank lines, key order and
+  spacing survive and no table or key you did not name is touched; and
+  atomically, through a temporary file in the same directory renamed over the
+  target, at mode `0600` in a `0700` directory whatever your umask — so an
+  interrupted write cannot truncate your configuration, and a file `tdo`
+  creates is never group- or world-readable. A directory that already exists is
+  tightened if it is group- or world-readable and otherwise left as you set it.
+  A file `tdo` cannot parse is refused rather than rewritten.
+- **Never silently**: `tdo login` says on stderr which file it wrote and which
+  keys changed, and `--no-save` skips the write entirely. A refused write does
+  not fail the login — the token is already in the keychain — so it warns,
+  prints the lines to paste and exits 0.
 
 ### Why a config file is allowed at all
 

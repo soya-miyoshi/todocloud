@@ -217,9 +217,17 @@ func stepNames(steps []string) []string {
 }
 
 func (a *app) configCommand() *ucli.Command {
+	set := a.configSetCommand()
+	// A subcommand is not reached by the loop in root() that fixes these two
+	// up, so it sets them itself: a bad flag here must exit 2 like everywhere
+	// else, and a value holding a comma is one value.
+	set.DisableSliceFlagSeparator = true
+	set.OnUsageError = onUsageError
+
 	return &ucli.Command{
-		Name:  "config",
-		Usage: "print the resolved configuration, with every secret redacted",
+		Name:     "config",
+		Usage:    "print the resolved configuration, with every secret redacted",
+		Commands: []*ucli.Command{set},
 		Action: a.action(func(ctx context.Context, cmd *ucli.Command) error {
 			cfg, err := a.config()
 			if err != nil {
@@ -244,6 +252,95 @@ func (a *app) configCommand() *ucli.Command {
 		}),
 	}
 }
+
+// configSetCommand writes one setting into the user's config file.
+//
+// It is the general answer to "tdo told me a line to paste": tdo maintains
+// the file itself. What it will not do is write a credential — a key named
+// `token`, or any of the other secret-shaped spellings, is refused here and
+// again inside the writer, because a token belongs in the OS keychain where
+// `tdo login` puts it.
+func (a *app) configSetCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:      "set",
+		Usage:     "set one key in your config file, leaving the rest of the file untouched",
+		ArgsUsage: "<key> <value>",
+		Description: "The key is `table.key` (`turso.url`, `sqlite.path`) or a bare top-level " +
+			"key (`provider`). The file is edited in place — comments, blank lines, key " +
+			"order and spacing survive — and replaced atomically at mode 0600. tdo writes " +
+			"only " + xdgConfigHint + " or the file named by $" + config.EnvConfig + ", never one inside a git " +
+			"repository, and never a credential.",
+		Action: a.action(func(ctx context.Context, cmd *ucli.Command) error {
+			args := cmd.Args().Slice()
+			if len(args) != 2 {
+				return usagef("config set takes exactly two arguments, a key and a value: `tdo config set turso.url libsql://example.turso.io`")
+			}
+			table, key, err := config.ParseKey(args[0])
+			if err != nil {
+				return exit.Usagef(err)
+			}
+			setting := config.Setting{Table: table, Key: key, Value: args[1]}
+
+			res, err := config.Set(config.WriteOptions{
+				Getenv:     a.env.Getenv,
+				ConfigPath: a.configPath,
+			}, setting)
+			if err != nil {
+				// A credential is the user's mistake at the command line, so
+				// it exits 2 with the command that does the right thing;
+				// everything else the writer refuses is a configuration
+				// problem, exit 3.
+				if errors.Is(err, config.ErrSecretKey) {
+					return exit.Usagef(fmt.Errorf("%w; run `tdo login` instead", err))
+				}
+				return exit.Configf(err)
+			}
+
+			if a.out.JSON {
+				return a.out.Emit(configSetJSON(res))
+			}
+			for _, c := range res.Changes {
+				switch {
+				case !c.Changed:
+					a.out.Printf("%s already set to %q in %s\n", c.Name, c.Value, res.Path)
+				case c.Added:
+					a.out.Printf("set %s = %q in %s (added)\n", c.Name, c.Value, res.Path)
+				default:
+					a.out.Printf("set %s = %q in %s (was %q)\n", c.Name, c.Value, res.Path, c.Previous)
+				}
+			}
+			if res.Created {
+				a.out.Hintf("created %s; keep it out of every git repository, and keep tokens in the OS keychain with `tdo login`.", res.Path)
+			}
+			return nil
+		}),
+	}
+}
+
+// configSetJSON is the documented shape of `tdo config set --json`.
+func configSetJSON(res *config.WriteResult) map[string]any {
+	changes := make([]map[string]any, 0, len(res.Changes))
+	for _, c := range res.Changes {
+		changes = append(changes, map[string]any{
+			"key":      c.Name,
+			"value":    c.Value,
+			"previous": c.Previous,
+			"added":    c.Added,
+			"changed":  c.Changed,
+		})
+	}
+	return map[string]any{
+		"config_file": res.Path,
+		"created":     res.Created,
+		"wrote":       res.Wrote,
+		"changes":     changes,
+	}
+}
+
+// xdgConfigHint names the canonical config file in help text. config has its
+// own copy for its messages; this one is the command layer's, because the
+// command layer must not reach into that package for a string.
+const xdgConfigHint = "~/.config/todocloud/config.toml"
 
 // check is one line of `tdo doctor` output.
 type check struct {

@@ -94,14 +94,22 @@ func (a *app) loginCommand() *ucli.Command {
 				Name:  "yes",
 				Usage: "skip the confirmation prompt",
 			},
+			// What tdo learns while minting — the provider and the database
+			// URL — is written to the config file, so there is nothing to
+			// paste by hand. A URL is not a credential, and the token is
+			// never written to a file. This flag opts out.
+			&ucli.BoolFlag{
+				Name:  "no-save",
+				Usage: "do not write the provider and database URL to your config file",
+			},
 		},
 		Action: a.action(func(ctx context.Context, cmd *ucli.Command) error {
-			return a.login(ctx, cmd.Bool("remove"), cmd.Bool("show"), cmd.Bool("yes"), cmd.String("database"))
+			return a.login(ctx, cmd.Bool("remove"), cmd.Bool("show"), cmd.Bool("yes"), !cmd.Bool("no-save"), cmd.String("database"))
 		}),
 	}
 }
 
-func (a *app) login(ctx context.Context, remove, show, yes bool, database string) error {
+func (a *app) login(ctx context.Context, remove, show, yes, save bool, database string) error {
 	if remove && show {
 		return usagef("--remove and --show cannot be combined")
 	}
@@ -132,7 +140,7 @@ func (a *app) login(ctx context.Context, remove, show, yes bool, database string
 	case remove:
 		return a.loginRemove(ctx, provider, account, backend, yes)
 	default:
-		return a.loginStore(ctx, provider, account, backend, database, yes)
+		return a.loginStore(ctx, provider, account, backend, database, yes, save)
 	}
 }
 
@@ -249,12 +257,12 @@ func (a *app) loginRemove(ctx context.Context, provider config.Provider, account
 	return nil
 }
 
-func (a *app) loginStore(ctx context.Context, provider config.Provider, account, backend, database string, yes bool) error {
+func (a *app) loginStore(ctx context.Context, provider config.Provider, account, backend, database string, yes, save bool) error {
 	// Delegation first: when the provider's own CLI can mint a credential, it
 	// mints a better one than the user would create by hand.
 	if provider == config.ProviderTurso {
 		if tursoAvailable() {
-			return a.loginTurso(ctx, provider, account, backend, database, yes)
+			return a.loginTurso(ctx, provider, account, backend, database, yes, save)
 		}
 		a.out.Hintf("the turso CLI is not installed, so tdo cannot mint a token scoped to one database for you.")
 		a.out.Hintf("  install it with `brew install tursodatabase/tap/turso`, run `turso auth login`, then `tdo login` again.")
@@ -441,7 +449,7 @@ func sttyEcho(tty *os.File, mode string) error {
 // The minted token lives only in a secret.Secret between the child's stdout
 // and the keychain. If it cannot be stored it is discarded, never printed: a
 // token on a terminal is a token in a scrollback buffer.
-func (a *app) loginTurso(ctx context.Context, provider config.Provider, account, backend, database string, yes bool) error {
+func (a *app) loginTurso(ctx context.Context, provider config.Provider, account, backend, database string, yes, save bool) error {
 	loggedIn, err := tursoLoggedIn(ctx)
 	if err != nil {
 		return exit.Configf(fmt.Errorf("could not ask the turso CLI whether you are logged in: %w", err))
@@ -495,41 +503,46 @@ func (a *app) loginTurso(ctx context.Context, provider config.Provider, account,
 	}
 
 	if !keyringAvailable() {
-		return a.loginTursoUnstorable(ctx, provider, account, db)
+		return a.loginTursoUnstorable(ctx, provider, account, db, save)
 	}
 	if err := keyringSet(ctx, account, token); err != nil {
 		if errors.Is(err, keyring.ErrWriteUnsupported) || errors.Is(err, keyring.ErrUnavailable) {
-			return a.loginTursoUnstorable(ctx, provider, account, db)
+			return a.loginTursoUnstorable(ctx, provider, account, db, save)
 		}
 		return exit.Configf(err)
 	}
 
+	// The save happens before the result is rendered, because --json reports
+	// in one object both what was stored and what was written.
+	written := a.saveTursoConfig(ctx, db, save)
+
 	if a.out.JSON {
-		if err := a.out.Emit(map[string]any{
+		result := map[string]any{
 			"provider": string(provider),
 			"account":  account,
 			"backend":  backend,
 			"stored":   true,
 			"source":   providercli.SourceTursoCLI,
 			"database": db,
-		}); err != nil {
-			return err
 		}
-	} else {
-		a.out.Printf("minted a token for the turso database %q with the turso CLI and stored it in the %s\n", db, backend)
+		for k, v := range configWriteJSON(written) {
+			result[k] = v
+		}
+		return a.out.Emit(result)
 	}
-	a.tursoURLHint(ctx, db)
+	a.out.Printf("minted a token for the turso database %q with the turso CLI and stored it in the %s\n", db, backend)
 	return nil
 }
 
 // loginTursoUnstorable handles a token that was minted but cannot be stored.
 // It exits 0 — nothing failed, the user has been told what to do — and prints
 // no token: the one we minted is dropped, and the user mints their own.
-func (a *app) loginTursoUnstorable(ctx context.Context, provider config.Provider, account, db string) error {
+func (a *app) loginTursoUnstorable(ctx context.Context, provider config.Provider, account, db string, save bool) error {
 	instructions := fmt.Sprintf(
 		"turso db tokens create %s   # then export TODOCLOUD_TURSO_TOKEN with its output", db)
+	written := a.saveTursoConfig(ctx, db, save)
 	if a.out.JSON {
-		if err := a.out.Emit(map[string]any{
+		result := map[string]any{
 			"provider":     string(provider),
 			"account":      account,
 			"backend":      keyring.BackendNone,
@@ -537,30 +550,122 @@ func (a *app) loginTursoUnstorable(ctx context.Context, provider config.Provider
 			"source":       providercli.SourceTursoCLI,
 			"database":     db,
 			"instructions": instructions,
-		}); err != nil {
+		}
+		for k, v := range configWriteJSON(written) {
+			result[k] = v
+		}
+		if err := a.out.Emit(result); err != nil {
 			return err
 		}
 	} else {
 		a.out.Hintf("a token was minted but there is no keychain here to store it in, so it has been discarded rather than printed. Mint one yourself and put it in your environment:")
 		a.out.Hintf("  %s", instructions)
 	}
-	a.tursoURLHint(ctx, db)
 	return nil
 }
 
-// tursoURLHint prints the config-file line for the database. A URL is not a
-// credential, so it may be shown; it goes to stderr because it is advice, not
-// this command's result. A failure is not worth reporting: the hint is simply
-// skipped.
-func (a *app) tursoURLHint(ctx context.Context, db string) {
+// saveTursoConfig records what the mint just established — the provider, and
+// the database URL — in the user's config file, so that there is no line to
+// paste by hand. A URL is not a credential; the token is not written here or
+// anywhere else, and config.Set refuses the key outright.
+//
+// It returns what it wrote, or nil when nothing was written, and never fails
+// the command: the token is already in the keychain, so a config file that
+// cannot be written is a missing convenience, not a failed login. In that
+// case the lines to paste are printed exactly as they always were.
+func (a *app) saveTursoConfig(ctx context.Context, db string, save bool) *config.WriteResult {
 	url, err := tursoDatabaseURL(ctx, db)
 	if err != nil || url == "" {
-		a.out.Debugf("could not read the database url from the turso CLI; skipping the config hint")
-		return
+		a.out.Debugf("could not read the database url from the turso CLI; skipping the config file")
+		return nil
 	}
-	a.out.Hintf("add this to your config file:")
+
+	if !save {
+		a.out.Hintf("--no-save: not touching your config file. To configure this database by hand:")
+		a.tursoConfigLines(url)
+		return nil
+	}
+
+	res, err := config.Set(config.WriteOptions{
+		Getenv:     a.env.Getenv,
+		ConfigPath: a.configPath,
+	}, config.Setting{Key: "provider", Value: string(config.ProviderTurso)},
+		config.Setting{Table: string(config.ProviderTurso), Key: "url", Value: url})
+	if err != nil {
+		a.out.Warnf("the token is stored, but your config file was not updated: %v", err)
+		a.out.Hintf("add this to your config file, or set the environment variables, yourself:")
+		a.tursoConfigLines(url)
+		return nil
+	}
+
+	a.reportConfigWrite(res)
+	return res
+}
+
+// tursoConfigLines prints the config-file lines for a database. A URL is not
+// a credential, so it may be shown; it goes to stderr because it is advice,
+// not this command's result.
+func (a *app) tursoConfigLines(url string) {
+	a.out.Hintf("  provider = %q", string(config.ProviderTurso))
 	a.out.Hintf("  [turso]")
 	a.out.Hintf("  url = %q", url)
+}
+
+// reportConfigWrite says on stderr which file was written and which keys
+// changed. A write the user did not ask for is never silent.
+func (a *app) reportConfigWrite(res *config.WriteResult) {
+	if res == nil {
+		return
+	}
+	changed := make([]string, 0, len(res.Changes))
+	for _, c := range res.Changes {
+		if c.Changed {
+			changed = append(changed, fmt.Sprintf("%s = %q", c.Name, c.Value))
+		}
+	}
+	if len(changed) == 0 {
+		a.out.Hintf("your config file %s already said %s; nothing was changed.", res.Path, configKeyList(res))
+		return
+	}
+	verb := "updated"
+	if res.Created {
+		verb = "created"
+	}
+	a.out.Hintf("%s %s: %s", verb, res.Path, strings.Join(changed, ", "))
+}
+
+// configKeyList names the keys a write considered, for the message that says
+// nothing needed changing.
+func configKeyList(res *config.WriteResult) string {
+	names := make([]string, 0, len(res.Changes))
+	for _, c := range res.Changes {
+		names = append(names, c.Name)
+	}
+	return strings.Join(names, " and ")
+}
+
+// configWriteJSON describes a config-file write for `tdo login --json`, or
+// reports that none happened. The keys are always present, so a caller never
+// has to branch on their absence.
+func configWriteJSON(res *config.WriteResult) map[string]any {
+	out := map[string]any{
+		"config_file":    "",
+		"config_written": false,
+		"config_keys":    []string{},
+	}
+	if res == nil {
+		return out
+	}
+	keys := make([]string, 0, len(res.Changes))
+	for _, c := range res.Changes {
+		if c.Changed {
+			keys = append(keys, c.Name)
+		}
+	}
+	out["config_file"] = res.Path
+	out["config_written"] = res.Wrote
+	out["config_keys"] = keys
+	return out
 }
 
 // resolveTursoDatabase works out which database to mint for, cheapest source

@@ -158,6 +158,7 @@ choose the store, and it is the answer to "which database are my tasks in".
 
 ```sh
 tdo config                         # resolved provider, and where it came from
+tdo config set provider turso      # write it into your config file
 ```
 
 When the provider did *not* come from your config file, every command that
@@ -211,7 +212,14 @@ in `--json` output and survive `tdo export` / `tdo import` unchanged. The names
 the model uses are reserved and cannot be redefined.
 
 Configuration lives in `~/.config/todocloud/config.toml`
-(see [`config.example.toml`](config.example.toml)). A token comes from an
+(see [`config.example.toml`](config.example.toml)). `tdo` maintains that file
+for you: `tdo config set turso.url libsql://example.turso.io` edits it in
+place — your comments, blank lines, key order and spacing survive, and nothing
+you did not name is touched — and `tdo login` writes the `provider` and the
+`[turso] url` it just learned, saying on stderr what it wrote (`--no-save`
+skips it). It never writes a credential: a key named `token` is refused, as is
+any file inside a git repository or outside
+`~/.config/todocloud/config.toml` / `$TODOCLOUD_CONFIG`. A token comes from an
 environment variable, from the OS keychain where `tdo login` put it, or — as a
 last resort, and only outside every git repository, at mode 0600 — from that
 file; see [SECURITY.md](SECURITY.md). There is deliberately no `--token` flag,
