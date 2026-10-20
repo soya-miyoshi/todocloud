@@ -255,14 +255,16 @@ func (h *harness) decode(res result) map[string]any {
 	return v
 }
 
+// taskOf pulls the single task out of a response. Every command emits
+// {"tasks":[…],"count":n}, so a command that acts on one item emits a
+// one-element array and this is `.tasks[0]`.
 func (h *harness) taskOf(res result) map[string]any {
 	h.t.Helper()
-	obj := h.decode(res)
-	task, ok := obj["task"].(map[string]any)
-	if !ok {
-		h.t.Fatalf("no task object:\n%s", res.describe())
+	tasks := h.tasksOf(res)
+	if len(tasks) != 1 {
+		h.t.Fatalf("expected exactly one task:\n%s", res.describe())
 	}
-	return task
+	return tasks[0]
 }
 
 func (h *harness) tasksOf(res result) []map[string]any {
