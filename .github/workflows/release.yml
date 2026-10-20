@@ -124,14 +124,19 @@ jobs:
         with:
           name: dist
           path: dist
+      # gh does not read the tag name: v0.1.0-rc.1 would be published as the
+      # latest release and handed to everyone who follows the README unless
+      # --prerelease says otherwise. The same hyphen test gates the tap job.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ contains(github.ref_name, '-') && '--prerelease' || '' }}
         run: |
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes \
-            --verify-tag
+            --verify-tag \
+            ${PRERELEASE}
 
   # Updating the tap is a separate job because it writes to a DIFFERENT
   # repository and therefore needs a token of its own: GITHUB_TOKEN cannot

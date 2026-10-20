@@ -25,6 +25,47 @@ func awkwardTitles() map[string]string {
 	}
 }
 
+// argvSafeBytes is how much a single value may carry and still be passable
+// to the binary on every supported platform. Windows caps a whole command
+// line at 32,767 characters in CreateProcess, so a value that a Unix argv
+// takes without noticing cannot be handed to the process there at all — the
+// exec fails before main runs, which is the OS's limit and not something the
+// tool can carry. A value larger than this reaches the store through import,
+// which reads a file and has no such ceiling.
+const argvSafeBytes = 8 * 1024
+
+// largeFieldValue is the value too big for any argv: the size a real archive
+// from a note-taking habit reaches, kept out of the command line.
+func largeFieldValue() string { return strings.Repeat("payload ", 100*1024/8) } // 100 KB
+
+// seedLargeField adds one task carrying a 100 KB user-defined field, through
+// import rather than argv, and returns its title. The archive is a file, so
+// the value's size is the store's business and not the platform's.
+func (h *harness) seedLargeField(key, title string) string {
+	h.t.Helper()
+	archive := filepath.Join(h.root, "large-"+key+".json")
+	data, err := json.Marshal(map[string]any{
+		"version": 1,
+		"tasks": []map[string]any{{
+			"title":      title,
+			"created_at": "2026-01-01T00:00:00Z",
+			"updated_at": "2026-01-01T00:00:00Z",
+			key:          largeFieldValue(),
+		}},
+	})
+	if err != nil {
+		h.t.Fatalf("encoding the large-field archive: %v", err)
+	}
+	if err := os.WriteFile(archive, data, 0o600); err != nil {
+		h.t.Fatalf("writing the large-field archive: %v", err)
+	}
+	imported := h.decode(h.mustRun("import", "--json", "--new-ids", archive))
+	if imported["imported"] != float64(1) {
+		h.t.Fatalf("the large-field import reported %#v, want 1 imported", imported)
+	}
+	return title
+}
+
 // TestAwkwardTitlesSurviveTheRealProcess adds each title through the binary
 // and reads it back, so that anything argv, the parser or the driver does to
 // it would show up.
@@ -69,7 +110,7 @@ func TestAUserDefinedFieldHoldsANestedObjectAndALargeString(t *testing.T) {
 	h.mustRun("init")
 
 	nested := `{"owner":{"name":"あや","tags":["a","b"]},"count":2}`
-	big := strings.Repeat("payload ", 100*1024/8) // 100 KB
+	big := strings.Repeat("payload ", argvSafeBytes/8)
 
 	task := h.taskOf(h.mustRun("add", "--json", "Big fields",
 		"--set", "meta="+nested, "--set", "blob="+big))
@@ -90,7 +131,18 @@ func TestAUserDefinedFieldHoldsANestedObjectAndALargeString(t *testing.T) {
 		t.Errorf("the nested value came back as %T: %#v", meta, meta)
 	}
 	if got := fmt.Sprint(task["blob"]); got != big {
-		t.Errorf("the 100 KB value came back as %d bytes, want %d", len(got), len(big))
+		t.Errorf("the %d byte value came back as %d bytes, want %d", len(big), len(got), len(big))
+	}
+
+	// The same field a hundred times larger, which only import can deliver.
+	h.seedLargeField("blob", "Big fields from an archive")
+	for _, stored := range h.tasksOf(h.mustRun("ls", "--json", "--all")) {
+		if fmt.Sprint(stored["title"]) != "Big fields from an archive" {
+			continue
+		}
+		if got := fmt.Sprint(stored["blob"]); got != largeFieldValue() {
+			t.Errorf("the 100 KB value came back as %d bytes, want %d", len(got), len(largeFieldValue()))
+		}
 	}
 }
 
@@ -165,7 +217,11 @@ func TestTheWholeAwkwardSetRoundTripsThroughExportAndImport(t *testing.T) {
 	h.mustRun("add", "--json", "With fields",
 		"--due", "2026-12-24", "--priority", "3", "--tag", "家事,urgent",
 		"--notes", "line one\nline two",
-		"--set", "meta={\"k\":[1,2,3]}", "--set", "blob="+strings.Repeat("y", 100*1024))
+		"--set", "meta={\"k\":[1,2,3]}", "--set", "blob="+strings.Repeat("y", argvSafeBytes))
+	// A field far past what any argv carries belongs in the archive too: the
+	// export and the import are files at both ends, so this is the one path
+	// where its size is tested rather than the command line's.
+	h.seedLargeField("blob", "A field too big for a command line")
 
 	archive := filepath.Join(h.root, "awkward.json")
 	export := h.mustRun("export", "--json", "--all")
