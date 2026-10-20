@@ -484,6 +484,12 @@ func (a *app) storeAction(fn func(ctx context.Context, cmd *ucli.Command, st sto
 // since this is the command that can bring a second store into existence.
 func (a *app) storeCreateAction(fn func(ctx context.Context, cmd *ucli.Command, st store.Store) error) ucli.ActionFunc {
 	return a.action(func(ctx context.Context, cmd *ucli.Command) error {
+		// The guard sits ahead of withCreatedStore so that a stray argument
+		// is refused before a store is brought into being: `tdo init junk`
+		// must not leave a database behind on its way to exit 2.
+		if cmd.Args().Len() > 0 {
+			return usagef("%s takes no arguments", cmd.Name)
+		}
 		return a.withCreatedStore(ctx, func(st store.Store) error {
 			a.noticeOverriddenStore(st)
 			return fn(ctx, cmd, st)

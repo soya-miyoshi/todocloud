@@ -30,6 +30,9 @@ func (a *app) versionCommand() *ucli.Command {
 		Name:  "version",
 		Usage: "print the version of this binary",
 		Action: a.action(func(ctx context.Context, cmd *ucli.Command) error {
+			if cmd.Args().Len() > 0 {
+				return usagef("version takes no arguments")
+			}
 			if a.out.JSON {
 				return a.out.Emit(map[string]any{
 					"version": version,
@@ -107,6 +110,9 @@ func (a *app) migrateCommand() *ucli.Command {
 		// The store is opened unchecked: a version this binary refuses to
 		// read is exactly the state this command is here to fix.
 		Action: a.action(func(ctx context.Context, cmd *ucli.Command) error {
+			if cmd.Args().Len() > 0 {
+				return usagef("migrate takes no arguments")
+			}
 			return a.withUncheckedStore(ctx, func(st store.Store) error {
 				a.noticeOverriddenStore(st)
 				return a.migrate(ctx, st, cmd.Bool("yes"))
@@ -229,6 +235,9 @@ func (a *app) configCommand() *ucli.Command {
 		Usage:    "print the resolved configuration, with every secret redacted",
 		Commands: []*ucli.Command{set},
 		Action: a.action(func(ctx context.Context, cmd *ucli.Command) error {
+			if cmd.Args().Len() > 0 {
+				return usagef("config takes no arguments, or `config set <key> <value>`")
+			}
 			cfg, err := a.config()
 			if err != nil {
 				return err
@@ -354,6 +363,9 @@ func (a *app) doctorCommand() *ucli.Command {
 		Name:  "doctor",
 		Usage: "check the configuration and the provider, printing nothing secret",
 		Action: a.action(func(ctx context.Context, cmd *ucli.Command) error {
+			if cmd.Args().Len() > 0 {
+				return usagef("doctor takes no arguments")
+			}
 			checks, state := a.diagnose(ctx)
 
 			ok := true

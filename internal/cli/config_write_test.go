@@ -262,3 +262,38 @@ func TestLoginStillSucceedsWithUsableAdviceWhenTheSaveIsRefused(t *testing.T) {
 		t.Fatal("the refused save wrote the file anyway")
 	}
 }
+
+// TestAnArgumentlessCommandRefusesAStrayArgument pins the behaviour whose
+// absence cost a real debugging session: `tdo config set turso.url URL`, run
+// against an installed binary too old to have the subcommand, parsed as `tdo
+// config` with two ignored arguments — it printed the configuration, exited 0
+// and wrote nothing. The command looked like it had worked, and the next
+// three commands failed for a reason that had nothing to do with it. A
+// command that takes no arguments must say so rather than discard them.
+//
+// init is in this list because its guard has to run before the store is
+// created, not after.
+func TestAnArgumentlessCommandRefusesAStrayArgument(t *testing.T) {
+	for _, args := range [][]string{
+		{"config", "junk"},
+		{"doctor", "junk"},
+		{"version", "junk"},
+		{"init", "junk"},
+		{"migrate", "junk"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			env, path := configEnv(t, map[string]string{
+				"TODOCLOUD_PROVIDER":    "sqlite",
+				"TODOCLOUD_SQLITE_PATH": filepath.Join(t.TempDir(), "tasks.db"),
+			})
+			res := runIn(t, env, "", args...)
+			if res.code != exit.Usage {
+				t.Fatalf("exit %d, want %d\nstdout: %s\nstderr: %s",
+					res.code, exit.Usage, res.stdout, res.stderr)
+			}
+			if _, err := os.Stat(path); err == nil {
+				t.Errorf("a refused command wrote %s", path)
+			}
+		})
+	}
+}
