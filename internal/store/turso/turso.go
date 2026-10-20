@@ -536,12 +536,21 @@ func writeTags(b *batch, t *task.Task) {
 	b.add(`DELETE FROM task_tags WHERE task_id = ?`, false, t.ID)
 	const q = `INSERT INTO task_tags (task_id, tag, tag_key) VALUES (?, ?, ?)
 	           ON CONFLICT(task_id, tag_key) DO UPDATE SET tag = excluded.tag`
+	// A tag used for the first time gets a row of its own, active, so that
+	// `tdo tag ls` and `tdo tag hold` can reach it. DO NOTHING on conflict:
+	// a tag that already has a status must not be reset to active by
+	// someone tagging a task with it.
+	const row = `INSERT INTO tags (tag_key, tag, status, created_at, updated_at)
+	           VALUES (?, ?, 'active', ?, ?) ON CONFLICT(tag_key) DO NOTHING`
+	stamp := task.FormatTime(t.UpdatedAt)
 	for _, tag := range t.Tags {
 		tag = strings.TrimSpace(tag)
 		if tag == "" {
 			continue
 		}
-		b.add(q, false, t.ID, tag, strings.ToLower(tag))
+		key := strings.ToLower(tag)
+		b.add(q, false, t.ID, tag, key)
+		b.add(row, false, key, tag, stamp, stamp)
 	}
 }
 

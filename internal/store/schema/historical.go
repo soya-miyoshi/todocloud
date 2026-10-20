@@ -17,6 +17,7 @@ package schema
 // historical maps a released version to the schema it created.
 var historical = map[int][]string{
 	1: historicalV1,
+	2: historicalV2,
 }
 
 // Historical returns the DDL that created a store at version v, and whether
@@ -99,3 +100,17 @@ var historicalV1 = []string{
   value TEXT NOT NULL
 )`,
 }
+
+// historicalV2 is the schema of version 2, which promoted tags to rows that
+// carry a status. Frozen on the day version 2 shipped. Do not edit it, ever.
+var historicalV2 = append(append([]string(nil), historicalV1...),
+	`CREATE TABLE IF NOT EXISTS tags (
+  tag_key    TEXT PRIMARY KEY NOT NULL,
+  tag        TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'active',
+  note       TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS tags_status_idx ON tags(status)`,
+)

@@ -44,6 +44,17 @@ const (
 	RuleAncestorStatus     Rule = "ancestor_status"
 	RuleAncestorDeferred   Rule = "ancestor_deferred"
 	RuleAncestorSequential Rule = "ancestor_sequential"
+	// RuleTagStatus is an item carrying a tag that is on hold or dropped.
+	// Tag names the tag responsible; BlockedBy is the item's own id, since
+	// the item is where the tag is.
+	RuleTagStatus Rule = "tag_status"
+	// RuleAncestorTagStatus is the same rule applied to an ancestor: a
+	// project tagged with a context that is on hold holds back everything
+	// inside it, exactly as putting the project itself on hold would.
+	// OmniFocus does not inherit tags down the tree; this does, because the
+	// alternative is a project that is out of play with its actions still
+	// offered as next actions.
+	RuleAncestorTagStatus Rule = "ancestor_tag_status"
 )
 
 // Deferral reports whether the rule is a defer date rather than a hold, a
@@ -63,6 +74,10 @@ type Availability struct {
 	// own status or defer date, the ancestor for an ancestor rule, the
 	// sibling that is next for a sequential one.
 	BlockedBy string
+	// Tag is the tag responsible, set only by the two tag rules. It is the
+	// tag's stored spelling, which is what a user would type to lift the
+	// hold.
+	Tag string
 }
 
 // MarshalJSON writes the documented shape: a bare true, or false alongside a
@@ -71,11 +86,17 @@ func (a Availability) MarshalJSON() ([]byte, error) {
 	if a.Available {
 		return []byte("true"), nil
 	}
-	return json.Marshal(map[string]any{
+	out := map[string]any{
 		"available": false,
 		"rule":      string(a.Rule),
 		"task_id":   a.BlockedBy,
-	})
+	}
+	if a.Tag != "" {
+		// Only the tag rules set it, so a caller that switches on `rule`
+		// never has to ask whether the key might be there for another one.
+		out["tag"] = a.Tag
+	}
+	return json.Marshal(out)
 }
 
 // available is the answer for an item nothing is blocking.
@@ -83,6 +104,12 @@ var available = Availability{Available: true}
 
 func blocked(r Rule, by string) Availability {
 	return Availability{Rule: r, BlockedBy: by}
+}
+
+// blockedByTag is blocked for the two rules that name a tag as well as an
+// item.
+func blockedByTag(r Rule, by, tag string) Availability {
+	return Availability{Rule: r, BlockedBy: by, Tag: tag}
 }
 
 // Tree is a whole task list held in memory, indexed for the tree and
@@ -94,6 +121,14 @@ func blocked(r Rule, by string) Availability {
 type Tree struct {
 	byID     map[string]*task.Task
 	children map[string][]*task.Task
+	// tagStatus is the status of each tag, keyed by TagKey. A tag missing
+	// from it is active, so a tree built without SetTagStatuses — and a
+	// store that has no tag rows yet — answers exactly as it did before
+	// tags carried a status.
+	tagStatus map[string]task.Status
+	// tagSpelling keeps the spelling a tag is stored under, so a block
+	// reason names the tag the way the user wrote it.
+	tagSpelling map[string]string
 }
 
 // NewTree indexes tasks. Tombstoned tasks belong in it: they still occupy a
@@ -114,6 +149,53 @@ func NewTree(tasks []*task.Task) *Tree {
 		sortSiblings(tr.children[parent])
 	}
 	return tr
+}
+
+// SetTagStatuses tells the tree what each tag's status is, so that the two
+// tag rules of §3.3 can be answered. It is separate from NewTree because the
+// tag rows are a second query: a provider that has them passes them in, and
+// one that does not gets the same answers it always gave.
+//
+// Only the tags that are not active matter to the rules, but the whole set is
+// accepted so the caller does not have to know which those are.
+func (tr *Tree) SetTagStatuses(tags []Tag) {
+	tr.tagStatus = make(map[string]task.Status, len(tags))
+	tr.tagSpelling = make(map[string]string, len(tags))
+	for _, tag := range tags {
+		key := TagKey(tag.Name)
+		if key == "" {
+			continue
+		}
+		tr.tagStatus[key] = tag.Status
+		tr.tagSpelling[key] = tag.Name
+	}
+}
+
+// blockingTag reports the tag holding t back, if any. A task may carry
+// several tags that are not active; the one reported is the first in sorted
+// order, so the answer does not depend on the order the rows came back in.
+func (tr *Tree) blockingTag(t *task.Task) (string, bool) {
+	if len(tr.tagStatus) == 0 || len(t.Tags) == 0 {
+		return "", false
+	}
+	keys := make([]string, 0, len(t.Tags))
+	for _, tag := range t.Tags {
+		key := TagKey(tag)
+		if key == "" {
+			continue
+		}
+		if status, ok := tr.tagStatus[key]; ok && status != task.StatusActive {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return "", false
+	}
+	sort.Strings(keys)
+	if spelling := tr.tagSpelling[keys[0]]; spelling != "" {
+		return spelling, true
+	}
+	return keys[0], true
 }
 
 // sortSiblings is tree order: manual position first, then id, which is
@@ -227,6 +309,12 @@ func (tr *Tree) Availability(id string, now time.Time) Availability {
 	if deferredAt(t, at) {
 		return blocked(RuleDeferred, t.ID)
 	}
+	// A tag that is on hold or dropped is the item's own state too: it is
+	// checked after the item's status and defer date, which are more
+	// specific, and before its place among its siblings.
+	if tag, ok := tr.blockingTag(t); ok {
+		return blockedByTag(RuleTagStatus, t.ID, tag)
+	}
 	if next, ok := tr.blockingSibling(t); ok {
 		return blocked(RuleSequential, next)
 	}
@@ -242,6 +330,9 @@ func (tr *Tree) Availability(id string, now time.Time) Availability {
 			return blocked(RuleAncestorStatus, a.ID)
 		case deferredAt(a, at):
 			return blocked(RuleAncestorDeferred, a.ID)
+		}
+		if tag, ok := tr.blockingTag(a); ok {
+			return blockedByTag(RuleAncestorTagStatus, a.ID, tag)
 		}
 		if _, ok := tr.blockingSibling(a); ok {
 			// §3.3 rule 4 speaks of the item's own parent, but the rule is

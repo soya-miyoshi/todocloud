@@ -116,12 +116,18 @@ main { display: flex; flex: 1; min-height: 0; }
 
 .item {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 8px;
   padding: 6px 8px;
   border-radius: var(--radius);
   border: 1px solid transparent;
 }
+
+/* An item is two lines: the title, then where it lives and what it carries.
+   The second line is what used to compete with the title for width. */
+.item .lines { flex: 1; min-width: 0; }
+.item .line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.item .line.meta { margin-top: 2px; flex-wrap: wrap; row-gap: 2px; }
 
 .item:hover { background: var(--panel); }
 .item[aria-selected="true"] { background: var(--panel); border-color: var(--accent); }
@@ -136,6 +142,8 @@ main { display: flex; flex: 1; min-height: 0; }
 .item .due.over { color: var(--over); }
 .item .due.soon { color: var(--soon); }
 .item .tag { font-size: 11px; color: var(--dim); border: 1px solid var(--edge); border-radius: 10px; padding: 0 6px; }
+.item .tag.held { text-decoration: line-through; opacity: 0.7; }
+#sidebar button.held { color: var(--dim); text-decoration: line-through; }
 
 #empty { color: var(--dim); padding: 8px; }
 

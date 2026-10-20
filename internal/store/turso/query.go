@@ -199,26 +199,78 @@ func scanTasks(res *executeResult) ([]*task.Task, error) {
 // or §3.3 depends on them, and this is read on every listing that asks about
 // availability.
 func treeFrom(res *executeResult) (*store.Tree, error) {
+	tree, _, err := treeWithNodes(res)
+	return tree, err
+}
+
+// treeWithNodes returns the tree and the rows it was built from, so a caller
+// that has to fill the tags in does not have to walk the tree to find them.
+func treeWithNodes(res *executeResult) (*store.Tree, []*task.Task, error) {
 	all, err := scanTasks(res)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return store.NewTree(all), nil
+	return store.NewTree(all), all, nil
 }
 
 // loadTree reads every row into an in-memory tree. It is the read half of
 // every write: with no transaction to hold, the placement rules are decided
 // against this snapshot before a single statement goes up.
 func (s *Store) loadTree(ctx context.Context) (*store.Tree, error) {
-	res, err := s.exec(ctx, `SELECT `+columns+` FROM tasks`, true)
+	// The rows, the tags each task carries and the status of each tag, in
+	// one pipeline: the two tag rules of §3.3 need all three, and a tree
+	// read in three round trips would be three snapshots.
+	var b batch
+	b.add(`SELECT `+columns+` FROM tasks`, true)
+	b.add(allTagsSQL, true)
+	b.add(tagRowsSQL, true)
+	res, err := s.send(ctx, &b)
 	if err != nil {
 		return nil, s.wrap(err, "read the tree")
 	}
-	tree, err := treeFrom(res)
+	tree, nodes, err := treeWithNodes(res[0])
 	if err != nil {
 		return nil, fmt.Errorf("turso: read the tree: %w", err)
 	}
+	if err := attachTags(nodes, res[1]); err != nil {
+		return nil, fmt.Errorf("turso: read the tree: %w", err)
+	}
+	statuses, err := scanTagRows(res[2])
+	if err != nil {
+		return nil, err
+	}
+	tree.SetTagStatuses(statuses)
 	return tree, nil
+}
+
+// allTagsSQL and tagRowsSQL are the two tag reads every tree needs.
+const (
+	allTagsSQL = `SELECT task_id, tag FROM task_tags ORDER BY task_id, tag_key`
+	tagRowsSQL = `SELECT tag_key, tag, status, COALESCE(note, '') FROM tags ORDER BY tag_key`
+)
+
+// scanTagRows reads the tag table out of a result.
+func scanTagRows(res *executeResult) ([]store.Tag, error) {
+	out := make([]store.Tag, 0, len(res.Rows))
+	for _, row := range res.Rows {
+		if len(row) != 4 {
+			return nil, fmt.Errorf("turso: read tags: a row came back with %d column(s), want 4", len(row))
+		}
+		name, err := text(row[1], "tag")
+		if err != nil {
+			return nil, fmt.Errorf("turso: read tags: %w", err)
+		}
+		status, err := text(row[2], "status")
+		if err != nil {
+			return nil, fmt.Errorf("turso: read tags: %w", err)
+		}
+		note, err := text(row[3], "note")
+		if err != nil {
+			return nil, fmt.Errorf("turso: read tags: %w", err)
+		}
+		out = append(out, store.Tag{Name: name, Status: task.Status(status), Note: note})
+	}
+	return out, nil
 }
 
 // Children returns the direct children of parentID in tree order,
@@ -237,7 +289,7 @@ func (s *Store) Subtree(ctx context.Context, taskID string) ([]*task.Task, error
 
 	var b batch
 	b.add(`SELECT `+columns+` FROM tasks`, true)
-	b.add(`SELECT task_id, tag FROM task_tags ORDER BY task_id, tag_key`, true)
+	b.add(allTagsSQL, true)
 	res, err := s.send(ctx, &b)
 	if err != nil {
 		return nil, s.wrap(err, "read subtree "+taskID)
@@ -280,31 +332,173 @@ func (s *Store) Availability(ctx context.Context, now time.Time, ids ...string) 
 // Tags returns every tag in use on a live task with its count, sorted by
 // name. Tombstoned tasks are left out: a tag whose only task is in the bin is
 // not a tag the user still files things under.
-func (s *Store) Tags(ctx context.Context) ([]store.TagCount, error) {
-	const q = `SELECT MIN(tt.tag), COUNT(*) FROM task_tags tt
+func (s *Store) Tags(ctx context.Context) ([]store.Tag, error) {
+	const q = `SELECT tt.tag_key, MIN(tt.tag), COUNT(*) FROM task_tags tt
 	           JOIN tasks t ON t.id = tt.task_id
 	           WHERE t.deleted_at IS NULL
 	           GROUP BY tt.tag_key ORDER BY tt.tag_key`
-	res, err := s.exec(ctx, q, true)
+	var b batch
+	b.add(q, true)
+	b.add(tagRowsSQL, true)
+	res, err := s.send(ctx, &b)
 	if err != nil {
 		return nil, s.wrap(err, "list tags")
 	}
-	out := []store.TagCount{}
-	for _, row := range res.Rows {
-		if len(row) != 2 {
-			return nil, fmt.Errorf("turso: list tags: a row came back with %d column(s), want 2", len(row))
+	uses := make([]store.TagUse, 0, len(res[0].Rows))
+	for _, row := range res[0].Rows {
+		if len(row) != 3 {
+			return nil, fmt.Errorf("turso: list tags: a row came back with %d column(s), want 3", len(row))
 		}
-		name, err := text(row[0], "tag")
+		key, err := text(row[0], "tag_key")
 		if err != nil {
 			return nil, fmt.Errorf("turso: list tags: %w", err)
 		}
-		count, err := integer(row[1], "count")
+		name, err := text(row[1], "tag")
 		if err != nil {
 			return nil, fmt.Errorf("turso: list tags: %w", err)
 		}
-		out = append(out, store.TagCount{Name: name, Count: int(count)})
+		count, err := integer(row[2], "count")
+		if err != nil {
+			return nil, fmt.Errorf("turso: list tags: %w", err)
+		}
+		uses = append(uses, store.TagUse{Key: key, Name: name, Count: int(count)})
 	}
-	return out, nil
+	stored, err := scanTagRows(res[1])
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]store.TagRow, 0, len(stored))
+	for _, tag := range stored {
+		rows = append(rows, store.TagRow{
+			Key: store.TagKey(tag.Name), Name: tag.Name, Status: tag.Status, Note: tag.Note,
+		})
+	}
+	return store.MergeTags(uses, rows), nil
+}
+
+// SetTagStatus records a tag's status, creating the row when the tag has none
+// yet. The tag need not be in use: putting a context on hold before filing
+// anything under it is ordinary.
+func (s *Store) SetTagStatus(ctx context.Context, name string, status task.Status, now time.Time) error {
+	key := store.TagKey(name)
+	if key == "" {
+		return fmt.Errorf("turso: set tag status: a tag must have a name")
+	}
+	if !store.ValidTagStatus(status) {
+		return fmt.Errorf("turso: set tag status: %q is not a tag status", status)
+	}
+	stamp := task.FormatTime(now)
+	const q = `INSERT INTO tags (tag_key, tag, status, created_at, updated_at)
+	           VALUES (?, ?, ?, ?, ?)
+	           ON CONFLICT(tag_key) DO UPDATE SET status = excluded.status,
+	                                              updated_at = excluded.updated_at`
+	if _, err := s.exec(ctx, q, false, key, strings.TrimSpace(name), string(status), stamp, stamp); err != nil {
+		return s.wrap(err, "set the status of tag "+name)
+	}
+	return nil
+}
+
+// RenameTag moves every task from one tag to another and takes the status
+// with it when the destination has none of its own. There is no transaction
+// over the wire, so the tag is read first and the whole rewrite travels as
+// one pipeline.
+func (s *Store) RenameTag(ctx context.Context, from, to string, now time.Time) error {
+	fromKey, toKey := store.TagKey(from), store.TagKey(to)
+	if fromKey == "" || toKey == "" {
+		return fmt.Errorf("turso: rename tag: both the old and the new name must be given")
+	}
+	known, status, err := s.tagStatus(ctx, fromKey)
+	if err != nil {
+		return err
+	}
+	if !known {
+		return fmt.Errorf("turso: tag %q: %w", from, store.ErrNotFound)
+	}
+	spelling := strings.TrimSpace(to)
+	stamp := task.FormatTime(now)
+
+	var b batch
+	if fromKey == toKey {
+		// Only the spelling changes. Both tables keep a copy of it, so both
+		// are rewritten.
+		b.add(`UPDATE tags SET tag = ?, updated_at = ? WHERE tag_key = ?`, false, spelling, stamp, toKey)
+		b.add(`UPDATE task_tags SET tag = ? WHERE tag_key = ?`, false, spelling, toKey)
+	} else {
+		// A task that already carries the destination tag must not end up
+		// with two rows for it, so the collisions go first.
+		b.add(`DELETE FROM task_tags WHERE tag_key = ?
+	           AND task_id IN (SELECT task_id FROM task_tags WHERE tag_key = ?)`, false, fromKey, toKey)
+		b.add(`UPDATE task_tags SET tag = ?, tag_key = ? WHERE tag_key = ?`, false, spelling, toKey, fromKey)
+		// The destination keeps its own status when it has one: renaming
+		// into a context that is on hold must not quietly wake it up.
+		b.add(`INSERT INTO tags (tag_key, tag, status, created_at, updated_at)
+	           VALUES (?, ?, ?, ?, ?)
+	           ON CONFLICT(tag_key) DO UPDATE SET tag = excluded.tag, updated_at = excluded.updated_at`,
+			false, toKey, spelling, string(status), stamp, stamp)
+		b.add(`DELETE FROM tags WHERE tag_key = ?`, false, fromKey)
+	}
+	if _, err := s.send(ctx, &b); err != nil {
+		return s.wrap(err, "rename tag "+from)
+	}
+	return nil
+}
+
+// RemoveTag takes a tag off every task and forgets its status, returning how
+// many tasks were changed.
+func (s *Store) RemoveTag(ctx context.Context, name string) (int, error) {
+	key := store.TagKey(name)
+	if key == "" {
+		return 0, fmt.Errorf("turso: remove tag: a tag must have a name")
+	}
+	known, _, err := s.tagStatus(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+	if !known {
+		return 0, fmt.Errorf("turso: tag %q: %w", name, store.ErrNotFound)
+	}
+	var b batch
+	b.add(`DELETE FROM task_tags WHERE tag_key = ?`, false, key)
+	b.add(`DELETE FROM tags WHERE tag_key = ?`, false, key)
+	res, err := s.send(ctx, &b)
+	if err != nil {
+		return 0, s.wrap(err, "remove tag "+name)
+	}
+	return int(res[0].AffectedRowCount), nil
+}
+
+// tagStatus reports whether a tag is known — carried by a task or holding a
+// row of its own — and the status it holds, defaulting to active.
+func (s *Store) tagStatus(ctx context.Context, key string) (bool, task.Status, error) {
+	var b batch
+	b.add(`SELECT status FROM tags WHERE tag_key = ?`, true, key)
+	b.add(`SELECT COUNT(*) FROM task_tags WHERE tag_key = ?`, true, key)
+	res, err := s.send(ctx, &b)
+	if err != nil {
+		return false, "", s.wrap(err, "read tag "+key)
+	}
+	if len(res[0].Rows) > 0 {
+		if len(res[0].Rows[0]) != 1 {
+			return false, "", fmt.Errorf("turso: read tag %q: a row came back with %d column(s), want 1", key, len(res[0].Rows[0]))
+		}
+		raw, err := text(res[0].Rows[0][0], "status")
+		if err != nil {
+			return false, "", fmt.Errorf("turso: read tag %q: %w", key, err)
+		}
+		status := task.Status(raw)
+		if !store.ValidTagStatus(status) {
+			status = task.StatusActive
+		}
+		return true, status, nil
+	}
+	if len(res[1].Rows) == 0 || len(res[1].Rows[0]) != 1 {
+		return false, "", fmt.Errorf("turso: read tag %q: the count came back empty", key)
+	}
+	used, err := integer(res[1].Rows[0][0], "count")
+	if err != nil {
+		return false, "", fmt.Errorf("turso: read tag %q: %w", key, err)
+	}
+	return used > 0, task.StatusActive, nil
 }
 
 // SavePerspective stores a perspective, replacing one of the same name.

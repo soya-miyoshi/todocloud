@@ -10,7 +10,11 @@ func TestTheLadderMustReachTheVersionItClaims(t *testing.T) {
 	original := steps
 	t.Cleanup(func() { steps = original })
 
-	steps = []Step{{To: 2, Name: "a step past the current version", Statements: []string{"SELECT 1"}}}
+	// One step too many: the ladder is the shipped one plus a rung past
+	// Version, which is what bumping the ladder and forgetting the version
+	// looks like.
+	steps = append(append([]Step(nil), original...),
+		Step{To: Version + 1, Name: "a step past the current version", Statements: []string{"SELECT 1"}})
 	if err := validate(); err == nil {
 		t.Error("a ladder that climbs past Version must be refused, because one of the two was edited and the other was not")
 	}

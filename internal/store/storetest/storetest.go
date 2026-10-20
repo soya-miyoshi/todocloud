@@ -49,6 +49,7 @@ func Run(t *testing.T, newStore Factory) {
 		{"Children, Subtree and Availability answer on their own terms", testDirectAccessors},
 		{"removal is a tombstone and purging is the only real delete", testTombstones},
 		{"tags round trip and filter as a set", testTags},
+		{"a tag carries a status, and an inactive one holds its tasks back", testTagStatus},
 		{"perspectives are saved filters and nothing else", testPerspectives},
 		{"a repeating task keeps its repeat and its series", testRepetition},
 		{"the last child of a completed_by_children container completes it", testCompletedByChildren},
@@ -154,6 +155,26 @@ func (f *fixture) list(filter store.Filter) []*task.Task {
 		f.t.Fatalf("List must succeed for a valid filter, but failed: %v", err)
 	}
 	return got
+}
+
+// availability asks §3.3 about these ids at the fixture's fixed instant.
+func (f *fixture) availability(ids ...string) map[string]store.Availability {
+	f.t.Helper()
+	got, err := f.s.Availability(f.ctx, f.now, ids...)
+	if err != nil {
+		f.t.Fatalf("Availability must succeed for stored ids, but failed: %v", err)
+	}
+	return got
+}
+
+// requireAvailable states the rule and the answer it expects, so a failure
+// reads as the rule that was broken.
+func requireAvailable(t *testing.T, f *fixture, rule, taskID string, want bool) {
+	t.Helper()
+	a := f.availability(taskID)[taskID]
+	if a.Available != want {
+		t.Fatalf("%s\n  available=%v (rule %q), expected available=%v", rule, a.Available, a.Rule, want)
+	}
 }
 
 // parent returns a mutator placing a node under another.

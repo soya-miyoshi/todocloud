@@ -227,8 +227,7 @@ func TestTableEscapesControlCharacters(t *testing.T) {
 	}
 
 	// The stored value is unchanged: only the rendering escapes.
-	stored := h.decode(h.mustRun("show", "1", "--json"))
-	task, _ := stored["task"].(map[string]any)
+	task := h.taskOf(h.mustRun("show", "1", "--json"))
 	if title, _ := task["title"].(string); !strings.Contains(title, "\x1b[31m") {
 		t.Errorf("the stored title was altered: %q", title)
 	}

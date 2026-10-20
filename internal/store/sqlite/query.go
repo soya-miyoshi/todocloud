@@ -187,11 +187,29 @@ func (s *Store) attachAllTags(ctx context.Context, tasks []*task.Task) error {
 	if len(tasks) == 0 {
 		return nil
 	}
-	const q = `SELECT task_id, tag FROM task_tags ORDER BY task_id, tag_key`
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.db.QueryContext(ctx, allTagsSQL)
 	if err != nil {
 		return s.notInitialized(fmt.Errorf("sqlite: read tags: %w", err))
 	}
+	return spreadTags(rows, tasks)
+}
+
+// attachAllTagsTx is attachAllTags inside a transaction, for the tree a write
+// reads before it decides.
+func attachAllTagsTx(ctx context.Context, tx *sql.Tx, tasks []*task.Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, allTagsSQL)
+	if err != nil {
+		return fmt.Errorf("sqlite: read tags: %w", err)
+	}
+	return spreadTags(rows, tasks)
+}
+
+const allTagsSQL = `SELECT task_id, tag FROM task_tags ORDER BY task_id, tag_key`
+
+func spreadTags(rows *sql.Rows, tasks []*task.Task) error {
 	defer rows.Close()
 
 	byTask := make(map[string][]string)
@@ -211,15 +229,28 @@ func (s *Store) attachAllTags(ctx context.Context, tasks []*task.Task) error {
 	return nil
 }
 
-// loadTree reads every row into an in-memory tree. Tags are left off: no rule
-// in §3.1 or §3.3 depends on them, and this is read on every listing that
-// asks about availability.
+// loadTree reads every row into an in-memory tree, with the tags each task
+// carries and the status of each tag: the two tag rules of §3.3 need both.
+// That is two queries beyond the rows themselves, on every listing that asks
+// about availability — the cost of a tag that can hold its tasks back.
 func (s *Store) loadTree(ctx context.Context) (*store.Tree, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM tasks`)
 	if err != nil {
 		return nil, s.notInitialized(fmt.Errorf("sqlite: read tree: %w", err))
 	}
-	return treeFrom(rows)
+	tree, nodes, err := treeWithNodes(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachAllTags(ctx, nodes); err != nil {
+		return nil, err
+	}
+	statuses, err := s.tagRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tree.SetTagStatuses(statuses)
+	return tree, nil
 }
 
 func (s *Store) loadTreeTx(ctx context.Context, tx *sql.Tx) (*store.Tree, error) {
@@ -227,23 +258,77 @@ func (s *Store) loadTreeTx(ctx context.Context, tx *sql.Tx) (*store.Tree, error)
 	if err != nil {
 		return nil, s.notInitialized(fmt.Errorf("sqlite: read tree: %w", err))
 	}
-	return treeFrom(rows)
+	tree, nodes, err := treeWithNodes(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachAllTagsTx(ctx, tx, nodes); err != nil {
+		return nil, err
+	}
+	statuses, err := tagRowsTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	tree.SetTagStatuses(statuses)
+	return tree, nil
+}
+
+// tagRows reads the tag table as the tree and Tags both want it.
+func (s *Store) tagRows(ctx context.Context) ([]store.Tag, error) {
+	rows, err := s.db.QueryContext(ctx, tagRowsSQL)
+	if err != nil {
+		return nil, s.notInitialized(fmt.Errorf("sqlite: read tags: %w", err))
+	}
+	return scanTagRows(rows)
+}
+
+func tagRowsTx(ctx context.Context, tx *sql.Tx) ([]store.Tag, error) {
+	rows, err := tx.QueryContext(ctx, tagRowsSQL)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: read tags: %w", err)
+	}
+	return scanTagRows(rows)
+}
+
+const tagRowsSQL = `SELECT tag_key, tag, status, COALESCE(note, '') FROM tags ORDER BY tag_key`
+
+func scanTagRows(rows *sql.Rows) ([]store.Tag, error) {
+	defer rows.Close()
+	var out []store.Tag
+	for rows.Next() {
+		var key, name, status, note string
+		if err := rows.Scan(&key, &name, &status, &note); err != nil {
+			return nil, fmt.Errorf("sqlite: read tags: %w", err)
+		}
+		out = append(out, store.Tag{Name: name, Status: task.Status(status), Note: note})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: read tags: %w", err)
+	}
+	return out, nil
 }
 
 func treeFrom(rows *sql.Rows) (*store.Tree, error) {
+	tree, _, err := treeWithNodes(rows)
+	return tree, err
+}
+
+// treeWithNodes returns the tree and the nodes it was built from, so a caller
+// that has to fill the tags in does not have to walk the tree to find them.
+func treeWithNodes(rows *sql.Rows) (*store.Tree, []*task.Task, error) {
 	defer rows.Close()
 	var all []*task.Task
 	for rows.Next() {
 		t, err := scanTask(rows)
 		if err != nil {
-			return nil, fmt.Errorf("sqlite: read tree: %w", err)
+			return nil, nil, fmt.Errorf("sqlite: read tree: %w", err)
 		}
 		all = append(all, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite: read tree: %w", err)
+		return nil, nil, fmt.Errorf("sqlite: read tree: %w", err)
 	}
-	return store.NewTree(all), nil
+	return store.NewTree(all), all, nil
 }
 
 // Children returns the direct children of parentID in tree order. An empty
@@ -292,11 +377,13 @@ func (s *Store) Availability(ctx context.Context, now time.Time, ids ...string) 
 	return tree.AvailabilityOf(now, normalized...), nil
 }
 
-// Tags returns every tag in use on a live task with its count, sorted by
-// name. Tombstoned tasks are left out: a tag whose only task is in the bin is
-// not a tag the user still files things under.
-func (s *Store) Tags(ctx context.Context) ([]store.TagCount, error) {
-	const q = `SELECT MIN(tt.tag), COUNT(*) FROM task_tags tt
+// Tags returns every tag with its status and its count, sorted by name.
+// Tombstoned tasks are left out of the count: a tag whose only task is in the
+// bin is not a tag the user still files things under. A tag with a row of its
+// own is still listed at count zero, because a context put on hold must not
+// vanish when its last task is finished.
+func (s *Store) Tags(ctx context.Context) ([]store.Tag, error) {
+	const q = `SELECT tt.tag_key, MIN(tt.tag), COUNT(*) FROM task_tags tt
 	           JOIN tasks t ON t.id = tt.task_id
 	           WHERE t.deleted_at IS NULL
 	           GROUP BY tt.tag_key ORDER BY tt.tag_key`
@@ -304,20 +391,181 @@ func (s *Store) Tags(ctx context.Context) ([]store.TagCount, error) {
 	if err != nil {
 		return nil, s.notInitialized(fmt.Errorf("sqlite: list tags: %w", err))
 	}
-	defer rows.Close()
+	uses, err := scanTagUses(rows)
+	if err != nil {
+		return nil, err
+	}
+	stored, err := s.tagRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rowsOf := make([]store.TagRow, 0, len(stored))
+	for _, tag := range stored {
+		rowsOf = append(rowsOf, store.TagRow{
+			Key: store.TagKey(tag.Name), Name: tag.Name, Status: tag.Status, Note: tag.Note,
+		})
+	}
+	return store.MergeTags(uses, rowsOf), nil
+}
 
-	out := []store.TagCount{}
+func scanTagUses(rows *sql.Rows) ([]store.TagUse, error) {
+	defer rows.Close()
+	out := []store.TagUse{}
 	for rows.Next() {
-		var tc store.TagCount
-		if err := rows.Scan(&tc.Name, &tc.Count); err != nil {
+		var u store.TagUse
+		if err := rows.Scan(&u.Key, &u.Name, &u.Count); err != nil {
 			return nil, fmt.Errorf("sqlite: list tags: %w", err)
 		}
-		out = append(out, tc)
+		out = append(out, u)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: list tags: %w", err)
 	}
 	return out, nil
+}
+
+// SetTagStatus records a tag's status, creating the row when the tag has none
+// yet. The tag need not be in use: putting a context on hold before filing
+// anything under it is ordinary.
+func (s *Store) SetTagStatus(ctx context.Context, name string, status task.Status, now time.Time) error {
+	key := store.TagKey(name)
+	if key == "" {
+		return fmt.Errorf("sqlite: set tag status: a tag must have a name")
+	}
+	if !store.ValidTagStatus(status) {
+		return fmt.Errorf("sqlite: set tag status: %q is not a tag status", status)
+	}
+	stamp := task.FormatTime(now)
+	const q = `INSERT INTO tags (tag_key, tag, status, created_at, updated_at)
+	           VALUES (?, ?, ?, ?, ?)
+	           ON CONFLICT(tag_key) DO UPDATE SET status = excluded.status,
+	                                              updated_at = excluded.updated_at`
+	if _, err := s.db.ExecContext(ctx, q, key, strings.TrimSpace(name), string(status), stamp, stamp); err != nil {
+		return s.notInitialized(fmt.Errorf("sqlite: set the status of tag %q: %w", name, err))
+	}
+	return nil
+}
+
+// RenameTag moves every task from one tag to another and takes the status
+// with it when the destination has none of its own.
+func (s *Store) RenameTag(ctx context.Context, from, to string, now time.Time) error {
+	fromKey, toKey := store.TagKey(from), store.TagKey(to)
+	if fromKey == "" || toKey == "" {
+		return fmt.Errorf("sqlite: rename tag: both the old and the new name must be given")
+	}
+	spelling := strings.TrimSpace(to)
+	stamp := task.FormatTime(now)
+
+	tx, err := s.begin(ctx, "rename tag")
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	known, status, err := tagStatusTx(ctx, tx, fromKey)
+	if err != nil {
+		return err
+	}
+	if !known {
+		return fmt.Errorf("sqlite: tag %q: %w", from, store.ErrNotFound)
+	}
+	if fromKey == toKey {
+		// Only the spelling changes. Both tables keep a copy of it, so both
+		// are rewritten.
+		if _, err := tx.ExecContext(ctx, `UPDATE tags SET tag = ?, updated_at = ? WHERE tag_key = ?`,
+			spelling, stamp, toKey); err != nil {
+			return fmt.Errorf("sqlite: rename tag %q: %w", from, err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE task_tags SET tag = ? WHERE tag_key = ?`,
+			spelling, toKey); err != nil {
+			return fmt.Errorf("sqlite: rename tag %q: %w", from, err)
+		}
+		return s.commit(tx, "rename tag")
+	}
+
+	// A task that already carries the destination tag must not end up with
+	// two rows for it, so the collisions go first.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_tags WHERE tag_key = ?
+	           AND task_id IN (SELECT task_id FROM task_tags WHERE tag_key = ?)`,
+		fromKey, toKey); err != nil {
+		return fmt.Errorf("sqlite: rename tag %q: %w", from, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE task_tags SET tag = ?, tag_key = ? WHERE tag_key = ?`,
+		spelling, toKey, fromKey); err != nil {
+		return fmt.Errorf("sqlite: rename tag %q: %w", from, err)
+	}
+	// The destination keeps its own status when it has one: renaming into a
+	// context that is on hold must not quietly wake it up.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tags (tag_key, tag, status, created_at, updated_at)
+	           VALUES (?, ?, ?, ?, ?)
+	           ON CONFLICT(tag_key) DO UPDATE SET tag = excluded.tag, updated_at = excluded.updated_at`,
+		toKey, spelling, string(status), stamp, stamp); err != nil {
+		return fmt.Errorf("sqlite: rename tag %q: %w", from, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tags WHERE tag_key = ?`, fromKey); err != nil {
+		return fmt.Errorf("sqlite: rename tag %q: %w", from, err)
+	}
+	return s.commit(tx, "rename tag")
+}
+
+// RemoveTag takes a tag off every task and forgets its status, returning how
+// many tasks were changed.
+func (s *Store) RemoveTag(ctx context.Context, name string) (int, error) {
+	key := store.TagKey(name)
+	if key == "" {
+		return 0, fmt.Errorf("sqlite: remove tag: a tag must have a name")
+	}
+	tx, err := s.begin(ctx, "remove tag")
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	known, _, err := tagStatusTx(ctx, tx, key)
+	if err != nil {
+		return 0, err
+	}
+	if !known {
+		return 0, fmt.Errorf("sqlite: tag %q: %w", name, store.ErrNotFound)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM task_tags WHERE tag_key = ?`, key)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: remove tag %q: %w", name, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: remove tag %q: %w", name, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tags WHERE tag_key = ?`, key); err != nil {
+		return 0, fmt.Errorf("sqlite: remove tag %q: %w", name, err)
+	}
+	if err := s.commit(tx, "remove tag"); err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+// tagStatusTx reports whether a tag is known — carried by a task or holding a
+// row of its own — and the status it holds, defaulting to active.
+func tagStatusTx(ctx context.Context, tx *sql.Tx, key string) (bool, task.Status, error) {
+	var status string
+	err := tx.QueryRowContext(ctx, `SELECT status FROM tags WHERE tag_key = ?`, key).Scan(&status)
+	switch {
+	case err == nil:
+		s := task.Status(status)
+		if !store.ValidTagStatus(s) {
+			s = task.StatusActive
+		}
+		return true, s, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return false, "", fmt.Errorf("sqlite: read the status of tag %q: %w", key, err)
+	}
+	var used int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_tags WHERE tag_key = ?`, key).Scan(&used); err != nil {
+		return false, "", fmt.Errorf("sqlite: read tag %q: %w", key, err)
+	}
+	return used > 0, task.StatusActive, nil
 }
 
 // SavePerspective stores a perspective, replacing one of the same name.

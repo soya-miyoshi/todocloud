@@ -90,7 +90,11 @@ func (h *harness) add(body map[string]any) string {
 	if code != http.StatusOK {
 		h.t.Fatalf("create: status %d: %v", code, payload)
 	}
-	created, ok := payload["task"].(map[string]any)
+	tasks, ok := payload["tasks"].([]any)
+	if !ok || len(tasks) != 1 {
+		h.t.Fatalf("a write answers with one task in the listing shape: %v", payload)
+	}
+	created, ok := tasks[0].(map[string]any)
 	if !ok {
 		h.t.Fatalf("create: no task in %v", payload)
 	}

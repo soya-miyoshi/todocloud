@@ -181,14 +181,43 @@ function renderSidebar() {
       onclick: () => say(`“${p.name}” is a saved query: tdo ls --perspective ${p.name}`),
     }))));
 
-  $('#tags').replaceChildren(...(state.tags || []).map((g) =>
-    sidebarButton(g.name, g.count, view.kind === 'tag' && view.key === g.name,
-      () => select({ kind: 'tag', key: g.name }))));
+  $('#tags').replaceChildren(...(state.tags || []).map((g) => {
+    const item = sidebarButton(g.name, g.count, view.kind === 'tag' && view.key === g.name,
+      () => select({ kind: 'tag', key: g.name }));
+    if (g.status && g.status !== 'active') {
+      // A tag that is on hold or dropped holds its items back, so it reads
+      // as inactive here too; `tdo tag unhold <tag>` is how it comes back.
+      item.firstChild.classList.add('held');
+      item.firstChild.title = `${g.name} is ${g.status.replace('_', ' ')}`;
+    }
+    return item;
+  }));
 }
 
 function select(next) {
   view = next;
   render();
+}
+
+// tagChip renders one tag on an item, dimmed when the tag itself is not
+// active: a tag on hold is why the items under it are out of play, so the
+// list says so where the tag is rather than only in the block reason.
+function tagChip(name) {
+  const node = el('span', { className: 'tag', textContent: name });
+  const known = (state.tags || []).find((g) => g.name.toLowerCase() === name.toLowerCase());
+  if (known && known.status && known.status !== 'active') {
+    node.classList.add('held');
+    node.title = `the tag “${known.name}” is ${known.status.replace('_', ' ')}`;
+  }
+  return node;
+}
+
+// blockedTitle names the tag as well as the rule, since `tag_status` and
+// `ancestor_tag_status` are the two rules a reader cannot act on without
+// knowing which tag is responsible.
+function blockedTitle(blocked) {
+  if (blocked.tag) return `blocked: ${blocked.rule} (${blocked.tag})`;
+  return `blocked: ${blocked.rule}`;
 }
 
 function dueCell(t) {
@@ -222,16 +251,26 @@ function renderList() {
     };
     row.append(box);
 
-    if (t.kind !== 'task') row.append(el('span', { className: 'kind', textContent: t.kind }));
-    row.append(el('span', { className: 'title', textContent: t.title }));
-    if (t.flagged) row.append(el('span', { className: 'flag', textContent: '⚑' }));
+    // Two lines: the title on its own, then where the item lives and what
+    // it carries. On one line the title shared its width with the project
+    // path, the tags and the due date, so the thing being read was the
+    // first thing to be cut — on a phone it was often gone entirely.
+    const lines = el('div', { className: 'lines' });
+    const head = el('div', { className: 'line head' });
+    if (t.kind !== 'task') head.append(el('span', { className: 'kind', textContent: t.kind }));
+    head.append(el('span', { className: 'title', textContent: t.title }));
+    if (t.flagged) head.append(el('span', { className: 'flag', textContent: '⚑' }));
+    lines.append(head);
 
+    const meta = el('div', { className: 'line meta' });
     const where = parentsOf(t).map((p) => p.title).join(' › ');
-    if (where && view.kind !== 'project') row.append(el('span', { className: 'where', textContent: where }));
-    for (const g of t.tags || []) row.append(el('span', { className: 'tag', textContent: g }));
+    if (where && view.kind !== 'project') meta.append(el('span', { className: 'where', textContent: where }));
+    for (const g of t.tags || []) meta.append(tagChip(g));
     const due = dueCell(t);
-    if (due) row.append(due);
-    if (t.blocked_by) row.title = `blocked: ${t.blocked_by.rule}`;
+    if (due) meta.append(due);
+    if (meta.childNodes.length) lines.append(meta);
+    row.append(lines);
+    if (t.blocked_by) row.title = blockedTitle(t.blocked_by);
 
     row.onclick = () => { selected = t.id; render(); };
     return row;

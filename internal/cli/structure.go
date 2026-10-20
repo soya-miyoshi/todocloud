@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -209,15 +211,78 @@ func (a *app) containerList(ctx context.Context, cmd *ucli.Command, st store.Sto
 	return a.printTable(tasks, av, false)
 }
 
+// reshapeFlags are the flags `tdo project <ref>` applies. Everything else the
+// command declares belongs to `project add` or `project ls`, and a flag that
+// is set but not applied is a usage error rather than a silent no-op: exit 0
+// with nothing changed is the worst of the three possible answers.
+var reshapeFlags = map[string]bool{
+	"sequential":         true,
+	"parallel":           true,
+	"complete-with-last": true,
+	"review":             true,
+	"folder":             true,
+}
+
+// elsewhere says where a flag `tdo project <ref>` does not apply does work,
+// so the error is a redirection and not just a refusal.
+var elsewhere = map[string]string{
+	"needs-review": "`tdo project ls --needs-review`",
+	"status":       "`tdo project ls --status` and `tdo edit <ref> --status`",
+	"note":         "`tdo project add --note` and `tdo edit <ref> --note`",
+	"notes":        "`tdo project add --note` and `tdo edit <ref> --note`",
+	"tag":          "`tdo project add --tag` and `tdo edit <ref> --tag`",
+	"defer":        "`tdo project add --defer` and `tdo defer <ref> <date>`",
+	"due":          "`tdo project add --due` and `tdo due <ref> <date>`",
+	"flag":         "`tdo project add --flag` and `tdo flag <ref>`",
+	"estimate":     "`tdo project add --estimate` and `tdo edit <ref> --estimate`",
+	"priority":     "`tdo project add --priority` and `tdo edit <ref> --priority`",
+	"set":          "`tdo project add --set` and `tdo edit <ref> --set`",
+}
+
+// rejectUnappliedFlags refuses a command line that asks for something this
+// code path does not do. It exists because every flag the command declares is
+// visible in `--help` at every position, and a user who reads it there has no
+// way to know which ones this verb reads.
+//
+// The flags are named rather than read off the command, because a command
+// also carries the global ones — `--json` is set far more often than any of
+// these and applies everywhere. A flag added to `tdo project` and listed in
+// neither map fails TestEveryProjectFlagIsAppliedOrRedirected instead of
+// being quietly ignored here.
+func rejectUnappliedFlags(cmd *ucli.Command, applied map[string]bool) error {
+	names := make([]string, 0, len(elsewhere))
+	for name := range elsewhere {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if applied[name] || !cmd.IsSet(name) {
+			continue
+		}
+		return usagef("`tdo project <ref>` does not apply --%s; it is set by %s", name, elsewhere[name])
+	}
+	return nil
+}
+
 // projectReshape is `tdo project <ref>`: with no flags it shows the project,
-// and with them it changes the two things that decide how its children
-// behave.
+// and with them it changes how its children behave and which folder it is in.
+//
+// The reference must name a project. It used to accept a folder as well,
+// which meant `tdo project 1 --sequential` run after `tdo folder ls` made a
+// *folder* sequential and said nothing about it — the numbers are the last
+// listing's, so the same `1` means different things at different moments
+// (§3.7). A reference that resolves to the wrong kind is now an error, and a
+// change that goes through says what it resolved to.
 func (a *app) projectReshape(ctx context.Context, cmd *ucli.Command, st store.Store, ref string) error {
-	found, err := a.resolveContainer(ctx, st, ref, task.KindProject, task.KindFolder)
+	found, err := a.resolveContainer(ctx, st, ref, task.KindProject)
 	if err != nil {
 		return err
 	}
-	changed := cmd.IsSet("sequential") || cmd.IsSet("parallel") || cmd.IsSet("complete-with-last") || cmd.IsSet("review")
+	if err := rejectUnappliedFlags(cmd, reshapeFlags); err != nil {
+		return err
+	}
+	changed := cmd.IsSet("sequential") || cmd.IsSet("parallel") ||
+		cmd.IsSet("complete-with-last") || cmd.IsSet("review") || cmd.IsSet("folder")
 	if !changed {
 		return a.renderTask(ctx, st, found)
 	}
@@ -225,7 +290,27 @@ func (a *app) projectReshape(ctx context.Context, cmd *ucli.Command, st store.St
 		return usagef("--sequential and --parallel ask for opposite things")
 	}
 
+	// Both references are resolved before anything is written, so a reshape
+	// that cannot be carried out changes nothing and says nothing.
+	var folder *task.Task
+	if cmd.IsSet("folder") {
+		if folder, err = a.resolveFolder(ctx, cmd, st, found); err != nil {
+			return err
+		}
+	}
+
 	a.noticeOverriddenStore(st)
+	// A number is read off whichever listing came last, so a reshape says
+	// which item it landed on before it changes anything.
+	a.out.Hintf("%s → %s", ref, resolvedName(found))
+	if cmd.IsSet("folder") {
+		if err := a.moveToFolder(ctx, st, found, folder); err != nil {
+			return err
+		}
+		if found, err = st.Get(ctx, found.ID); err != nil {
+			return err
+		}
+	}
 	t := found.Clone()
 	switch {
 	case cmd.IsSet("sequential"):
@@ -251,4 +336,47 @@ func (a *app) projectReshape(ctx context.Context, cmd *ucli.Command, st store.St
 		return err
 	}
 	return a.renderTask(ctx, st, t)
+}
+
+// resolveFolder reads --folder: the folder a project is being filed into, or
+// nil for an empty value, which is the top level.
+func (a *app) resolveFolder(ctx context.Context, cmd *ucli.Command, st store.Store, t *task.Task) (*task.Task, error) {
+	ref := strings.TrimSpace(cmd.String("folder"))
+	if ref == "" {
+		return nil, nil
+	}
+	folder, err := a.resolveContainer(ctx, st, ref, task.KindFolder)
+	if err != nil {
+		return nil, err
+	}
+	if folder.ID == t.ID {
+		return nil, usagef("a project cannot be put inside itself")
+	}
+	return folder, nil
+}
+
+// moveToFolder is `tdo project <ref> --folder F`: filing an existing project
+// into a folder, or out to the top level with an empty --folder. It was
+// accepted and silently ignored before, which is why it is a move and not an
+// error: the flag is on the command, so it has to mean something.
+func (a *app) moveToFolder(ctx context.Context, st store.Store, t, folder *task.Task) error {
+	var parentID string
+	if folder != nil {
+		parentID = folder.ID
+	}
+	if parentID == t.ParentID {
+		return nil
+	}
+	return treeError(st.Move(ctx, t.ID, parentID, t.Position, time.Now().UTC()))
+}
+
+// resolvedName renders what a reference turned out to mean, for the line a
+// reshape prints before it writes: the kind, the title and a short id, which
+// is enough to tell two similarly numbered items apart.
+func resolvedName(t *task.Task) string {
+	short := t.ID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	return fmt.Sprintf("%s %q (%s)", t.Kind, t.Title, short)
 }

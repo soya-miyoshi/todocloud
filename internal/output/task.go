@@ -332,6 +332,10 @@ func BlockedReason(a store.Availability, by *task.Task) string {
 		return fmt.Sprintf("%s, which contains it, is deferred until later", name)
 	case store.RuleAncestorSequential:
 		return fmt.Sprintf("%s has not come up yet in its sequential list", name)
+	case store.RuleTagStatus:
+		return fmt.Sprintf("its tag %q is not active", sanitize(a.Tag))
+	case store.RuleAncestorTagStatus:
+		return fmt.Sprintf("%s, which contains it, has the tag %q, which is not active", name, sanitize(a.Tag))
 	default:
 		return string(a.Rule)
 	}

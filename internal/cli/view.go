@@ -26,8 +26,16 @@ func (a *app) availabilityOf(ctx context.Context, st store.Store, tasks []*task.
 	return taskops.AvailabilityOf(ctx, st, tasks, time.Now().UTC())
 }
 
-// renderTask writes the single-task shape, {"task":{…}}, or a human detail
-// block that says why the task is blocked when it is.
+// renderTask writes one task: the same JSON shape every other command uses,
+// {"tasks":[…],"count":n}, or a human detail block that says why the task is
+// blocked when it is.
+//
+// There used to be a second shape, {"task":{…}}, for the commands that act on
+// exactly one item. One shape costs a caller `.tasks[0]` where it knows there
+// is one item, and saves it from having to know which commands are which:
+// `jq '.task // .tasks[]'` was the only way to write a line that worked for
+// both. Nothing has been released, so the two were merged rather than kept
+// (PLAN.md §9).
 func (a *app) renderTask(ctx context.Context, st store.Store, t *task.Task) error {
 	av, err := a.availabilityOf(ctx, st, []*task.Task{t})
 	if err != nil {
@@ -35,7 +43,10 @@ func (a *app) renderTask(ctx context.Context, st store.Store, t *task.Task) erro
 	}
 	answer, asked := av[t.ID]
 	if a.out.JSON {
-		return a.out.Emit(map[string]any{"task": output.NewTaskView(t, answer, asked)})
+		return a.out.Emit(map[string]any{
+			"tasks": []output.TaskView{output.NewTaskView(t, answer, asked)},
+			"count": 1,
+		})
 	}
 	// The item holding this one back is usually somewhere else in the tree,
 	// so it is fetched by id rather than inferred from what is on screen.

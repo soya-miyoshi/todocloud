@@ -424,7 +424,10 @@ func (a *app) nextCommand() *ucli.Command {
 			}
 			if len(tasks) == 0 {
 				if a.out.JSON {
-					return a.out.Emit(map[string]any{"task": nil})
+					// The same shape as a listing that found something, so
+					// a caller reads `.tasks[0]` either way rather than
+					// having to tell null from an object.
+					return a.out.Emit(map[string]any{"tasks": []any{}, "count": 0})
 				}
 				a.out.Hintf("Nothing is available. `tdo ls --blocked` says what is in the way.")
 				return nil

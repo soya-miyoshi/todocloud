@@ -124,14 +124,19 @@ tdo due <ref...> (<when>|--clear)
 tdo edit <ref> [--title S] [--note S] [--estimate 25m] [--tag t1,t2]
        [--untag t] [--priority N] [--set k=v]... [--unset k]...
 tdo mv <ref...> (<parent-ref>|--inbox|--top)
+tdo mv <ref...> (--before <ref>|--after <ref>)   # order among siblings
 tdo rm <ref...> [--recursive] [--purge] [--yes]
 
 # Structure
 tdo project add <title...> [--folder F] [--sequential] [--review 1w] [--note S]
 tdo project ls [--status ...] [--needs-review]
 tdo project <ref> [--sequential|--parallel] [--complete-with-last] [--review 1w]
+                  [--folder F]              # F empty moves it to the top level
 tdo folder add <title...> [--folder F] [--review 1mo]
 tdo folder ls
+tdo tag ls [--status S] [--unused]
+tdo tag hold <tag...> | unhold <tag...> | drop <tag...>
+tdo tag rename <old> <new> | rm <tag...>
 
 # Repetition, review and saved queries
 tdo repeat <ref> <every>[:fixed|from_completion|defer_another]
@@ -165,6 +170,22 @@ output deliberately does not refresh it, see
 the `id` from `--json` rather than a number. **Every human listing that prints
 numbers caches them**, `ls`, `inbox`, `project ls`, `folder ls`, `review` and
 `series` alike, so the numbers on screen are always the numbers that resolve.
+
+**A reference that resolves to the wrong kind of item is an error, never a
+guess.** The same `1` means the first row of whichever listing came last, so
+`tdo folder ls` followed by `tdo project 1 --sequential` is naming a folder:
+that exits 2 saying so, rather than reshaping the folder. A reshape that does
+go through reports what the reference turned out to mean on stderr
+(`1 → project "Kitchen" (01J3ZQK8)`), which is a human convenience and never
+part of `--json` output.
+
+Likewise, **a flag a command accepts at one position but does not apply at
+another is a usage error** naming where it does work. `tdo project <ref>`
+applies `--sequential`, `--parallel`, `--complete-with-last`, `--review` and
+`--folder`; `--note`, `--tag`, `--due`, `--defer`, `--flag`, `--estimate`,
+`--status`, `--priority` and `--set` belong to `tdo project add` and
+`tdo edit`, and asking for one here exits 2 instead of exiting 0 with nothing
+changed.
 
 Ids are ULIDs generated with monotonic entropy, so ids created in one burst
 sort in creation order. Two separate `tdo add` processes that land in the same
@@ -200,8 +221,9 @@ in the JSON as a derived boolean equal to `status == "done"`.
 ### Availability, and why something is blocked
 
 An item is **available** when its status is `active`, its `defer_at` has
-passed, every ancestor is active with no future `defer_at`, and neither it nor
-any ancestor is waiting its turn inside a sequential container. A folder, a
+passed, no tag it carries is on hold or dropped, every ancestor is active with
+no future `defer_at` and no inactive tag of its own, and neither it nor any
+ancestor is waiting its turn inside a sequential container. A folder, a
 tombstoned item and an orphan are never available.
 
 `tdo ls` shows available items **by default** — a deferred task, a task in an
@@ -217,11 +239,42 @@ caller never recomputes it:
 ```
 
 `blocked_by` is `null` when `available` is true. The rules are
-`not_actionable`, `deleted`, `status`, `deferred`, `sequential`,
-`missing_parent`, `ancestor_deleted`, `ancestor_status`, `ancestor_deferred`
-and `ancestor_sequential`. The most specific one wins: an item's own deferral
-is reported before an ancestor's, and `task_id` names the item responsible —
-itself, the ancestor, or the sibling whose turn it is.
+`not_actionable`, `deleted`, `status`, `deferred`, `tag_status`, `sequential`,
+`missing_parent`, `ancestor_deleted`, `ancestor_status`, `ancestor_deferred`,
+`ancestor_tag_status` and `ancestor_sequential`. The most specific one wins:
+an item's own deferral is reported before an ancestor's, and `task_id` names
+the item responsible — itself, the ancestor, or the sibling whose turn it is.
+
+The two tag rules carry one key more, naming the tag responsible, since the
+item itself is not what has to change for the hold to lift:
+
+```json
+"available": false,
+"blocked_by": {"rule": "tag_status", "task_id": "01J3…", "tag": "errand"}
+```
+
+`tag` is present for `tag_status` and `ancestor_tag_status` and absent for
+every other rule, so a caller switching on `rule` never has to ask whether
+the key might be there.
+
+### Tags carry a status
+
+A tag is a row of its own, not just a string on a task. It has a status —
+`active`, `on_hold` or `dropped`; never `done`, since a tag is a context and
+not a piece of work — and **a tag that is not active holds back every item
+filed under it**, and everything inside such an item. That is what a context
+nobody can act in is for: the errands that cannot happen until the car is
+back are not deferred to a date and not put on hold one by one.
+
+`tdo tag ls` lists every tag with its status and how many live tasks carry it.
+A tag keeps its row, and its status, when its last task is finished: putting a
+context on hold is not undone by emptying it. `tdo add --tag` and
+`tdo edit --tag` decide which tasks carry a tag; `tdo tag` decides what the
+tag *is*.
+
+**Tags are named, never numbered.** The short numbers of a listing belong to
+the last listing of items, so `tdo tag ls` neither prints numbers nor
+disturbs the ones already cached.
 
 ### Repetition: nothing is generated while you read
 
@@ -310,12 +363,20 @@ recognise; unknown keys round-trip losslessly through `tdo export` and
 
 Per command:
 
+**Every command that emits tasks emits the same shape**,
+`{"tasks":[…],"count":n}`, including the ones that act on exactly one item:
+read `.tasks[0]` where you know there is one. There is no `{"task":{…}}`
+envelope and no `null` task.
+
 | Command | Shape |
 |---|---|
-| `add`, `show`, `edit`, `next`, `inbox process`, `repeat`, `review <ref>`, `project add`, `project <ref>`, `folder add` | `{"task":{…}}` |
-| `next` with nothing available | `{"task":null}` |
+| `add`, `show`, `edit`, `next`, `inbox process`, `repeat`, `review <ref>`, `project add`, `project <ref>`, `folder add` | `{"tasks":[…],"count":1}` |
+| `next` with nothing available | `{"tasks":[],"count":0}` |
 | `ls`, `inbox`, `project ls`, `folder ls`, `review` | `{"tasks":[…],"count":n}` |
 | `undone`, `drop`, `hold`, `unhold`, `flag`, `unflag`, `defer`, `due`, `mv`, `rm` | `{"tasks":[…],"count":n}` |
+| `tag ls` | `{"tags":[{"name":"errand","status":"on_hold","count":3}],"count":n}` |
+| `tag hold`, `tag unhold`, `tag drop`, `tag rename` | `{"tags":[…],"count":n}` — the tags as they now stand |
+| `tag rm` | `{"removed":["errand"],"count":n,"untagged":n}` — `untagged` is how many tasks lost the tag |
 | `done` | `{"tasks":[…],"count":n,"repeated":[…]}` — `repeated` holds the successors created, and is `[]` for a non-repeating item |
 | `inbox --count` | `{"count":n}` |
 | `series` | `{"series_id":"<id>","tasks":[…],"count":n}` |
@@ -323,9 +384,9 @@ Per command:
 | `perspective save`, `perspective show` | `{"perspective":{"name":"…","filter":{…},"created_at":"…","updated_at":"…"}}` |
 | `perspective ls` | `{"perspectives":[…],"count":n}` |
 | `perspective rm` | `{"removed":"<name>"}` |
-| `init` | `{"provider":"sqlite","schema_version":1,"initialized":true,"created":true}` |
-| `migrate` | `{"from":1,"to":1,"migrated":false,"backup_path":"","steps":[]}` |
-| `doctor` | `{"ok":true,"checks":[{"name":"config","ok":true,"detail":"…"}],"from":1,"to":1,"backup_path":"","steps":[]}` |
+| `init` | `{"provider":"sqlite","schema_version":2,"initialized":true,"created":true}` |
+| `migrate` | `{"from":2,"to":2,"migrated":false,"backup_path":"","steps":[]}` |
+| `doctor` | `{"ok":true,"checks":[{"name":"config","ok":true,"detail":"…"}],"from":2,"to":2,"backup_path":"","steps":[]}` |
 | `login` | see below |
 | `export` | `{"version":1,"exported_at":"…","store":"sqlite: /path/to/tasks.db","tasks":[…],"count":n,"perspectives":[…],"perspective_count":n}` |
 | `import` | `{"imported":n,"skipped":n,"perspectives_imported":n,"perspectives_skipped":n}` |
@@ -650,11 +711,11 @@ no schema change:
 
 ```sh
 tdo add "Review the contract" --set client=acme --set estimate=3 --json
-# {"task":{"id":"01J3…","kind":"task","title":"Review the contract",
+# {"count":1,"tasks":[{"id":"01J3…","kind":"task","title":"Review the contract",
 #           "status":"active","done":false,"parent_id":null,"due_at":null,
 #           "tags":[],"note":null,"priority":0,"available":true,
 #           "blocked_by":null,"next_review_at":null,
-#           "client":"acme","estimate":3, …}}
+#           "client":"acme","estimate":3, …}]}
 
 tdo ls --where client=acme --json | jq -r '.tasks[].title'
 ```

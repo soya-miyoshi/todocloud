@@ -106,7 +106,9 @@ tdo next                     # the single first action
 ```
 
 This is why putting a project on hold empties it from every list — which is the
-whole point of putting a project on hold. `--json` output carries `available`
+whole point of putting a project on hold. A **tag** can be put on hold the same
+way, and then everything filed under it steps out of the way: the errands that
+cannot happen until the car is back are a context, not a date. `--json` output carries `available`
 and, when it is false, `blocked_by` naming the rule and the item responsible,
 so nothing has to recompute it.
 
@@ -117,6 +119,10 @@ tdo defer 3 2026-11-01             # and tdo due 3 2026-11-05, tdo due 3 --clear
 tdo flag 3                         # and tdo unflag 3
 tdo edit 3 --tag home,errand --estimate 25m   # --tag replaces; --untag removes one
 tdo mv 3 7                         # reparent under ref 7; --inbox and --top also work
+tdo mv 3 --after 7                 # and --before 7: the order among its siblings
+tdo tag ls                         # every tag, its status and how many tasks carry it
+tdo tag hold errand                # a tag on hold takes its tasks out of every list
+tdo tag unhold errand              # and tdo tag drop / rename / rm
 tdo repeat 3 1w:from_completion    # fixed | from_completion | defer_another
 tdo series 3                       # every instance of one repeating item
 tdo review                         # the folders and projects due for review

@@ -355,14 +355,19 @@ func (s *Server) task(ctx context.Context, r *http.Request) (*task.Task, error) 
 	return s.st.Get(ctx, raw)
 }
 
-// taskPayload renders one task the way `--json` does, availability included.
+// taskPayload renders one task the way `--json` does, availability included
+// — and in the same envelope, `{"tasks":[…],"count":1}`, so the viewer and an
+// agent reading the CLI parse one shape rather than two.
 func (s *Server) taskPayload(ctx context.Context, t *task.Task) (any, error) {
 	av, err := taskops.AvailabilityOf(ctx, s.st, []*task.Task{t}, s.now())
 	if err != nil {
 		return nil, err
 	}
 	answer, asked := av[t.ID]
-	return map[string]any{"task": output.NewTaskView(t, answer, asked)}, nil
+	return map[string]any{
+		"tasks": []output.TaskView{output.NewTaskView(t, answer, asked)},
+		"count": 1,
+	}, nil
 }
 
 // resultPayload renders what a write changed, including the rows nobody

@@ -72,6 +72,9 @@ func testTags(t *testing.T, f *fixture) {
 		if want[c.Name] != c.Count {
 			t.Fatalf("Tags must count the live tasks carrying each tag\n  %q has count %d, expected %d", c.Name, c.Count, want[c.Name])
 		}
+		if c.Status != task.StatusActive {
+			t.Fatalf("a tag nobody has put on hold must come back active\n  %q is %q", c.Name, c.Status)
+		}
 	}
 
 	// Setting the tags of a task replaces them: `tdo edit --tag` is
@@ -84,8 +87,9 @@ func testTags(t *testing.T, f *fixture) {
 		t.Fatalf("the stored tags must be the ones last written\n  got %v, expected [garden]", got.Tags)
 	}
 
-	// A tombstoned task's tags leave the index: a tag whose only task is in
-	// the bin is not a tag the user still files things under.
+	// A tombstoned task no longer counts towards its tags. The tag itself
+	// stays listed at zero: it has a row of its own now, and a context must
+	// not disappear because the last task filed under it went in the bin.
 	deleted := f.get(both.ID)
 	at := f.now
 	deleted.DeletedAt = &at
@@ -93,11 +97,106 @@ func testTags(t *testing.T, f *fixture) {
 	counts, err = f.s.Tags(f.ctx)
 	requireNoError(t, "Tags must still work once something is tombstoned", err)
 	for _, c := range counts {
-		if strings.EqualFold(c.Name, "phone") {
-			t.Fatalf("Tags must count live tasks only\n  %q is still listed although its only task is tombstoned", c.Name)
+		if strings.EqualFold(c.Name, "phone") && c.Count != 0 {
+			t.Fatalf("Tags must count live tasks only\n  %q has count %d although its only task is tombstoned", c.Name, c.Count)
 		}
 	}
 	_ = none
+}
+
+// testTagStatus is the promoted half of a tag: a row that carries a status,
+// and the two availability rules that status drives (§3.3).
+func testTagStatus(t *testing.T, f *fixture) {
+	project := f.add(task.KindProject, "file the return")
+	call := f.add(task.KindTask, "call the accountant", func(t *task.Task) {
+		t.ParentID = project.ID
+		t.SetTags([]string{"Phone"})
+	})
+	think := f.add(task.KindTask, "decide what to claim", func(t *task.Task) {
+		t.ParentID = project.ID
+		t.SetTags([]string{"anywhere"})
+	})
+
+	requireAvailable(t, f, "a task carrying an active tag is available", call.ID, true)
+
+	// A status may be set on a tag nobody has used yet: putting a context on
+	// hold before filing anything under it is ordinary.
+	requireNoError(t, "SetTagStatus must accept a tag that is not in use yet",
+		f.s.SetTagStatus(f.ctx, "someday", task.StatusOnHold, f.now))
+	requireNoError(t, "SetTagStatus must put a tag in use on hold",
+		f.s.SetTagStatus(f.ctx, "phone", task.StatusOnHold, f.now))
+
+	av := f.availability(call.ID, think.ID)
+	if a := av[call.ID]; a.Available || a.Rule != store.RuleTagStatus {
+		t.Fatalf("a tag on hold must hold back the task carrying it, with rule %q\n  got available=%v rule=%q",
+			store.RuleTagStatus, a.Available, a.Rule)
+	}
+	if got := av[call.ID].Tag; !strings.EqualFold(got, "phone") {
+		t.Fatalf("the block must name the tag responsible, in its stored spelling\n  got %q, expected Phone", got)
+	}
+	if !av[think.ID].Available {
+		t.Fatalf("a tag on hold must hold back nothing but the items carrying it\n  %q came back blocked by %q",
+			think.Title, av[think.ID].Rule)
+	}
+
+	// The status is case-insensitive in and out, and it survives a listing.
+	tags, err := f.s.Tags(f.ctx)
+	requireNoError(t, "Tags must list the statuses it was given", err)
+	status := map[string]task.Status{}
+	for _, tag := range tags {
+		status[store.TagKey(tag.Name)] = tag.Status
+	}
+	if status["phone"] != task.StatusOnHold || status["someday"] != task.StatusOnHold {
+		t.Fatalf("Tags must report the status each tag carries\n  got %v", status)
+	}
+	if status["anywhere"] != task.StatusActive {
+		t.Fatalf("a tag nobody has touched must stay active\n  got %q", status["anywhere"])
+	}
+
+	// A tag on a container holds back what is inside it, exactly as putting
+	// the container itself on hold would.
+	stored := f.get(project.ID)
+	stored.SetTags([]string{"waiting"})
+	f.update(stored)
+	requireNoError(t, "SetTagStatus must put a container's tag on hold",
+		f.s.SetTagStatus(f.ctx, "waiting", task.StatusOnHold, f.now))
+	if a := f.availability(think.ID)[think.ID]; a.Available || a.Rule != store.RuleAncestorTagStatus {
+		t.Fatalf("a container's tag on hold must hold back its children, with rule %q\n  got available=%v rule=%q",
+			store.RuleAncestorTagStatus, a.Available, a.Rule)
+	}
+	requireNoError(t, "SetTagStatus must lift a hold again",
+		f.s.SetTagStatus(f.ctx, "waiting", task.StatusActive, f.now))
+	requireAvailable(t, f, "an active tag blocks nothing", think.ID, true)
+
+	// Renaming carries the tasks over and keeps the destination's status.
+	requireNoError(t, "RenameTag must rename a tag in use",
+		f.s.RenameTag(f.ctx, "phone", "calls", f.now))
+	requireSet(t, "renaming a tag moves the tasks filed under it",
+		f.list(store.Filter{Tags: []string{"calls"}}), "call the accountant")
+	if a := f.availability(call.ID)[call.ID]; a.Available {
+		t.Fatalf("a renamed tag must keep the status it was holding; %q became available", call.Title)
+	}
+	if _, err := f.s.RemoveTag(f.ctx, "nothing-is-filed-here"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("RemoveTag must report an unknown tag as ErrNotFound, got %v", err)
+	}
+	if err := f.s.RenameTag(f.ctx, "nothing-is-filed-here", "x", f.now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("RenameTag must report an unknown source tag as ErrNotFound, got %v", err)
+	}
+
+	// Removing a tag takes it off every task and forgets its status, which
+	// also lifts the hold it was putting on them.
+	n, err := f.s.RemoveTag(f.ctx, "calls")
+	requireNoError(t, "RemoveTag must remove a tag in use", err)
+	if n != 1 {
+		t.Fatalf("RemoveTag must report how many tasks it changed\n  got %d, expected 1", n)
+	}
+	if got := f.get(call.ID); len(got.Tags) != 0 {
+		t.Fatalf("RemoveTag must take the tag off the tasks carrying it\n  %q still has %v", got.Title, got.Tags)
+	}
+	requireAvailable(t, f, "removing the tag that was holding a task lifts the hold", call.ID, true)
+	if err := f.s.SetTagStatus(f.ctx, "phone", task.Status("done"), f.now); err == nil {
+		t.Fatal("a tag is never done: SetTagStatus must refuse the status `done`")
+	}
 }
 
 func testPerspectives(t *testing.T, f *fixture) {

@@ -32,6 +32,15 @@ tdo done <id> --json
 - **Never recompute availability.** Every task object carries `available` and,
   when it is false, `blocked_by` naming the rule and the item responsible.
   `tdo show` says the same thing in a sentence.
+- **A tag carries a status, and a tag that is not active holds back
+  everything filed under it**, including everything inside a container that
+  carries it. The rules are `tag_status` and `ancestor_tag_status`, and both
+  name the tag in `blocked_by.tag`. `tdo tag ls --json` lists the tags with
+  their statuses; tags are referenced by name, never by number.
+- **One shape for tasks.** Every command that emits tasks emits
+  `{"tasks":[…],"count":n}` — including `add`, `show`, `edit` and `next`, so
+  read `.tasks[0]` where you know there is one item. `tdo next` with nothing
+  available is `{"tasks":[],"count":0}`.
 - **Nothing generates a row while you read.** The next instance of a repeating
   item appears only from an explicit `tdo done`, which reports it under
   `repeated`. `ls`, `show`, `next`, `review` without a reference, `series` and

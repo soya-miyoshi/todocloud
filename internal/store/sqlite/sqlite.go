@@ -608,12 +608,23 @@ func writeTags(ctx context.Context, tx *sql.Tx, t *task.Task) error {
 	}
 	const q = `INSERT INTO task_tags (task_id, tag, tag_key) VALUES (?, ?, ?)
 	           ON CONFLICT(task_id, tag_key) DO UPDATE SET tag = excluded.tag`
+	// A tag used for the first time gets a row of its own, active, so that
+	// `tdo tag ls` and `tdo tag hold` can reach it. DO NOTHING on conflict:
+	// a tag that already has a status must not be reset to active by
+	// someone tagging a task with it.
+	const row = `INSERT INTO tags (tag_key, tag, status, created_at, updated_at)
+	           VALUES (?, ?, 'active', ?, ?) ON CONFLICT(tag_key) DO NOTHING`
+	stamp := task.FormatTime(t.UpdatedAt)
 	for _, tag := range t.Tags {
 		tag = strings.TrimSpace(tag)
 		if tag == "" {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, q, t.ID, tag, strings.ToLower(tag)); err != nil {
+		key := strings.ToLower(tag)
+		if _, err := tx.ExecContext(ctx, q, t.ID, tag, key); err != nil {
+			return fmt.Errorf("sqlite: tag %s: %w", t.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx, row, key, tag, stamp, stamp); err != nil {
 			return fmt.Errorf("sqlite: tag %s: %w", t.ID, err)
 		}
 	}

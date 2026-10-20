@@ -116,7 +116,7 @@ func TestOverrideNoticeStaysOffStdout(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.stdout), &envelope); err != nil {
 		t.Fatalf("stdout is not a single JSON value: %v\nstdout: %q", err, got.stdout)
 	}
-	if _, ok := envelope["task"]; !ok {
+	if _, ok := envelope["tasks"]; !ok {
 		t.Errorf("stdout = %q, want the task envelope", got.stdout)
 	}
 	if !strings.Contains(got.stderr, "writing to") {

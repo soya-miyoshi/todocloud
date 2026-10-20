@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/soya-miyoshi/todocloud/internal/store/schema"
 )
 
 // harness runs the real command tree against a temporary SQLite database and
@@ -94,15 +97,16 @@ func (h *harness) decode(res result) map[string]any {
 	return v
 }
 
-// taskOf pulls the single task out of a {"task":{…}} response.
+// taskOf pulls the single task out of a response. Every command emits
+// {"tasks":[…],"count":n}, so a command that acts on one item emits a
+// one-element array and this is `.tasks[0]`.
 func (h *harness) taskOf(res result) map[string]any {
 	h.t.Helper()
-	obj := h.decode(res)
-	t, ok := obj["task"].(map[string]any)
-	if !ok {
-		h.t.Fatalf("no task object in %q", res.stdout)
+	tasks := h.tasksOf(res)
+	if len(tasks) != 1 {
+		h.t.Fatalf("expected exactly one task in %q, got %d", res.stdout, len(tasks))
 	}
-	return t
+	return tasks[0]
 }
 
 // tasksOf pulls the list out of a {"tasks":[…]} response.
@@ -569,12 +573,12 @@ func TestAdminCommands(t *testing.T) {
 	initialized := h.decode(h.mustRun("init", "--json"))
 	// The harness already ran init, so this one found the store in place.
 	if initialized["initialized"] != true || initialized["provider"] != "sqlite" ||
-		initialized["schema_version"] != float64(1) || initialized["created"] != false {
+		initialized["schema_version"] != float64(schema.Version) || initialized["created"] != false {
 		t.Fatalf("init shape: %v", initialized)
 	}
 
 	migrated := h.decode(h.mustRun("migrate", "--json"))
-	if migrated["from"] != float64(1) || migrated["to"] != float64(1) || migrated["migrated"] != false {
+	if migrated["from"] != float64(schema.Version) || migrated["to"] != float64(schema.Version) || migrated["migrated"] != false {
 		t.Fatalf("migrate shape: %v", migrated)
 	}
 
@@ -767,13 +771,13 @@ func TestInitReportsWhetherItCreatedTheStore(t *testing.T) {
 
 	first := h.decode(h.mustRun("init", "--json"))
 	if first["created"] != true || first["initialized"] != true ||
-		first["provider"] != "sqlite" || first["schema_version"] != float64(1) {
+		first["provider"] != "sqlite" || first["schema_version"] != float64(schema.Version) {
 		t.Fatalf("first init shape: %v", first)
 	}
 
 	second := h.decode(h.mustRun("init", "--json"))
 	if second["created"] != false || second["initialized"] != true ||
-		second["provider"] != "sqlite" || second["schema_version"] != float64(1) {
+		second["provider"] != "sqlite" || second["schema_version"] != float64(schema.Version) {
 		t.Fatalf("second init shape: %v", second)
 	}
 }
@@ -784,12 +788,12 @@ func TestInitHumanOutputDistinguishesCreationFromReuse(t *testing.T) {
 	h.env["TODOCLOUD_SQLITE_PATH"] = db
 
 	created := h.mustRun("init")
-	if want := "created sqlite: " + db + " at schema version 1\n"; created.stdout != want {
+	if want := "created sqlite: " + db + " at schema version " + strconv.Itoa(schema.Version) + "\n"; created.stdout != want {
 		t.Errorf("first init stdout = %q, want %q", created.stdout, want)
 	}
 
 	again := h.mustRun("init")
-	if want := "sqlite: " + db + " is already initialized at schema version 1\n"; again.stdout != want {
+	if want := "sqlite: " + db + " is already initialized at schema version " + strconv.Itoa(schema.Version) + "\n"; again.stdout != want {
 		t.Errorf("second init stdout = %q, want %q", again.stdout, want)
 	}
 }

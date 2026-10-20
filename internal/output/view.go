@@ -34,10 +34,14 @@ type TaskView struct {
 	asked bool
 }
 
-// blockedBy is the documented object under the `blocked_by` key.
+// blockedBy is the documented object under the `blocked_by` key. Tag is
+// present only for the two rules that name one — `tag_status` and
+// `ancestor_tag_status` — so a caller switching on `rule` never has to ask
+// whether the key might be there for another.
 type blockedBy struct {
 	Rule   string `json:"rule"`
 	TaskID string `json:"task_id"`
+	Tag    string `json:"tag,omitempty"`
 }
 
 func (v TaskView) MarshalJSON() ([]byte, error) {
@@ -65,7 +69,11 @@ func (v TaskView) MarshalJSON() ([]byte, error) {
 		}
 		var blocker any
 		if !v.availability.Available {
-			blocker = blockedBy{Rule: string(v.availability.Rule), TaskID: v.availability.BlockedBy}
+			blocker = blockedBy{
+				Rule:   string(v.availability.Rule),
+				TaskID: v.availability.BlockedBy,
+				Tag:    v.availability.Tag,
+			}
 		}
 		if err := add(task.KeyBlockedBy, blocker); err != nil {
 			return nil, err

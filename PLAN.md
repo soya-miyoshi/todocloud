@@ -171,6 +171,14 @@ convenience field equal to `status == "done"`, so the common case stays one key.
 Tags are many-to-many and live in their own `task_tags` table rather than in
 the JSON map, because `tdo ls --tag home` must be a join and not a scan.
 
+A tag is also a row of its own, in a `tags` table keyed by the folded name,
+carrying a `status` of `active`, `on_hold` or `dropped` — never `done`, since
+a tag is a context and not a piece of work. A tag used by a task but with no
+row of its own is active, so the table is an addition and not a precondition;
+a tag keeps its row, and its status, when its last task is finished, because
+putting a context on hold is not undone by emptying it. What this buys is rule
+2a of §3.3: one command takes a whole context out of play.
+
 Everything else set with `--set k=v` is an ordinary member of the open map and
 is flattened alongside the required fields in `--json`, exactly as before.
 
@@ -183,7 +191,9 @@ An item is **available** when all of these hold:
 
 1. Its `status` is `active`.
 2. Its `defer_at` is absent or in the past.
-3. Every ancestor is `active`, and no ancestor has a future `defer_at`.
+2a. No tag it carries is `on_hold` or `dropped`.
+3. Every ancestor is `active`, no ancestor has a future `defer_at`, and no
+   ancestor carries a tag that is `on_hold` or `dropped`.
 4. For itself and for **every ancestor**: if that item's parent is
    `sequential`, the item is the first child of that parent which is not
    `done`, `dropped` or deleted. The rule is transitive on purpose — an action
@@ -191,10 +201,18 @@ An item is **available** when all of these hold:
    surface the children of a step nobody has started. Deleted siblings are
    skipped, so a tombstone cannot stall a sequence forever.
 
-Anything that fails 2, 3 or 4 is **blocked**; `tdo ls` shows available items by
-default and `--blocked`, `--deferred` or `--all` widen that. Rule 3 is why
-putting a project on hold silently empties it from every list, which is the
-whole point of putting a project on hold.
+Anything that fails 2, 2a, 3 or 4 is **blocked**; `tdo ls` shows available
+items by default and `--blocked`, `--deferred` or `--all` widen that. Rule 3
+is why putting a project on hold silently empties it from every list, which is
+the whole point of putting a project on hold.
+
+Rule 2a is the promoted tag, and it is a deliberate departure from OmniFocus,
+which does not inherit a tag down the tree: here a tag on a *container* holds
+back what is inside it as well, because the alternative is a project visibly
+out of play whose actions are still offered as next actions. The reported rule
+is `tag_status` or `ancestor_tag_status`, and both carry the tag's name
+alongside the item's id — the item is not what has to change for the hold to
+lift.
 
 Three cases fall outside the four rules and are never available: a **folder**
 (it is organisation, not work), a **tombstoned** item or one with a tombstoned
@@ -205,7 +223,11 @@ ancestor's.
 
 `tdo ls --json` carries `available` and, when false, `blocked_by` naming the
 rule and the ancestor responsible — a caller should not have to recompute this,
-and an agent should be able to say *why* nothing is actionable.
+and an agent should be able to say *why* nothing is actionable. Every command
+that emits tasks emits one shape, `{"tasks":[…],"count":n}`, including the
+commands that act on a single item: `{"task":{…}}` existed alongside it and
+was merged away while nothing was released (§9), because the only line that
+read both was `jq '.task // .tasks[]'`.
 
 ### 3.3a Complete with last action
 
@@ -338,6 +360,12 @@ describes.
   equal the definition in §3.3, and the shared conformance suite checks that.
 - Schema version lives in a `meta` table so `tdo migrate` can upgrade an
   existing remote database.
+- **Order is editable.** In a sequential project the position of a child is
+  the order its actions become available, so `tdo mv --before/--after` exists:
+  without it, "do this one last" means deleting the action and adding it
+  again, which loses its id, its note and its history. A placement rewrites
+  the positions of the whole sibling group, because a manual order has no
+  guaranteed gaps to insert into.
 
 ## 4. Command surface
 
@@ -370,14 +398,19 @@ tdo due <ref...> <when|--clear>
 tdo edit <ref> [--title S] [--note S] [--estimate 25m] [--priority N]
        [--tag t1,t2] [--untag t] [--set k=v]... [--unset k]...
 tdo mv <ref...> <parent-ref|--inbox|--top>   # reparent; refuses a cycle
+tdo mv <ref...> <--before REF|--after REF>   # order among siblings
 tdo rm <ref...> [--recursive] [--purge] [--yes]
 
 # Structure
 tdo project add <title...> [--folder F] [--sequential] [--review 1w]
 tdo project ls [--status ...] [--needs-review]
 tdo project <ref> [--sequential|--parallel] [--complete-with-last]
+                  [--review 1w] [--folder F]   # F empty: move to the top level
 tdo folder add <title...> [--folder F]
 tdo folder ls
+tdo tag ls [--status S] [--unused]           # every tag, its status, its count
+tdo tag hold <tag...> / unhold <tag...> / drop <tag...>
+tdo tag rename <old> <new> / rm <tag...>
 
 # Repetition and review
 tdo repeat <ref> <every>[:fixed|from_completion|defer_another]
@@ -403,6 +436,18 @@ id prefix. Where the thing being named is a **container** — `--project`,
 case-insensitively, because a container is typed far more often than it is
 listed. The title is tried last, after the number and the id prefix, so a
 number never changes meaning; two containers sharing a title is exit 6.
+
+**A reference that resolves to the wrong kind is an error.** The numbers are
+the last listing's, so the same `1` names a folder after `tdo folder ls` and a
+project after `tdo project ls`; `tdo project 1 --sequential` therefore checks
+the kind and exits 2 rather than reshaping a folder, and a reshape that does
+go through prints what it resolved to on stderr. For the same reason a flag a
+command declares but does not apply at this position is exit 2 naming where it
+does work: a silent exit 0 is the worst of the three available answers.
+
+**Tags are named, never numbered.** `tdo tag ls` prints no numbers and does
+not touch the listing cache: a second, parallel set of numbers is exactly how
+`tdo project 1` came to mean a folder, and a tag is unique by name anyway.
 
 A date is `YYYY-MM-DD` or RFC 3339. There are no relative words: `tomorrow`
 is a usage error, because a tool an agent drives should not have to agree
@@ -794,6 +839,15 @@ reshapes the core, it lands as one piece across the domain types, the store
 interface, both providers and the command layer, with a shared provider
 conformance suite (`internal/store/storetest`) as the specification both
 providers are held to.
+
+**In progress — tags as first-class, schema version 2.** A `tags` table, a
+status per tag, the two availability rules it drives (§3.3 rule 2a), and
+`tdo tag`. It lands with three corrections the same work made obvious: a
+reference that resolved to the wrong kind of item, a flag that was accepted
+and ignored by `tdo project <ref>`, and an order that could not be changed
+without recreating the item. The single-item `--json` envelope was merged into
+the listing shape at the same time, which is a breaking change and is why it
+happened now rather than later.
 
 **Dropped — Firestore.** Built, tested and green against the pre-GTD
 interface with no new dependency, then removed when the GTD model landed; the

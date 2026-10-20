@@ -193,6 +193,7 @@ func (a *app) root() *ucli.Command {
 		// Structure.
 		a.projectCommand(),
 		a.folderCommand(),
+		a.tagCommand(),
 		// Repetition, review and saved queries.
 		a.repeatCommand(),
 		a.seriesCommand(),

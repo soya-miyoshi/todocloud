@@ -22,7 +22,7 @@ import "fmt"
 //
 // Bumping it without appending the matching Step panics at init time, which
 // any test in the module will catch.
-const Version = 1
+const Version = 2
 
 // MetaKey is the key the version lives under in the meta table. Every
 // provider uses the same name, so `tdo migrate` reads the same thing
@@ -96,6 +96,21 @@ var initial = []string{
   PRIMARY KEY (task_id, tag_key)
 )`,
 	`CREATE INDEX IF NOT EXISTS task_tags_key_idx ON task_tags(tag_key)`,
+	// A tag is a row of its own, not just a string in task_tags, because it
+	// carries a status: a tag on hold or dropped holds back everything
+	// filed under it (§3.3). tag_key is the join key and matches
+	// task_tags.tag_key; tag keeps the spelling the user typed. A tag used
+	// by a task with no row here is active, so a store that lost this table
+	// still lists and filters tags.
+	`CREATE TABLE IF NOT EXISTS tags (
+  tag_key    TEXT PRIMARY KEY NOT NULL,
+  tag        TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'active',
+  note       TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS tags_status_idx ON tags(status)`,
 	// A perspective is a saved query: a name and the filter, as JSON. It
 	// stores no results and pins no ids, so it cannot go stale.
 	`CREATE TABLE IF NOT EXISTS perspectives (
@@ -163,7 +178,32 @@ type Step struct {
 // steps is the ladder. Version 1 is the initial schema and has no step: a
 // store at 0 has no schema at all and is created by Init rather than
 // migrated. New versions append here, and only here.
-var steps = []Step{}
+var steps = []Step{
+	{
+		To:   2,
+		Name: "promote tags to rows that carry a status",
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS tags (
+  tag_key    TEXT PRIMARY KEY NOT NULL,
+  tag        TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'active',
+  note       TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`,
+			`CREATE INDEX IF NOT EXISTS tags_status_idx ON tags(status)`,
+			// Every tag already in use becomes an active row. OR IGNORE
+			// rather than a plain INSERT, and a timestamp from the engine
+			// rather than from Go, so that running the step twice changes
+			// nothing the second time.
+			`INSERT OR IGNORE INTO tags (tag_key, tag, status, created_at, updated_at)
+	           SELECT tag_key, MIN(tag), 'active',
+	                  strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+	                  strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+	             FROM task_tags GROUP BY tag_key`,
+		},
+	},
+}
 
 // Steps returns the whole ladder, in order.
 func Steps() []Step { return append([]Step(nil), steps...) }

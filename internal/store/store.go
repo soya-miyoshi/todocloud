@@ -229,10 +229,102 @@ type Perspective struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// TagCount is one tag and how many live tasks carry it.
-type TagCount struct {
-	Name  string `json:"name"`
-	Count int    `json:"count"`
+// Tag is one tag: the spelling it is filed under, the status it carries and
+// how many live tasks are tagged with it.
+//
+// A tag has a status of its own because a context one cannot act in should
+// take its actions out of the way without anyone editing them one by one —
+// the "on hold" tag of §3.3a. Status is active, on_hold or dropped; done is
+// not a tag status, since a tag is never finished.
+type Tag struct {
+	Name   string      `json:"name"`
+	Status task.Status `json:"status"`
+	Count  int         `json:"count"`
+	Note   string      `json:"note,omitempty"`
+}
+
+// TagKey folds a tag to the key it is stored and compared under. Tags are
+// compared case-insensitively everywhere, because a tag is typed.
+func TagKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// TagUse is one tag as the task table knows it: the key it is filed under,
+// the spelling the first task wrote, and how many live tasks carry it.
+type TagUse struct {
+	Key   string
+	Name  string
+	Count int
+}
+
+// TagRow is one row of the tag table: a tag that has a status of its own,
+// whether or not any task carries it.
+type TagRow struct {
+	Key    string
+	Name   string
+	Status task.Status
+	Note   string
+}
+
+// MergeTags combines the tags in use with the tags that have a row, which is
+// what Tags returns. It lives here rather than in a provider because the
+// three cases are a decision and not a query: a tag in use with no row is
+// active, a tag with a row and no live task is still listed — putting a
+// context on hold must not be undone by finishing its last task — and a tag
+// with both takes its spelling from the row, since that is the one `tdo tag
+// rename` wrote.
+func MergeTags(uses []TagUse, rows []TagRow) []Tag {
+	byKey := make(map[string]Tag, len(uses)+len(rows))
+	keys := make([]string, 0, len(uses)+len(rows))
+	remember := func(key string, tag Tag) {
+		if _, seen := byKey[key]; !seen {
+			keys = append(keys, key)
+		}
+		byKey[key] = tag
+	}
+	for _, u := range uses {
+		key := TagKey(u.Key)
+		if key == "" {
+			continue
+		}
+		remember(key, Tag{Name: u.Name, Status: task.StatusActive, Count: u.Count})
+	}
+	for _, r := range rows {
+		key := TagKey(r.Key)
+		if key == "" {
+			continue
+		}
+		status := r.Status
+		if !ValidTagStatus(status) {
+			// A status written by hand into the database is not allowed to
+			// hide a tag or to block its tasks for an unnameable reason.
+			status = task.StatusActive
+		}
+		tag := Tag{Name: r.Name, Status: status, Note: r.Note}
+		if existing, ok := byKey[key]; ok {
+			tag.Count = existing.Count
+		}
+		if tag.Name == "" {
+			tag.Name = key
+		}
+		remember(key, tag)
+	}
+	sort.Strings(keys)
+	out := make([]Tag, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+// ValidTagStatus reports whether s is a status a tag may hold. A tag is a
+// context, not a piece of work, so it is never done.
+func ValidTagStatus(s task.Status) bool {
+	switch s {
+	case task.StatusActive, task.StatusOnHold, task.StatusDropped:
+		return true
+	}
+	return false
 }
 
 // Store is one place tasks live. Implementations must be safe to use from a
@@ -309,9 +401,30 @@ type Store interface {
 	// calls, and the only way to purge a container.
 	PurgeSubtree(ctx context.Context, id string) (int, error)
 
-	// Tags returns every tag in use on a live task with its count, sorted by
-	// name.
-	Tags(ctx context.Context) ([]TagCount, error)
+	// Tags returns every tag with its status and the number of live tasks
+	// carrying it, sorted by name. A tag is listed when a live task carries
+	// it or when it has a status of its own, so a tag put on hold does not
+	// disappear from the list when its last task is finished.
+	Tags(ctx context.Context) ([]Tag, error)
+
+	// SetTagStatus records the status of a tag, creating its row when the
+	// tag has none yet. The tag need not be in use: putting a context on
+	// hold before filing anything under it is ordinary. A status
+	// ValidTagStatus rejects is refused rather than stored.
+	SetTagStatus(ctx context.Context, name string, status task.Status, now time.Time) error
+
+	// RenameTag moves every task from one tag to another, keeping the
+	// status of the destination when it already exists and carrying the
+	// source's over when it does not. It returns ErrNotFound when the
+	// source tag is unknown, and refuses an empty destination. Renaming a
+	// tag to its own spelling in another case just restyles it.
+	RenameTag(ctx context.Context, from, to string, now time.Time) error
+
+	// RemoveTag takes a tag off every task that carries it and forgets its
+	// status, returning how many tasks were changed. It returns ErrNotFound
+	// when the tag is unknown. There is no tombstone: a tag is a label, and
+	// the tasks themselves are untouched apart from losing it.
+	RemoveTag(ctx context.Context, name string) (int, error)
 
 	// SavePerspective stores a perspective, replacing one of the same name.
 	// Names are compared case-insensitively, since they are typed.

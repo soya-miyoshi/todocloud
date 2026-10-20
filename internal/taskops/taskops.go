@@ -280,3 +280,87 @@ func (c *completions) collect(ctx context.Context, st store.Store, t *task.Task,
 	}
 	return nil
 }
+
+// Placement says where Reorder puts the items it moves, relative to an
+// anchor among its new siblings.
+type Placement int
+
+const (
+	// Before puts the items immediately ahead of the anchor.
+	Before Placement = iota
+	// After puts them immediately behind it.
+	After
+)
+
+// Reorder moves tasks so they sit immediately before or after anchor, among
+// anchor's siblings.
+//
+// Order is not decoration in a sequential project: the position of a child
+// *is* the order its actions become available (§3.3), so "do the scan last"
+// was until now expressed by deleting the action and adding it again. The
+// positions of the whole sibling group are rewritten in one pass, because
+// they are a manual order with no gaps guaranteed — two siblings may share a
+// position, and ties break by id, so inserting "between" them is only
+// meaningful once they have been renumbered.
+//
+// Moving an item next to an anchor in another container moves it into that
+// container too: that is what "put it after this one" means when the anchor
+// lives somewhere else, and it keeps `tdo mv --after` from being a second,
+// subtly different kind of move.
+func Reorder(ctx context.Context, st store.Store, tasks []*task.Task, anchor *task.Task, where Placement, now time.Time) (*Result, error) {
+	if len(tasks) == 0 {
+		return nil, invalidf("expected at least one item to move")
+	}
+	moving := make(map[string]bool, len(tasks))
+	for _, t := range tasks {
+		if t.ID == anchor.ID {
+			return nil, invalidf("%q cannot be placed relative to itself", anchor.Title)
+		}
+		moving[t.ID] = true
+	}
+
+	// The anchor's siblings in the order they are in now, which is the order
+	// a listing printed and the user is reading.
+	siblings, err := st.Children(ctx, anchor.ParentID)
+	if err != nil {
+		return nil, err
+	}
+	order := make([]*task.Task, 0, len(siblings)+len(tasks))
+	for _, sibling := range siblings {
+		if moving[sibling.ID] {
+			// An item already in this group is being moved within it, so it
+			// is dropped here and put back at its new place below.
+			continue
+		}
+		if sibling.ID == anchor.ID && where == Before {
+			order = append(order, tasks...)
+		}
+		order = append(order, sibling)
+		if sibling.ID == anchor.ID && where == After {
+			order = append(order, tasks...)
+		}
+	}
+
+	res := &Result{}
+	for position, t := range order {
+		if !moving[t.ID] && t.Position == position && t.ParentID == anchor.ParentID {
+			// Renumbering is a write per sibling, so the ones already in
+			// place are left alone: a reorder in a long project must not
+			// touch every row's updated_at.
+			continue
+		}
+		if err := st.Move(ctx, t.ID, anchor.ParentID, position, now); err != nil {
+			return nil, err
+		}
+	}
+	// The items the caller named, in the order they were given, read back
+	// even when none of them had to move.
+	for _, t := range tasks {
+		after, err := st.Get(ctx, t.ID)
+		if err != nil {
+			return nil, err
+		}
+		res.Tasks = append(res.Tasks, after)
+	}
+	return res, nil
+}
