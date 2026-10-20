@@ -1,0 +1,46 @@
+# gitleaks configuration. Extends the default rule set with the credential
+# shapes this project's providers use. Run via `make scan` or the pre-commit
+# hook; CI runs the same config over the full history.
+title = "todocloud"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "cloudflare-api-token"
+description = "Cloudflare API token"
+regex = '''(?i)\b[A-Za-z0-9_-]{40}\b'''
+path = '''(?i)(\.md|\.toml|\.ya?ml|\.go|\.sh|\.json)$'''
+entropy = 3.5
+[rules.allowlist]
+regexTarget = "match"
+regexes = [
+  '''TOKEN_GOES_HERE''',
+  '''0{8,}''',
+  '''(?i)example''',
+  '''(?i)placeholder''',
+  '''(?i)redacted''',
+]
+
+[[rules]]
+id = "turso-db-token"
+description = "Turso / libSQL database token (JWT)"
+regex = '''eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'''
+
+[[rules]]
+id = "gcp-service-account-key"
+description = "GCP service account private key material"
+regex = '''(?i)"private_key"\s*:\s*"-----BEGIN'''
+
+[allowlist]
+description = "Fixtures and placeholders that are intentionally fake"
+paths = [
+  '''(?i)/testdata/''',
+  '''\.gitleaks\.toml$''',
+  '''scripts/scan-secrets\.sh$''',
+]
+regexes = [
+  '''libsql://example\.turso\.io''',
+  '''TOKEN_GOES_HERE''',
+  '''00000000-0000-0000-0000-000000000000''',
+]

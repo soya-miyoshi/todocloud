@@ -1,0 +1,721 @@
+# todocloud — implementation plan
+
+A single-binary CLI (`tdo`) that keeps a todo list in **a database you own**.
+You supply your own provider credentials through the environment, the OS
+keychain or your own config file; the tool talks
+directly to that provider over HTTPS. There is no todocloud server, no hosted
+account, and no telemetry. Nothing leaves your machine except requests to the
+database endpoint you configured.
+
+- Repository: `github.com/soya-miyoshi/todocloud`
+- Binary / command: `tdo`
+- Language: Go (single static binary, no runtime dependency for users)
+- License: MIT
+- Status: v0.1 is being implemented. Nothing is tagged yet.
+
+## 1. Why this shape
+
+**No backend.** An earlier draft put a Cloudflare Worker between the CLI and the
+database. It was dropped: the whole premise is that the user already trusts the
+CLI with their own database credentials, so a relay adds a deployment step for
+the user and buys nothing. If per-user sharing or narrower tokens are ever
+needed, a Worker can be added later as an *optional* provider, not as a
+requirement.
+
+**Go, not Rust/TypeScript.** Every command is one HTTPS round trip (50–300 ms);
+parsing a few KB of JSON is noise, so language performance is not a selection
+criterion. Go was chosen for three practical reasons:
+
+1. Cross-compilation for darwin/linux/windows × amd64/arm64 needs no
+   configuration (`CGO_ENABLED=0`).
+2. The standard library covers everything: `net/http`, `encoding/json`, and
+   `crypto` where a provider needs to sign or verify something. This held up
+   in practice — even the Firestore work (§2), the one place a Google auth
+   library looked unavoidable, needed nothing beyond `crypto/rsa`.
+
+The direct dependency set is exactly four: `github.com/urfave/cli/v3` (the CLI
+framework), `modernc.org/sqlite` (pure Go, so `CGO_ENABLED=0` keeps working),
+`github.com/oklog/ulid/v2`, and `github.com/mattn/go-isatty`. isatty is there
+because `tdo rm --purge` must refuse rather than prompt when stdin is not a
+terminal, and `os.ModeCharDevice` is not sufficient for that — `/dev/null` is a
+character device too. It was already in the module graph as a dependency of
+`urfave/cli`, so it adds no new supply-chain surface.
+
+TypeScript was only attractive while a Worker backend existed (shared types);
+with the backend gone that reason disappeared, and Go avoids requiring Node on
+the user's machine.
+
+A dynamic language would make the open JSON field map of §3 slightly easier to
+write. That is a one-off cost inside a single package, while distribution and
+startup are paid by every user and every agent invocation: Go ships an 8–15 MB
+static binary with no runtime to install, cross-compiled for six targets with
+`CGO_ENABLED=0`, and starts in roughly 5 ms against tens of ms for a Node or
+Python equivalent — which matters because the agent usage in §8 spends one
+process per command.
+
+The toolchain is pinned for this repository in `mise.toml` (`go = "1.27.2"`).
+Go 1.27 or newer is required to build; CI builds with `go-version: stable`
+rather than the pinned version.
+
+## 2. Provider roadmap
+
+Providers sit behind one `Store` interface. They ship one at a time, each one
+fully working (including tests and docs) before the next starts.
+
+| Provider | Credential the user supplies | Scoping of that credential | State |
+|---|---|---|---|
+| **Local SQLite** | none (a file path) | n/a | shipped |
+| **Turso / libSQL** | database URL + database token | **per database** — the token only reaches this one database | shipped |
+| **Cloudflare D1** | account ID + API token | **account-wide** — see the warning below | later |
+
+**Turso is the recommended cloud provider** for anyone who wants the narrowest
+possible credential, because its tokens are issued per database.
+
+**Firestore was built and then dropped.** An earlier plan had it second,
+reasoning that a schemaless document store suits the open map of §3. The GTD
+model of §3.1 changed that: folders, projects and the inbox are one tree, and
+availability (§3.3) needs the ancestors of every candidate, not just the
+candidate. The implementation already read the whole collection for every
+listing to avoid demanding hand-built composite indexes, and tree traversal on
+top of that would have meant downloading the database to list a day's work.
+The code was removed rather than left to rot against an interface it no longer
+satisfies.
+
+One useful result survives it: the Firestore REST value converter and both
+auth flows (service-account RS256 JWT, and ADC refresh-token) were written
+with **no dependency beyond the standard library**, so the
+`golang.org/x/oauth2/google` question recorded here earlier is answered — it
+was never needed. If a document-store provider is ever revisited, that is the
+precedent.
+
+### Credential-scope warning (must appear in README and SECURITY.md)
+
+Cloudflare API tokens **cannot be scoped to a single D1 database**. The minimum
+permission that allows writes is `Account → D1 → Edit`, which grants write
+access to *every* D1 database in that account; the specific database is chosen
+only by the UUID in the request path
+(`POST /accounts/{account_id}/d1/database/{database_id}/query`).
+
+Therefore the D1 docs must tell users plainly: the token you hand to `tdo` can
+read and modify all your D1 databases. Recommend a dedicated Cloudflare account
+(or an account whose only D1 database is this one) for anyone who cares.
+Turso is documented as the recommended cloud provider precisely because its
+tokens are per-database. Verify this against Cloudflare's token docs again
+before the D1 milestone ships, in case scoping has improved.
+
+## 3. Data model
+
+One table / collection, `tasks`, holding every node of one tree. Requirements
+differ per user, so the **required fields** are real columns and everything
+else lives in one open JSON map the CLI carries through untouched. Adding an
+attribute of your own still needs no migration.
+
+### 3.1 One tree, three kinds
+
+OmniFocus distinguishes folders, projects and actions, but they are the same
+shape: a thing with a title that may contain other things. They are one table
+with a `kind`, and containment is a single `parent_id` edge.
+
+| `kind` | May contain | Notes |
+|---|---|---|
+| `folder` | folders, projects | organisation only; never actionable, never completed |
+| `project` | tasks | an outcome; completable |
+| `task` | tasks (an action group) | an action |
+
+The rules the store enforces, because a broken tree is worse than a rejected
+command:
+
+- A `folder`'s parent is a folder or nothing. A `project`'s parent is a folder
+  or nothing. A `task`'s parent is a project or a task, or nothing.
+- **A task with no parent is in the inbox.** The inbox is not a container; it
+  is the absence of one, so nothing has to create it and it cannot be deleted.
+- **Cycles are refused** (exit 2), including an item made its own parent.
+- Deleting a container does not orphan its children silently: `tdo rm` on a
+  container tombstones the subtree, and `--purge` refuses unless the subtree is
+  empty or `--recursive` is given.
+
+### 3.2 Required fields
+
+These names are **reserved** and cannot be used as user-defined fields.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | text | ULID, generated client-side |
+| `kind` | text | `folder`, `project` or `task` |
+| `title` | text | required, non-empty |
+| `parent_id` | text / null | null means top level, and for a task, the inbox |
+| `position` | int | manual order among siblings; ties break by `id` |
+| `status` | text | `active`, `on_hold`, `done` or `dropped` |
+| `flagged` | bool | |
+| `sequential` | bool | a container whose children must be done in order |
+| `completed_by_children` | bool | the container completes when its last child does |
+| `defer_at` | text / null | RFC 3339; not available before this |
+| `due_at` | text / null | RFC 3339 |
+| `estimated_minutes` | int | `0` when unset |
+| `note` | text / null | |
+| `repeat` | object / null | see §3.4 |
+| `series_id` | text / null | ties the instances of a repeat together |
+| `review_interval` | object / null | projects and folders; see §3.5 |
+| `last_reviewed_at` | text / null | |
+| `created_at` | text | RFC 3339, UTC |
+| `updated_at` | text | RFC 3339, UTC |
+| `completed_at` | text / null | set when `status` becomes `done` |
+| `dropped_at` | text / null | set when `status` becomes `dropped` |
+| `deleted_at` | text / null | tombstone |
+
+`status` replaces the old boolean `done`. Four states are needed because GTD
+distinguishes *not now* (`on_hold`) and *never, but remember I decided that*
+(`dropped`) from *finished*. `done` remains in `--json` output as a derived
+convenience field equal to `status == "done"`, so the common case stays one key.
+
+Tags are many-to-many and live in their own `task_tags` table rather than in
+the JSON map, because `tdo ls --tag home` must be a join and not a scan.
+
+Everything else set with `--set k=v` is an ordinary member of the open map and
+is flattened alongside the required fields in `--json`, exactly as before.
+
+### 3.3 Availability
+
+This is the computation GTD lives or dies by, and it is defined once, in the
+store layer, so every provider and every command agrees.
+
+An item is **available** when all of these hold:
+
+1. Its `status` is `active`.
+2. Its `defer_at` is absent or in the past.
+3. Every ancestor is `active`, and no ancestor has a future `defer_at`.
+4. For itself and for **every ancestor**: if that item's parent is
+   `sequential`, the item is the first child of that parent which is not
+   `done`, `dropped` or deleted. The rule is transitive on purpose — an action
+   group whose turn has not come blocks everything inside it, or a list would
+   surface the children of a step nobody has started. Deleted siblings are
+   skipped, so a tombstone cannot stall a sequence forever.
+
+Anything that fails 2, 3 or 4 is **blocked**; `tdo ls` shows available items by
+default and `--blocked`, `--deferred` or `--all` widen that. Rule 3 is why
+putting a project on hold silently empties it from every list, which is the
+whole point of putting a project on hold.
+
+Three cases fall outside the four rules and are never available: a **folder**
+(it is organisation, not work), a **tombstoned** item or one with a tombstoned
+ancestor, and an **orphan** whose parent id names nothing — an item nobody can
+reach should not be offered as the next thing to do. The reported reason is
+always the most specific one: an item's own deferral is reported before an
+ancestor's.
+
+`tdo ls --json` carries `available` and, when false, `blocked_by` naming the
+rule and the ancestor responsible — a caller should not have to recompute this,
+and an agent should be able to say *why* nothing is actionable.
+
+### 3.3a Complete with last action
+
+A container whose `completed_by_children` is set completes itself when its
+last open child closes. OmniFocus calls this "complete with last action", and
+it is what stops a project lingering on a list after the work in it is done.
+
+- **The trigger** is a child becoming `done`, `dropped` or tombstoned. A child
+  is *open* when it is none of those — the same set §3.3's rule 4 skips when
+  it looks for the first child of a sequential container, and for the same
+  reason. A child that is itself a container counts as an ordinary child,
+  open until its own status closes.
+- **It cascades.** A container that completes this way may be the last open
+  child of its own parent. The walk is upward and stops at the first ancestor
+  that does not complete, because everything above it still has an open child.
+- **A container with no children never completes this way.** Completing
+  nothing is not completing something: an empty project would otherwise
+  complete the moment it was created, and tombstoning a container's children
+  would read as having done the work.
+- **A repeating container is never completed this way**, and the cascade stops
+  there. Auto-completing it would have to either kill its series silently or
+  manufacture a successor while the user was merely finishing a child, and
+  §3.4 says a row is created only as the direct result of an explicit
+  `tdo done`. Finishing a repeating container is something the user does on
+  purpose. A repeating *child* is an ordinary child.
+- **Nothing reopens automatically.** Undoing a child of a container that was
+  completed this way leaves the container done. Nothing records *why* a
+  container is done, so reopening would be a guess, and a wrong guess
+  resurrects a project the user finished deliberately. Closing is monotone;
+  `tdo undone <container>` is one command and says which was meant.
+- A **folder** never completes (§3.1). A container that is already `done`,
+  `dropped` or tombstoned is left exactly as it is — a dropped outcome must
+  not quietly become a completed one. A container **on hold** does complete:
+  the work it was holding is finished, and leaving it on hold would strand an
+  unactionable container in the tree forever.
+
+Like availability, this rule lives in one place in the store layer and is
+reused by every provider rather than reimplemented, and the shared conformance
+suite holds both providers to it. `tdo done`, `tdo drop` and `tdo rm` report
+any container they completed this way.
+
+### 3.4 Repetition
+
+`repeat` is `{"method": …, "every": …}`. `every` is a duration-with-calendar
+spelling (`3d`, `2w`, `1mo`, `1y`, and `1mo:last-friday` for the calendar cases
+OmniFocus supports). The three methods are OmniFocus's three, and they differ
+only in what the next instance's dates are computed from:
+
+| `method` | Next `defer_at` / `due_at` computed from |
+|---|---|
+| `fixed` | the previous instance's own dates — a true calendar schedule that can fall behind |
+| `from_completion` | the moment of completion — "every 3 days after I actually do it" |
+| `defer_another` | the moment of completion, and only `defer_at` moves |
+
+**A new instance is created only as the direct result of an explicit
+`tdo done`.** Nothing is generated in the background, on a timer, or during a
+read: `tdo ls` never writes. This is a safety property, not an implementation
+detail — a tool an agent drives must not manufacture rows while being read.
+
+Completing a repeating item creates exactly one successor, carrying the same
+`series_id` (minted on the first instance), the same fields, and a fresh `id`.
+`tdo done --no-repeat` completes without a successor, and `tdo repeat --stop`
+ends the series while leaving its history.
+
+### 3.5 Review
+
+`review_interval` is `{"every": "1w"}` on folders and projects.
+`next_review_at` is derived from `last_reviewed_at + every`, so it cannot drift
+out of sync, and `tdo review` lists what is due and `tdo review <ref>` marks
+one reviewed.
+
+### 3.6 Perspectives
+
+A perspective is a **saved query**, nothing more: a name plus a filter. They
+live in a `perspectives` table and are applied with
+`tdo ls --perspective <name>`. A perspective never stores results and never
+pins ids, so it cannot go stale; running one is exactly equivalent to typing
+its filter.
+
+The honest limit: a perspective holds a server-side `Filter`, so the flags
+evaluated on the client — `--where`, `--priority`, `--untagged`,
+`--estimate-under` and `--sort title` — **cannot be saved in one**, and
+`tdo perspective save` refuses them rather than storing a filter that would
+mean something narrower when run. Closing that gap means moving those
+conditions into `Filter`, which is the same work §10's filtering asymmetry
+describes.
+
+### 3.7 Decisions to hold to
+
+- **No deletes by default.** `tdo rm` sets a `deleted_at` tombstone;
+  `tdo rm --purge` really deletes. This keeps multi-device behaviour sane.
+- **ULIDs, not autoincrement**, but users type short numbers. Client-side id
+  generation is required for offline creation; lexicographic ULID order equals
+  creation order, so one `ORDER BY` serves every provider; and ULIDs do not
+  collide across devices. For day-to-day use `tdo ls` prints a small number per
+  row and caches that listing locally, so `tdo done 3` works. Machine output
+  does not refresh that cache, so a `--json` caller cannot renumber a list
+  someone else is reading.
+- **Ids are generated with monotonic entropy**, so ids created in one burst
+  sort in creation order. The honest residual: a ULID's timestamp is
+  millisecond-resolution and the monotonic sequence is per process, so **two
+  separate `tdo add` processes that land in the same millisecond may order
+  either way** — stably, since the ids are then fixed.
+- **Short id prefixes** are accepted on the command line (`tdo done 01J3`) as
+  long as they are unambiguous, like git.
+- **The listing cache is a local JSON file** at
+  `$XDG_STATE_HOME/todocloud/lastlist.json`, mode 0600, keyed by the store the
+  listing came from, so a number from one provider is never applied to another.
+  A cache miss is never fatal.
+- **Availability is computed in one place** and never duplicated into a
+  command. A provider may push parts of it down for speed, but the result must
+  equal the definition in §3.3, and the shared conformance suite checks that.
+- Schema version lives in a `meta` table so `tdo migrate` can upgrade an
+  existing remote database.
+
+## 4. Command surface
+
+```
+# Capture and the inbox
+tdo add <title...> [--project P] [--parent REF] [--inbox]
+       [--defer D] [--due D] [--flag] [--tag t1,t2] [--note S]
+       [--estimate 25m] [--repeat 1w[:method]] [--priority N] [--set k=v]...
+tdo inbox [--count]                      # the tasks with no parent
+tdo inbox process <ref> --project P      # file one inbox item
+
+# Looking at things
+tdo ls [--available|--blocked|--deferred|--all|--deleted] [--inbox] [--flagged]
+       [--project P] [--under REF] [--kind task|project|folder]
+       [--status active|on_hold|done|dropped]... [--tag t] [--untagged]
+       [--due-before D] [--defer-before D] [--estimate-under 30m]
+       [--priority N] [--where k=v]... [--perspective NAME] [--limit n]
+       [--sort position|created|updated|due|defer|title] [--tree]
+tdo show <ref>                            # includes why it is blocked
+tdo next [--project P]                    # the first available action, per GTD
+
+# Changing things
+tdo done <ref...> [--no-repeat]
+tdo undone <ref...>
+tdo drop <ref...>                         # decided against; not deleted
+tdo hold <ref...> / tdo unhold <ref...>   # status on_hold
+tdo flag <ref...> / tdo unflag <ref...>
+tdo defer <ref...> <when|--clear>
+tdo due <ref...> <when|--clear>
+tdo edit <ref> [--title S] [--note S] [--estimate 25m] [--priority N]
+       [--tag t1,t2] [--untag t] [--set k=v]... [--unset k]...
+tdo mv <ref...> <parent-ref|--inbox|--top>   # reparent; refuses a cycle
+tdo rm <ref...> [--recursive] [--purge] [--yes]
+
+# Structure
+tdo project add <title...> [--folder F] [--sequential] [--review 1w]
+tdo project ls [--status ...] [--needs-review]
+tdo project <ref> [--sequential|--parallel] [--complete-with-last]
+tdo folder add <title...> [--folder F]
+tdo folder ls
+
+# Repetition and review
+tdo repeat <ref> <every>[:fixed|from_completion|defer_another]
+tdo repeat <ref> --stop
+tdo series <ref>                          # the instances of one series
+tdo review                                # projects and folders due for review
+tdo review <ref> [--interval 1w]          # mark reviewed
+
+# Saved queries
+tdo perspective save <name> -- <ls flags...>
+tdo perspective ls / rm <name> / show <name>
+
+# Administration (unchanged)
+tdo init / migrate / config / login / doctor / version
+tdo export [--csv] [--all] / tdo import <file> [--new-ids]
+```
+
+A `<ref>` is either the short number from the last `tdo ls` or an unambiguous
+id prefix. Where the thing being named is a **container** — `--project`,
+`--folder`, `--parent`, the destination of `tdo mv`, the argument of
+`tdo project`/`tdo folder`/`tdo review` — its exact title is accepted too,
+case-insensitively, because a container is typed far more often than it is
+listed. The title is tried last, after the number and the id prefix, so a
+number never changes meaning; two containers sharing a title is exit 6.
+
+A date is `YYYY-MM-DD` or RFC 3339. There are no relative words: `tomorrow`
+is a usage error, because a tool an agent drives should not have to agree
+with it about what day it is.
+
+Global flags: `--json`, `--debug`, `--config PATH`, `--provider NAME`. There is
+no `--token` flag and there must never be one.
+
+`--priority N` (0–3) is an ordinary user-defined field with a dedicated flag
+and a guaranteed place in `--json`, not a column: it predates the GTD model
+and OmniFocus has no equivalent, so it stays where a user's own fields live.
+
+`--set k=v` types the value the way it reads: `--set estimate=3` stores the
+number 3, `--set ref=3.0.1` stores the string `"3.0.1"`. Reserved names (the
+required fields in §3.2) are rejected.
+
+### 4.1 Defaults that encode the method
+
+- **`tdo ls` shows available items** (§3.3) — not everything. A deferred task,
+  a task in an on-hold project and a task queued behind its sibling in a
+  sequential project are all absent, because GTD's claim is that a list you
+  cannot act on is worse than no list. `--all` is always there to see the rest,
+  and `tdo show` always explains a blocked item.
+- **`tdo add` with no `--project` and no `--parent` captures to the inbox**,
+  because the cost of filing must not be charged at the moment of capture.
+- **`tdo done` on a repeating item creates its successor** and says so; nothing
+  else, anywhere, ever generates a row (§3.4). It also reports any container it
+  completed by finishing that container's last action (§3.3a), as do `tdo drop`
+  and `tdo rm`.
+
+### 4.2 Rules that apply to all commands
+
+- Every command accepts `--json` and emits a stable, documented JSON shape on
+  stdout. Human-readable output goes to stdout too, but logs, progress and
+  warnings go to **stderr**, so `--json` output is always safe to pipe.
+- Exit codes: `0` ok, `1` generic error, `2` usage error, `3` config/credential
+  error, `4` provider/network error, `5` not found, `6` ambiguous id. A
+  mistyped flag, an unknown command, an illegal parent/kind pairing and a
+  reparent that would make a cycle are usage errors: exit 2.
+- No command is interactive unless it would destroy data or create something
+  outward-facing (§5.1); `--yes` skips the prompt, and a non-TTY stdin implies
+  `--yes` is required rather than assumed.
+- **No command writes while reading.** `tdo ls`, `tdo show`, `tdo next`,
+  `tdo review` (without a ref) and `tdo export` are pure reads: they do not
+  generate repeats, do not file inbox items and do not refresh anything a
+  machine caller could race a human on.
+
+## 5. Configuration and credentials
+
+Resolution order, highest priority first:
+
+1. command-line flags (never for secrets — see below)
+2. environment variables
+3. the OS keychain (tokens only, written by `tdo login`)
+4. `$TODOCLOUD_CONFIG` if set
+5. `$XDG_CONFIG_HOME/todocloud/config.toml` (default `~/.config/todocloud/config.toml`)
+
+```toml
+# ~/.config/todocloud/config.toml   — NEVER inside a repository
+provider = "turso"
+
+[sqlite]
+path = "~/.local/share/todocloud/tasks.db"
+
+[turso]
+url = "libsql://my-tasks-myname.turso.io"
+# token: TODOCLOUD_TURSO_TOKEN, else the OS keychain (`tdo login`), else a
+# `token` key here subject to the guards below
+
+[d1]
+account_id = "..."
+database_id = "..."
+# token: TODOCLOUD_D1_TOKEN, else the OS keychain, else a `token` key here
+```
+
+Environment variables: `TODOCLOUD_PROVIDER`, `TODOCLOUD_SQLITE_PATH`,
+`TODOCLOUD_TURSO_URL`, `TODOCLOUD_TURSO_TOKEN`,
+`TODOCLOUD_D1_ACCOUNT_ID`,
+`TODOCLOUD_D1_DATABASE_ID`, `TODOCLOUD_D1_TOKEN`.
+
+Hard rules, enforced in code:
+
+- **Secrets are never accepted as command-line flags.** `argv` is visible to
+  every process on the machine via `ps` and lands in shell history. There is no
+  `--token` flag.
+- **A token comes from the environment, the OS keychain or the config file**,
+  in that order of precedence. The environment variable wins outright and the
+  keychain is then not consulted at all. The keychain is read only for the
+  provider actually in use, with a two-second timeout; a keychain failure is
+  never fatal and falls through to the config file with a warning. A token in
+  the config file is loaded only when the file is outside every git repository,
+  is the XDG config file or the one named by `$TODOCLOUD_CONFIG` (so a
+  `--config` path never supplies one), and is not group- or world-readable.
+  A refused token raises a loud warning on stderr naming the file, the line and
+  the alternatives — never the value — and a file holding no token warns not at
+  all. The one supported spelling is `token` under `[turso]` or `[d1]`; every
+  other secret-shaped key (`api_token`, `secret`, `password`, `key`) is never
+  loaded and always warns. See `SECURITY.md` for why a config file is permitted
+  rather than forbidden.
+- **Secrets are never printed.** A `Secret` string type wraps every token; its
+  `String()`/`Format()`/`MarshalJSON()` return `[REDACTED]`. `tdo config` and
+  `tdo doctor` print only the last 4 characters at most, and `--debug` logging
+  passes request headers through a redactor before writing them.
+- **The only credential `tdo` writes is the one `tdo login` puts in the OS
+  keychain.** `tdo` must never write a credential into a file it manages, and
+  never writes one to disk in plaintext. `tdo login` reads the token from stdin
+  only; for Turso it does not read one at all, delegating to the Turso CLI to
+  mint a per-database token. See §5.1.
+- **A secret is never passed to a subprocess in `argv`** — it travels on the
+  child's stdin — for the same reason there is no `--token` flag. A platform
+  whose keychain binary can only take a secret as an argument therefore has no
+  writable backend: `tdo login` prints the command for the user to run
+  themselves and exits 0.
+- Config files are opened with a permission check: warn loudly if a file
+  containing a token is group/world-readable.
+
+### 5.1 `tdo login`
+
+```
+tdo login [--provider NAME] [--database NAME] [--remove] [--show] [--yes]
+```
+
+Two paths have consequences and are therefore confirmed, following
+`tdo rm --purge`: `--remove`, which destroys an unrecoverable credential, and
+the delegated Turso mint, which creates a token on the user's Turso account.
+Each prompts on a terminal and exits 2 without one unless `--yes` is passed;
+the refused mint does not fall back to stdin, since that would store a
+different credential than the caller asked for. `--show`, the stdin paste path,
+D1 and the no-CLI fallback stay unguarded.
+
+No flag takes a token. On a terminal the prompt is not echoed; when stdin is a
+pipe, one line is read with no prompt, which is what a script or an agent uses.
+
+- **Turso** — with the `turso` CLI installed and logged in, `tdo login` runs
+  `turso db tokens create <database>`, stores the result in the OS keychain and
+  prints the matching `[turso] url = …` line on stderr. Nothing is pasted, and
+  the token is narrower than one a user would create by hand. The database comes
+  from `--database`, else from the configured Turso URL, else from
+  `turso db list` when it holds exactly one database; otherwise exit 2 asking
+  for `--database`. `turso` installed but not logged in is exit 3
+  (`turso auth login`). `turso` missing prints install instructions and falls
+  back to stdin, exit 0. A minted token that cannot be stored is **discarded
+  rather than printed**, with instructions to mint one by hand, exit 0.
+- **Cloudflare D1** — no delegation. `wrangler`'s OAuth token is not usable
+  from another tool and `CLAUDE.md` §1.4 forbids running `wrangler whoami`, so
+  `tdo` neither runs nor detects wrangler. The token is pasted on stdin, after
+  the account-wide-token warning of §2.
+- **SQLite** — a usage error: a local file needs no credential.
+
+### 5.2 Choosing the store, and not writing to the wrong one
+
+Which provider a command uses is resolved in this order, highest priority
+first:
+
+1. `--provider NAME` — a one-off override, for a single command.
+2. `TODOCLOUD_PROVIDER` — the ambient choice a CI job, a container or a shell
+   session makes.
+3. `provider = "..."` in the config file — the normal way. The config file is
+   the answer to "which store am I using", the way `kubectl`'s current context
+   is.
+
+With none of them set, the provider is `sqlite`.
+
+`tdo config` (and `tdo config --json`) prints the resolved provider and, under
+`origins`, where that answer came from: `flag:--provider`,
+`env:TODOCLOUD_PROVIDER`, `file:<path>` or `default`. It is the command to run
+when in doubt about which store is in use.
+
+The hazard here is not the credential, it is writing to the wrong store: the
+tasks are not lost, they are in a place the user is not looking. A stale
+`TODOCLOUD_PROVIDER` in a shell, or a mistyped `--provider`, is exactly how
+that happens. Five guards:
+
+1. **A write announces an unexpected store.** `add`, `edit`, `done`, `undone`,
+   `rm`, `init`, `migrate` and `import` print one line on **stderr** naming the
+   store whenever the provider did not come from the config file — e.g.
+   `tdo: warning: writing to sqlite: /path/to/tasks.db: TODOCLOUD_PROVIDER
+   overrides the "turso" named in /path/to/config.toml`, or `… : --provider
+   selected it for this command only`. Never on stdout, so `--json` output
+   stays parseable. The read-only commands (`ls`, `show`, `export`, `config`,
+   `doctor`) say nothing: an unexpected list is self-evident.
+2. **No noise when there is nothing to warn about.** A `TODOCLOUD_PROVIDER`
+   that agrees with the config file is silent, and so is a machine with no
+   config file at all — there the environment *is* the configuration. Only a
+   genuine disagreement, or `--provider`, is announced.
+3. **The short numbers never cross stores.** The listing cache of §3 is keyed
+   by the store that produced it, so a number from one provider is never
+   applied to another; it simply misses and says to run `tdo ls`.
+4. **A store with no schema refuses writes.** Switching to a provider that has
+   never been initialised is exit 3 with the advice to run `tdo init`, so a
+   mistyped provider name cannot quietly grow a second, parallel task list.
+5. **Only `tdo init` creates a store.** Every other command — `doctor`
+   included — opens an existing one and creates neither the database file nor
+   any parent directory, so a mistyped path is an exit-3 error rather than a
+   new, empty list. `init` reports which happened in its `created` key.
+
+`tdo rm --purge` names the store in its confirmation prompt, and in its refusal
+when there is no terminal (`refusing to purge 2 task(s) from sqlite: /path …
+pass --yes`).
+
+## 6. Repository safety (no credential ever reaches the repo)
+
+This is a hard requirement, not a best effort. Four independent layers, so that
+no single mistake — mine or a contributor's — is enough:
+
+1. **Nothing in the repo ever needs a real credential.** Tests run against
+   local SQLite and against `httptest` fake servers for Turso and D1.
+   There is no fixture, no example and no CI job that requires a real token.
+   Example files use obvious placeholders (`libsql://example.turso.io`,
+   `TOKEN_GOES_HERE`).
+2. **`.gitignore` denies the whole shape of a secret** — `.env*`, `*.pem`,
+   `*.key`, `*-credentials.json`, `service-account*.json`, `.dev.vars`,
+   `config.toml`, `*.db` — rather than listing known filenames.
+3. **A pre-commit hook scans the staged diff** and blocks the commit on a hit.
+   It uses `gitleaks` when installed and otherwise falls back to a dependency-free
+   pattern scan (`scripts/scan-secrets.sh`). Installed with `make hooks`;
+   `make hooks` is part of the contributing instructions and of `tdo doctor`'s
+   advice for contributors.
+4. **CI runs the same scan on every push and pull request**, over the full
+   history, so a hook that someone skipped with `--no-verify` still fails the
+   build before merge.
+
+See `CLAUDE.md` for the rules AI assistants must follow in this repo, and
+`SECURITY.md` for the user-facing credential-handling documentation and the
+disclosure process.
+
+## 7. Documentation language
+
+**All files in this repository are written in English** — code, comments,
+commit messages, docs, issues, PR descriptions, CLI help and error strings.
+This includes planning documents like this one. Japanese may be used in
+conversation with the maintainer, but must not appear in committed files.
+CLI message localisation, if it ever happens, goes through a proper i18n
+mechanism rather than translated source strings.
+
+## 8. Using `tdo` from an AI agent
+
+This answers a design question raised early: does an AI consumer change the
+API, and is MCP needed?
+
+**It does not change the interface.** The CLI *is* the API. An agent that can
+run shell commands uses the exact same commands a human does; `--json` and the
+documented exit codes are what makes the output parseable. Agent support is
+therefore a documentation and output-hygiene concern, not a second interface:
+
+- every command has `--json` with a documented, versioned shape
+- machine output on stdout, human noise on stderr
+- distinct exit codes per failure class (see §4) so an agent can react without
+  parsing prose
+- no interactive prompt on any path an agent would take
+- `tdo --help` output kept short and stable enough to paste into a prompt
+- `docs/agents.md` holds the commands and JSON shapes, so an agent needs no
+  trial and error, and `AGENTS.md` is the entry point that routes a tool user
+  there and a contributor to `CLAUDE.md`
+
+**MCP is optional, and deferred to v0.4 at the earliest.** It is worth adding
+only for clients that cannot run arbitrary shell commands (Claude Desktop with
+no terminal access, hosted assistants). If added, it is a thin `tdo mcp`
+subcommand that serves stdio MCP and exposes the same operations as tools
+(`add_task`, `list_tasks`, `complete_task`, …) by calling the same internal
+`Store` interface — never a reimplementation, and never a network listener by
+default. The user's credentials stay in their environment exactly as before.
+
+## 9. Milestones
+
+Nothing has been released and the repository has no tag, so there is no
+compatibility to preserve: the schema, the `--json` shapes and the command
+surface are still free to change, and the work below is sequenced by
+dependency rather than by version number.
+
+**Shipped — the SQLite CLI.** `Store` interface, SQLite implementation
+(`modernc.org/sqlite`, pure Go, so `CGO_ENABLED=0` still holds), the open
+`fields` column and `--set`/`--where`, `--json` everywhere, config loading and
+the credential precedence of §5, `tdo login` (§5.1), `Secret` redaction type,
+full repo-safety tooling (§6), README, MIT license.
+
+**Shipped — Turso.** `Store` over the libSQL `/v2/pipeline` HTTP API, tested
+against an `httptest` fake backed by a real in-memory SQLite engine, so the
+LIKE-escaping and constraint behaviour asserted is the engine's. No new
+dependency: `net/http` and the standard library.
+
+**In progress — the GTD model (§3) and its command surface (§4).** Folders,
+projects and the inbox as one tree; `status` in place of the `done` boolean;
+availability; repetition and series; review; perspectives. Because this
+reshapes the core, it lands as one piece across the domain types, the store
+interface, both providers and the command layer, with a shared provider
+conformance suite (`internal/store/storetest`) as the specification both
+providers are held to.
+
+**Dropped — Firestore.** Built, tested and green against the pre-GTD
+interface with no new dependency, then removed when the GTD model landed; the
+reasoning is in §2. Nothing in the tree references it.
+
+**Later — Cloudflare D1.** REST `/query` implementation, batched statements,
+and the account-wide-token warning from §2 placed prominently in the D1 docs.
+
+**Later, only if asked for:** `tdo mcp` (§8), multi-device conflict handling
+beyond last-write-wins, a TUI, shell completions
+(`tdo completion bash|zsh|fish`), attachments, and an optional Worker provider
+for anyone who wants to avoid handing the CLI a broad token.
+
+## 10. Open questions
+
+- Turso vs. plain libSQL naming in the docs and config (`provider = "turso"`
+  vs `"libsql"`). Settled as `turso`, since that is the name on the account the
+  token comes from; a self-hosted sqld is reached through the same provider by
+  giving it an `http://` URL.
+- Whether `tdo ls` should default to hiding completed tasks. Settled, and
+  widened: `tdo ls` shows *available* items (§3.3), which excludes completed,
+  dropped, deferred and sequentially blocked ones. `--all` shows everything.
+- Multi-device: last-write-wins on `updated_at` is assumed. Good enough for one
+  person on several machines; revisit only with a real complaint. The tree
+  makes this slightly worse than it was — two devices can reparent the same
+  item differently — but not worse than the tombstone already was.
+- Should `tdo export`/`import` be the migration path between providers, or is a
+  dedicated `tdo sync --from sqlite --to turso` worth it? (Export/import first.)
+  For now switching providers moves no data: there is no automatic migration,
+  and the path is `tdo export` on the old store followed by `tdo import` on the
+  new one, which is lossless including user-defined fields. The export envelope
+  carries a `store` key naming where it was taken from, so an archive is not
+  anonymous.
+- **Named stores?** Instead of selecting a bare provider name, the config file
+  could hold `[store.work]` / `[store.personal]` sections selected with
+  `--store NAME`, the way AWS CLI profiles and `kubectl` contexts work. It would
+  help anyone keeping more than one list, and it makes "which store am I on"
+  answerable by name rather than by provider. It is also a considerably bigger
+  surface, and v0.1 does not need it. Undecided.
+- **Filtering is asymmetric, and the asymmetry is deliberate.** Conditions on
+  user-defined fields (`--tag`, `--due-before`, `--where`) are evaluated
+  *client-side*, so the same flags behave identically on every provider, while
+  SQLite's `json_extract` accepts anything. Server-side filtering therefore
+  covers the required fields only. Whether this stays acceptable once a list
+  grows large enough to make the client-side pass expensive is open — and
+  availability (§3.3) raises the stakes, because it needs the ancestors of
+  every candidate, not just the candidate.

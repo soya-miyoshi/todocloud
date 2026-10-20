@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Credentials and anything shaped like them.
+# Deny by shape, not by known filename. Do not add exceptions here, and never
+# use `git add -f` to get around this section. See CLAUDE.md §1.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.env
+.dev.vars
+.dev.vars.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+*credentials*.json
+*credential*.json
+service-account*.json
+service_account*.json
+gcp-*.json
+client_secret*.json
+.netrc
+.npmrc
+*.token
+*token.txt
+secrets.*
+*.secret
+*.secrets
+
+# User config: holds provider tokens. It lives in ~/.config/todocloud/, never
+# in a repository, and is ignored here so a stray copy cannot be committed.
+config.toml
+config.local.*
+todocloud.toml
+
+# Local databases (your actual tasks, and anything a test left behind)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Build output
+/dist/
+/bin/
+/tdo
+/tdo.exe
+*.test
+coverage.out
+coverage.html
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

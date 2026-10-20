@@ -1,0 +1,237 @@
+name: release
+
+# Tagging is the whole trigger: pushing v1.2.3 builds the six binaries, makes
+# the GitHub release, and updates the Homebrew tap. Nothing here runs on an
+# ordinary push, and nothing here can be started by a fork.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  # The one place the binary name lives, so a rename is one edit.
+  BINARY: tdo
+
+jobs:
+  # The release is not cut unless the tree that is being tagged passes the
+  # same checks main does. A broken release cannot be unpublished from the
+  # machines that already downloaded it.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: Check that gofmt has nothing to say
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "${unformatted}" ]; then
+            echo "these files are not gofmt'd:"
+            echo "${unformatted}"
+            exit 1
+          fi
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Read the version from the tag
+        id: meta
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # Homebrew wants 1.2.3; the tag is v1.2.3.
+          version="${tag#v}"
+          case "${version}" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "tag ${tag} is not vMAJOR.MINOR.PATCH"; exit 1 ;;
+          esac
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build every target
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # CGO_ENABLED=0 is not an optimisation here: it is what makes one
+          # job able to produce all six binaries, and what keeps the result
+          # a single file with no runtime to install.
+          export CGO_ENABLED=0
+          pkg=github.com/soya-miyoshi/todocloud/internal/cli
+          flags="-s -w -X ${pkg}.version=${VERSION} -X ${pkg}.commit=${GITHUB_SHA}"
+          for target in \
+            darwin/amd64 darwin/arm64 \
+            linux/amd64 linux/arm64 \
+            windows/amd64 windows/arm64
+          do
+            os="${target%/*}"
+            arch="${target#*/}"
+            out="${BINARY}"
+            [ "${os}" = "windows" ] && out="${BINARY}.exe"
+            echo "building ${os}/${arch}"
+            GOOS="${os}" GOARCH="${arch}" go build -trimpath -ldflags "${flags}" -o "dist/${out}" ./cmd/tdo
+            base="${BINARY}_${VERSION}_${os}_${arch}"
+            if [ "${os}" = "windows" ]; then
+              (cd dist && zip -q "${base}.zip" "${out}" && rm "${out}")
+            else
+              (cd dist && tar -czf "${base}.tar.gz" "${out}" && rm "${out}")
+            fi
+          done
+          (cd dist && sha256sum ./* > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      # A tag that claims to be 1.2.3 and produces a binary saying something
+      # else is the kind of thing nobody notices until they are debugging the
+      # wrong version, so it is checked rather than trusted.
+      - name: Check the binary reports the tagged version
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          tar -xzf "dist/${BINARY}_${VERSION}_linux_amd64.tar.gz" -C "${RUNNER_TEMP}"
+          reported=$("${RUNNER_TEMP}/${BINARY}" version --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          if [ "${reported}" != "${VERSION}" ]; then
+            echo "the binary reports ${reported}, the tag says ${VERSION}"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --verify-tag
+
+  # Updating the tap is a separate job because it writes to a DIFFERENT
+  # repository and therefore needs a token of its own: GITHUB_TOKEN cannot
+  # reach soya-miyoshi/homebrew-tap. Without that secret the release still
+  # happens and this step is skipped, so a missing token never costs a
+  # release — it costs a `brew upgrade`.
+  homebrew:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref_name, '-') }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Check for the tap token
+        id: token
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not set; skipping the tap update." >&2
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "present=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Write the formula and push it to the tap
+        if: steps.token.outputs.present == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+          TAP_REPO: soya-miyoshi/homebrew-tap
+        run: |
+          set -euo pipefail
+          sum() { awk -v f="./$1" '$2 == f { print $1 }' dist/SHA256SUMS; }
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+
+          darwin_arm64="${BINARY}_${VERSION}_darwin_arm64.tar.gz"
+          darwin_amd64="${BINARY}_${VERSION}_darwin_amd64.tar.gz"
+          linux_arm64="${BINARY}_${VERSION}_linux_arm64.tar.gz"
+          linux_amd64="${BINARY}_${VERSION}_linux_amd64.tar.gz"
+
+          # The token is passed to git through a credential helper reading
+          # stdin rather than embedded in the remote URL: a URL ends up in
+          # .git/config, in the process list and in any error message that
+          # echoes the remote.
+          git config --global credential.helper '!f() { echo "username=x-access-token"; echo "password=${TAP_TOKEN}"; }; f'
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git clone --depth 1 "https://github.com/${TAP_REPO}.git" tap
+
+          mkdir -p tap/Formula
+          cat > tap/Formula/tdo.rb <<FORMULA
+          # This file is generated by the release workflow in
+          # ${GITHUB_REPOSITORY}. Edit that workflow, not this file.
+          class Tdo < Formula
+            desc "Todo list CLI that stores your tasks in a database you own"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "${base}/${darwin_arm64}"
+                sha256 "$(sum "${darwin_arm64}")"
+              end
+              on_intel do
+                url "${base}/${darwin_amd64}"
+                sha256 "$(sum "${darwin_amd64}")"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${base}/${linux_arm64}"
+                sha256 "$(sum "${linux_arm64}")"
+              end
+              on_intel do
+                url "${base}/${linux_amd64}"
+                sha256 "$(sum "${linux_amd64}")"
+              end
+            end
+
+            def install
+              bin.install "${BINARY}"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/${BINARY} version")
+            end
+          end
+          FORMULA
+
+          cd tap
+          if git diff --quiet; then
+            echo "the formula already matches this release; nothing to push"
+            exit 0
+          fi
+          git add Formula/tdo.rb
+          git commit -m "tdo ${VERSION}"
+          git push origin HEAD

@@ -1,0 +1,62 @@
+# Example configuration for tdo.
+#
+# Copy to ~/.config/todocloud/config.toml and edit. Keep it at mode 0600, and
+# NEVER keep a real copy inside a git repository — `config.toml` is gitignored
+# here for exactly that reason.
+#
+# Every value below is a placeholder.
+#
+# A token comes from, highest priority first: the environment variable, the OS
+# keychain (`tdo login`), then a `token` key in this file. Prefer one of the
+# first two; this file is the last resort, and a token here is loaded only when
+# ALL of these hold:
+#
+#   - the file is not inside a git repository;
+#   - it is ~/.config/todocloud/config.toml, or the file named by
+#     $TODOCLOUD_CONFIG (a token in a file passed with --config is refused);
+#   - it is not group- or world-readable (mode 0600).
+#
+# A refused token is not loaded, and `tdo` says so loudly on stderr, naming the
+# file and the line but never the value. The only supported spelling is `token`
+# under [turso] or [d1]; `api_token`, `secret`, `password` and `key` are never
+# loaded and always warn.
+
+# One of: sqlite | turso | d1.
+#
+# Only sqlite and turso work today. d1 is a recognised name but is not
+# implemented yet, so naming it exits 3. "firestore" is recognised as well,
+# only so that an old config file is told the provider was removed rather than
+# that it does not exist — see docs/providers.md.
+#
+# This line is the normal way to choose which store `tdo` uses — it is the
+# answer to "which database are my tasks in". `TODOCLOUD_PROVIDER` overrides it
+# for a shell session, and `--provider NAME` for a single command; a write that
+# did not get its provider from here names the store on stderr. `tdo config`
+# shows the resolved provider and where it came from.
+provider = "sqlite"
+
+[sqlite]
+# Default: ~/.local/share/todocloud/tasks.db
+path = "~/.local/share/todocloud/tasks.db"
+
+[turso]
+url = "libsql://example.turso.io"
+# Token, best first:
+#   tdo login                        # mints a per-database token with the
+#                                    # turso CLI and stores it in the keychain
+#   export TODOCLOUD_TURSO_TOKEN=TOKEN_GOES_HERE
+#   token = "TOKEN_GOES_HERE"        # here, only under the guards above
+# By hand, scoped to this one database:
+#   turso db tokens create <database-name>
+
+[d1]
+account_id = "00000000-0000-0000-0000-000000000000"
+database_id = "00000000-0000-0000-0000-000000000000"
+# Token, best first:
+#   tdo login --provider d1          # read from stdin, stored in the keychain
+#   export TODOCLOUD_D1_TOKEN=TOKEN_GOES_HERE
+#   token = "TOKEN_GOES_HERE"        # here, only under the guards above
+#
+# WARNING: a Cloudflare API token cannot be scoped to one D1 database. The
+# minimum write permission (Account -> D1 -> Edit) covers EVERY D1 database in
+# the account. See SECURITY.md before using this provider.
