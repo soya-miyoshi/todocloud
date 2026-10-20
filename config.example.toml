@@ -16,6 +16,10 @@
 #     $TODOCLOUD_CONFIG (a token in a file passed with --config is refused);
 #   - it is not group- or world-readable (mode 0600).
 #
+# That last guard is a POSIX file mode, so on Windows a token in this file is
+# never loaded, whatever the file's ACL: set TODOCLOUD_TURSO_TOKEN or
+# TODOCLOUD_D1_TOKEN in the environment there instead. SECURITY.md says why.
+#
 # A refused token is not loaded, and `tdo` says so loudly on stderr, naming the
 # file and the line but never the value. The only supported spelling is `token`
 # under [turso] or [d1]; `api_token`, `secret`, `password` and `key` are never

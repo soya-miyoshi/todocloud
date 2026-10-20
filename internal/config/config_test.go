@@ -56,6 +56,51 @@ func writeXDGConfig(t *testing.T, body string) (home, path string) {
 	return home, writeFile(t, dir, body)
 }
 
+// requireFileTokens skips a test whose premise is that a token in the config
+// file is loaded. On a platform without POSIX file modes that never happens
+// by design — see fileTokenModeGuard — and the refusal has its own test in
+// TestLoadRefusesEveryFileTokenWithoutPOSIXModes.
+func requireFileTokens(t *testing.T) {
+	t.Helper()
+	if !FileTokensSupported {
+		t.Skipf("a token in a config file is not read on %s", runtime.GOOS)
+	}
+}
+
+// TestLoadRefusesEveryFileTokenWithoutPOSIXModes is the other half of
+// requireFileTokens: where a file token is not supported, the canonical path
+// at the strictest mode the platform can set is still refused, and the
+// warning sends the user to the environment or the keychain.
+func TestLoadRefusesEveryFileTokenWithoutPOSIXModes(t *testing.T) {
+	if FileTokensSupported {
+		t.Skipf("a token in a config file is read on %s", runtime.GOOS)
+	}
+	home, path := writeXDGConfig(t, tokenFile)
+
+	cfg, err := Load(Options{
+		Getenv:  fakeEnv(map[string]string{"HOME": home}),
+		Keyring: noKeyring,
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Turso.Token.Empty() {
+		t.Error("a token was loaded from a config file on a platform without POSIX modes")
+	}
+	if _, ok := cfg.Origins["turso.token"]; ok {
+		t.Error("a refused token was recorded in Origins")
+	}
+	if len(cfg.Warnings) != 1 {
+		t.Fatalf("Warnings = %v, want exactly one", cfg.Warnings)
+	}
+	for _, want := range []string{path, runtime.GOOS, EnvTursoToken, "tdo login"} {
+		if !strings.Contains(cfg.Warnings[0], want) {
+			t.Errorf("warning %q does not mention %q", cfg.Warnings[0], want)
+		}
+	}
+	assertNoWarningLeaksTheToken(t, cfg)
+}
+
 // TestMain points the package's default keychain lookup at a fake, so that no
 // test in this file can reach the real OS keychain even by omitting
 // Options.Keyring.
@@ -853,6 +898,7 @@ func TestDefaultSQLitePath(t *testing.T) {
 // TestLoadLoadsAFileTokenFromTheXDGPath is the positive case for the guarded
 // file token: the canonical path, mode 600, outside any repository.
 func TestLoadLoadsAFileTokenFromTheXDGPath(t *testing.T) {
+	requireFileTokens(t)
 	home, path := writeXDGConfig(t, tokenFile)
 
 	cfg, err := Load(Options{
@@ -903,6 +949,7 @@ func TestLoadRefusesAFileTokenOutsideTheXDGPath(t *testing.T) {
 }
 
 func TestLoadAcceptsAFileTokenViaTodocloudConfig(t *testing.T) {
+	requireFileTokens(t)
 	dir := t.TempDir()
 	path := writeFile(t, dir, tokenFile)
 
@@ -949,6 +996,7 @@ func TestLoadTokenPrecedence(t *testing.T) {
 	})
 
 	t.Run("keychain beats file", func(t *testing.T) {
+		requireFileTokens(t)
 		home, _ := writeXDGConfig(t, tokenFile)
 		lookup, asked := recordingKeyring(map[string]string{keyring.AccountTursoToken: keychainToken})
 
@@ -994,6 +1042,7 @@ func TestLoadTokenPrecedence(t *testing.T) {
 }
 
 func TestLoadKeyringMissIsSilent(t *testing.T) {
+	requireFileTokens(t)
 	home, path := writeXDGConfig(t, tokenFile)
 
 	cfg, err := Load(Options{
@@ -1012,6 +1061,7 @@ func TestLoadKeyringMissIsSilent(t *testing.T) {
 }
 
 func TestLoadKeyringErrorFallsThroughToTheFile(t *testing.T) {
+	requireFileTokens(t)
 	home, path := writeXDGConfig(t, tokenFile)
 	failure := errors.New("the keychain helper exited with status 1")
 
@@ -1064,6 +1114,7 @@ func TestValidateMissingTokenMentionsTheKeychain(t *testing.T) {
 }
 
 func TestDescribeReportsTokenOriginsAndTheKeychain(t *testing.T) {
+	requireFileTokens(t)
 	home, path := writeXDGConfig(t, tokenFile)
 
 	cfg, err := Load(Options{
@@ -1113,6 +1164,7 @@ func TestDescribeReportsTokenOriginsAndTheKeychain(t *testing.T) {
 // TestFileAndKeyringTokensNeverLeak is TestTokenNeverLeaks for the two new
 // sources: a token loaded from the config file and one from the keychain.
 func TestFileAndKeyringTokensNeverLeak(t *testing.T) {
+	requireFileTokens(t)
 	const keychainToken = "KEYCHAIN_TOKEN_GOES_HERE"
 	// provider d1 so that the keychain is consulted for the d1 token, while
 	// the turso token still comes from the file.

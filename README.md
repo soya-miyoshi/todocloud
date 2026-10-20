@@ -7,9 +7,9 @@ credentials, and it talks to that database directly — a local file for SQLite,
 HTTPS for Turso. There is no todocloud server, no account to sign up for, and
 no telemetry — your tasks go to your database and nowhere else.
 
-> **Status: unreleased.** Nothing is tagged yet, so the schema, the `--json`
-> shapes and the command surface are still free to change. `PLAN.md` is the
-> design and the reasoning behind it.
+> **Status: pre-1.0.** The schema, the `--json` shapes and the command surface
+> are still free to change until 1.0. `PLAN.md` is the design and the
+> reasoning behind it.
 
 ## Why
 
@@ -23,15 +23,16 @@ and answering it needs projects, deferral and sequencing.
 
 ## Install
 
-Nothing is published yet; these are what the first tagged release makes work.
-Until then, `go build ./cmd/tdo` in a clone.
-
 ```sh
 brew install soya-miyoshi/tap/tdo
 
 # or, with a Go toolchain:
 go install github.com/soya-miyoshi/todocloud/cmd/tdo@latest
 ```
+
+The tap carries the latest `vX.Y.Z` tag. A prerelease (`-rc.1` and the like)
+is on the releases page only, deliberately: `brew upgrade` should not move
+anyone onto one.
 
 Or download an archive for your platform from the
 [releases page](https://github.com/soya-miyoshi/todocloud/releases) —
@@ -264,7 +265,10 @@ any file inside a git repository or outside
 `~/.config/todocloud/config.toml` / `$TODOCLOUD_CONFIG`. A token comes from an
 environment variable, from the OS keychain where `tdo login` put it, or — as a
 last resort, and only outside every git repository, at mode 0600 — from that
-file; see [SECURITY.md](SECURITY.md). There is deliberately no `--token` flag,
+file; see [SECURITY.md](SECURITY.md). On Windows that last resort is not
+available: mode 0600 is a POSIX notion, so a token in the file is never
+loaded there and the environment variable is the way to hold one. There is
+deliberately no `--token` flag,
 because command-line arguments are visible to other processes and land in your
 shell history.
 

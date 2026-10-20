@@ -156,6 +156,17 @@ func csvLine(cells map[string]string) string {
 	return csvHeaderLine() + row.String()
 }
 
+// readable reports whether path can be opened for reading, which is how the
+// unreadable-file case asks whether it has a premise on this platform.
+func readable(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
+}
+
 // A file that is a directory, one that cannot be read and /dev/null are all
 // reported as usage errors, because the path came from the command line.
 func TestImportOnFilesThatCannotBeRead(t *testing.T) {
@@ -174,6 +185,14 @@ func TestImportOnFilesThatCannotBeRead(t *testing.T) {
 		"a missing file":     missing,
 	} {
 		t.Run(name, func(t *testing.T) {
+			// Mode 0000 is a request, not a guarantee: on a platform without
+			// POSIX modes the file stays readable and there is no failure to
+			// report. The file itself is asked rather than the platform, so
+			// this skips exactly when the premise is absent.
+			if path == unreadable && readable(path) {
+				t.Skip("mode 0000 does not stop a read on this platform")
+			}
+
 			got := h.run("import", path)
 			if got.code != exit.Usage {
 				t.Errorf("exit code = %d, want %d\nstderr: %s", got.code, exit.Usage, got.stderr)

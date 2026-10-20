@@ -28,6 +28,10 @@ func TestPathPrecedence(t *testing.T) {
 		t.Setenv("TODOCLOUD_STATE_DIR", "")
 		t.Setenv("XDG_STATE_HOME", "")
 		t.Setenv("HOME", home)
+		// os.UserHomeDir reads USERPROFILE on windows and HOME elsewhere, so
+		// both are pointed at the same directory and the subtest asks the
+		// same question on every platform.
+		t.Setenv("USERPROFILE", home)
 		want := filepath.Join(home, ".local", "state", "todocloud", FileName)
 		if got := Path(); got != want {
 			t.Fatalf("got %q, want %q", got, want)

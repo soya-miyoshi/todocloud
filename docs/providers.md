@@ -80,8 +80,9 @@ In this order: the environment variable, then the OS keychain (written by
 `tdo login`), then your config file — and a config-file token is loaded only
 when the file sits outside every git repository, is
 `~/.config/todocloud/config.toml` or `$TODOCLOUD_CONFIG`, and is not group- or
-world-readable. A refused token is reported loudly on stderr, with the file and
-the line but never the value. `SECURITY.md` has the detail and the reasoning.
+world-readable — a POSIX mode, so on Windows a config-file token is not loaded
+at all. A refused token is reported loudly on stderr, with the file and the
+line but never the value. `SECURITY.md` has the detail and the reasoning.
 
 ```sh
 tdo login                  # store this provider's token in the OS keychain
@@ -92,8 +93,10 @@ tdo login --remove         # delete it (confirms first; --yes skips the prompt)
 The token is read from stdin only — a non-echoed prompt on a terminal, one line
 with no prompt when stdin is a pipe. There is no flag that takes a token, and
 there never will be: `argv` is world-readable through `ps` and lands in your
-shell history. There is no keychain backend on Windows, where the environment
-variable or the config file is used instead.
+shell history. There is no keychain backend on Windows, and a token in the
+config file is not read there either — the owner-only check is a POSIX file
+mode, which Windows does not have (see [SECURITY.md](../SECURITY.md)) — so on
+Windows the environment variable is the way to hold a token.
 
 ## Local SQLite (no credentials)
 

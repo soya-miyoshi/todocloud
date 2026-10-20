@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -411,6 +412,15 @@ func TestTursoDatabaseURLFailures(t *testing.T) {
 }
 
 func TestExecRunnerAgainstAFakeExecutable(t *testing.T) {
+	// The fake is a #!/bin/sh script, which CreateProcess cannot start: a
+	// batch file would need cmd.exe in front of it and would no longer be
+	// the same test. What execRunner does with a child's streams and exit
+	// status is covered on every platform through the injected runner; this
+	// test is here for the one path that needs a real process.
+	if runtime.GOOS == "windows" {
+		t.Skip("a shell script is not executable on windows")
+	}
+
 	dir := t.TempDir()
 	script := filepath.Join(dir, "fake-turso")
 	body := "#!/bin/sh\nprintf '%s\\n' \"" + fakeToken + "\"\nprintf 'a note\\n' >&2\nexit 7\n"

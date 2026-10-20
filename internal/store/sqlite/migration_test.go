@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -147,7 +148,12 @@ func TestMigrateBacksTheDatabaseUpBeforeItChangesIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the backup is not there: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	// A permission bit is a POSIX notion: on windows Go reports 0666 for a
+	// file whatever its ACL says, so this assertion has nothing to read
+	// there. The same limit decides product behaviour in
+	// internal/config/filetoken_other.go, where a token in a file is refused
+	// rather than guarded.
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("a backup of a task list is private data and must be mode 0600, but it is %o", perm)
 	}
 

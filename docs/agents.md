@@ -687,8 +687,9 @@ UTF-8 is replaced with U+FFFD** when it passes through JSON. NUL bytes survive.
 
 An agent should never need to see a credential. A token comes from an
 environment variable (`TODOCLOUD_TURSO_TOKEN`, `TODOCLOUD_D1_TOKEN`), else from
-the OS keychain where `tdo login` put it, else from the user's own config file
-under the guards in `SECURITY.md`; non-secret settings come from
+the OS keychain where `tdo login` put it, else — on POSIX systems only — from
+the user's own config file under the guards in `SECURITY.md`; non-secret
+settings come from
 `~/.config/todocloud/config.toml`. The agent just runs the command.
 
 There is no `--token` flag, and no command prints a token: `tdo config`,

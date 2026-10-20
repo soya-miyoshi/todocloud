@@ -28,6 +28,16 @@ import (
 // replaced through the package-level indirections, and everything on disk
 // lives under t.TempDir().
 
+// tomlString renders a value as a basic TOML string for a hand-written
+// fixture. A path is the reason it exists: on Windows a temporary directory
+// is C:\Users\..., and a backslash in a TOML basic string begins an escape
+// sequence, so pasting such a path in raw produces a file the parser rejects
+// — and a test that fails for a reason that has nothing to do with what it
+// is testing.
+func tomlString(v string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"`
+}
+
 // credSentinel is one fake credential and the source it is planted in. Each
 // value is obviously fake and distinctive enough to grep the repository for.
 type credSentinel struct {
@@ -169,8 +179,8 @@ func newMatrixFixture(t *testing.T) *matrixFixture {
 	}
 
 	stray := filepath.Join(dir, "stray.toml")
-	strayBody := "provider = \"sqlite\"\n\n[sqlite]\npath = \"" +
-		filepath.Join(dir, "absent", "tasks.db") + "\"\n"
+	strayBody := "provider = \"sqlite\"\n\n[sqlite]\npath = " +
+		tomlString(filepath.Join(dir, "absent", "tasks.db")) + "\n"
 	if err := os.WriteFile(stray, []byte(strayBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -583,6 +593,17 @@ func TestConfigFileTokenGuardMatrix(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			// Where a file token is not read at all, every case that writes
+			// one is a refusal with a warning, whatever the path and the mode
+			// say. The verdict is the platform's, not the matrix's, so the
+			// expectation moves rather than the case being dropped: that a
+			// token in a file never loads here is exactly what is worth
+			// asserting on such a platform.
+			if !config.FileTokensSupported && c.key == "token" {
+				c.wantLoaded = false
+				c.wantWarning = true
+			}
+
 			res, described := runGuardCase(t, c)
 
 			if res.code != 0 {
@@ -661,7 +682,7 @@ func runGuardCase(t *testing.T, c guardCase) (result, map[string]any) {
 		t.Fatal(err)
 	}
 
-	body := "provider = \"sqlite\"\n\n[sqlite]\npath = \"" + filepath.Join(root, "tasks.db") + "\"\n" +
+	body := "provider = \"sqlite\"\n\n[sqlite]\npath = " + tomlString(filepath.Join(root, "tasks.db")) + "\n" +
 		"\n[turso]\nurl = \"libsql://example.turso.io\"\n"
 	if c.key != "" {
 		body += c.key + " = \"" + sentinelFile + "\"\n"

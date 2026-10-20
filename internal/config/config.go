@@ -292,7 +292,9 @@ const xdgConfigHint = "~/.config/todocloud/config.toml"
 //     published, which is the whole reason tokens were kept out of files;
 //  2. only the XDG config file and $TODOCLOUD_CONFIG qualify, because an
 //     arbitrary --config path is too easily a repository-relative one;
-//  3. a group- or world-readable file is not a safe place for a credential.
+//  3. a group- or world-readable file is not a safe place for a credential —
+//     which only a platform with POSIX file modes can be asked; see
+//     fileTokenModeGuard.
 func fileTokenGuard(path string, pathAllowed bool) tokenGuard {
 	if path == "" {
 		return tokenGuard{}
@@ -307,12 +309,7 @@ func fileTokenGuard(path string, pathAllowed bool) tokenGuard {
 			"a token is read only from %s or the file named by $%s, and this file is neither; an arbitrary --config path is too easily one inside a repository.",
 			xdgConfigHint, EnvConfig)}
 	}
-	if perm, ok := filePerm(path); ok && perm&0o077 != 0 {
-		return tokenGuard{reason: fmt.Sprintf(
-			"the file is readable by group or others (mode %04o); run: chmod 600 %s",
-			perm, path)}
-	}
-	return tokenGuard{allowed: true}
+	return fileTokenModeGuard(path)
 }
 
 // resolveToken applies the token precedence for one provider: the environment
@@ -468,16 +465,6 @@ func readConfigFile(cfg *Config, path string, mustExist bool) (*tomlFile, error)
 	checkTokenKeys(cfg, file, path)
 
 	return file, nil
-}
-
-// filePerm returns the permission bits of path, and whether they could be
-// read at all.
-func filePerm(path string) (os.FileMode, bool) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, false
-	}
-	return info.Mode().Perm(), true
 }
 
 // repositoryRoot returns the directory of the git repository path sits in, if

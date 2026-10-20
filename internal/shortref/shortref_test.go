@@ -3,6 +3,7 @@ package shortref
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -46,6 +47,15 @@ func TestSaveUsesOwnerOnlyPermissions(t *testing.T) {
 	t.Setenv("TODOCLOUD_STATE_DIR", filepath.Join(dir, "state"))
 	if err := Save("sqlite: /tmp/tasks.db", []string{"01AAA"}); err != nil {
 		t.Fatal(err)
+	}
+
+	// A permission bit is a POSIX notion: on windows Go reports 0666 for a
+	// file whatever its ACL says, so this assertion has nothing to read
+	// there. The same limit decides product behaviour in
+	// internal/config/filetoken_other.go, where a token in a file is refused
+	// rather than guarded.
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are not the access control on windows")
 	}
 
 	info, err := os.Stat(Path())

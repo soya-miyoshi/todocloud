@@ -20,9 +20,9 @@ the database you configured. Specifically:
      consulted only for the token of the provider actually in use, with a
      two-second timeout, and a keychain failure is never fatal: `tdo` warns and
      falls through to the config file. There is no keychain backend on Windows,
-     where the environment variable or the config file is used instead. This is
-     the recommended place for an interactive user.
-  3. **The config file**, under the guards below.
+     where the environment variable is used instead. This is the recommended
+     place for an interactive user.
+  3. **The config file**, under the guards below — on POSIX systems only.
 - They are never accepted as command-line flags, because `argv` is readable by
   other processes on the machine (`ps`) and is written to your shell history.
   There is no `--token` flag and there must never be one. For the same reason a
@@ -55,6 +55,19 @@ The supported spelling is exactly `token`; any other secret-shaped key
    refused, because an arbitrary path is too easily one inside a repository.
 3. **The file is not group- or world-readable.** Otherwise the token is
    refused, with `chmod 600 <path>`.
+
+**On Windows, a token in the config file is never loaded**, whatever the path
+and whatever the file's ACL. Guard 3 is a POSIX file mode, and Go reports the
+mode of a Windows file as `0666` however restrictive its ACL is — so the
+question the guard exists to ask, *can another account on this machine read
+this credential*, cannot be answered there. Loading the token anyway would
+mean dropping the check that makes a token in a file defensible at all, so it
+stays unread and `tdo` says so on stderr. Windows has no keychain backend
+either, which leaves the environment variable — `TODOCLOUD_TURSO_TOKEN` or
+`TODOCLOUD_D1_TOKEN`, set for your user account — as the way to hold a token
+there. For the same reason, the files `tdo` creates for itself on Windows (the
+database, its WAL files, the short-id cache, a pre-migration backup) carry the
+directory's inherited ACL rather than the mode `0600` they get on POSIX.
 
 A refused token produces a loud warning on **stderr** naming the file, the line
 and what to do instead — never the value. A config file that holds no token
