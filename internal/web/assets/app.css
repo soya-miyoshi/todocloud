@@ -186,9 +186,41 @@ kbd {
 }
 
 @media (max-width: 700px) {
-  body { height: auto; }
   main { flex-direction: column; }
   #sidebar, #inspector { width: auto; border: 0; border-bottom: 1px solid var(--edge); }
+  /* The sidebar is a navigation strip here, not a column: capped so that the
+     list it navigates to is on screen under it rather than a scroll away. */
+  #sidebar { max-height: 38vh; }
   #bar { flex-wrap: wrap; }
   #store, #keys { display: none; }
+
+  /* iOS zooms the page when a field smaller than 16px takes focus, and never
+     zooms back out. Every control is therefore full size on a phone, which
+     also makes them big enough to hit. */
+  input, textarea, select, button { font-size: 16px; padding: 8px 10px; }
+  .item { padding: 10px 8px; }
+  .item .box { font-size: 18px; }
+  #sidebar button { padding: 8px 6px; }
+}
+
+/* --- installed to a home screen ---------------------------------------
+
+   There is no browser chrome in standalone mode, so the page owns the whole
+   screen including the parts the hardware takes: the status bar at the top
+   and the home indicator at the bottom. The insets are paid back here, and
+   nowhere else, because in a tab they are all zero. */
+
+body {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+           env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* dvh rather than vh: on a phone the browser's own bars come and go, and
+     vh is the tallest of those states, which puts the footer off screen. */
+  height: 100dvh;
+}
+
+@media (display-mode: standalone) {
+  /* An installed viewer has no reload button of its own, so the one in the
+     footer stops being a keyboard hint and starts being the only way back. */
+  #keys { display: flex; }
+  #bar { padding-top: 12px; }
 }

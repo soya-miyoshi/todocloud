@@ -125,6 +125,19 @@ func (s *Server) routes() error {
 	mux.Handle("GET /app.css", http.FileServerFS(static))
 	mux.Handle("GET /app.js", http.FileServerFS(static))
 
+	// The rest of the shell, which exists so the viewer can be installed to
+	// a phone's home screen and behave like an app there.
+	mux.Handle("GET /icon-192.png", http.FileServerFS(static))
+	mux.Handle("GET /icon-512.png", http.FileServerFS(static))
+	mux.Handle("GET /apple-touch-icon.png", http.FileServerFS(static))
+	// Two files Go has no media type for, and a browser refuses both when
+	// they arrive as something else.
+	mux.Handle("GET /manifest.webmanifest", file(static, "manifest.webmanifest", "application/manifest+json"))
+	// The worker caches nothing (see the file); it is revalidated rather
+	// than cached itself, because a stale worker is the one thing a phone
+	// cannot be made to let go of.
+	mux.Handle("GET /sw.js", file(static, "sw.js", "text/javascript; charset=utf-8"))
+
 	mux.HandleFunc("GET /api/state", s.read(s.handleState))
 	mux.HandleFunc("POST /api/tasks", s.write(s.handleCreate))
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.write(s.handleEdit))
@@ -137,6 +150,21 @@ func (s *Server) routes() error {
 
 	s.mux = mux
 	return nil
+}
+
+// file serves one embedded asset under a media type of our choosing, for
+// the two the standard library's extension table does not know.
+func file(static fs.FS, name, contentType string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := fs.ReadFile(static, name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(body)
+	})
 }
 
 // ServeHTTP answers a request under the mutex, so the store is only ever

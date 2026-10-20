@@ -357,3 +357,74 @@ func TestEveryDateSpellingTheCLITakes(t *testing.T) {
 		t.Fatal("an unknown date field should be a bad request")
 	}
 }
+
+// TestShellIsServable covers the files that make the viewer installable. A
+// manifest served as text/plain, or an icon that 404s, fails silently in a
+// browser: the install option simply never appears.
+func TestShellIsServable(t *testing.T) {
+	h := newHarness(t)
+	for _, c := range []struct {
+		path string
+		typ  string
+	}{
+		{"/manifest.webmanifest", "application/manifest+json"},
+		{"/sw.js", "text/javascript"},
+		{"/icon-192.png", "image/png"},
+		{"/icon-512.png", "image/png"},
+		{"/apple-touch-icon.png", "image/png"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, c.path, nil)
+		rec := httptest.NewRecorder()
+		h.srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: status %d, want 200", c.path, rec.Code)
+			continue
+		}
+		if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, c.typ) {
+			t.Errorf("GET %s: content type %q, want %q", c.path, got, c.typ)
+		}
+		if rec.Body.Len() == 0 {
+			t.Errorf("GET %s: empty body", c.path)
+		}
+	}
+}
+
+// TestShellCarriesNoToken keeps the token where it belongs. The page is the
+// one file that carries it; a browser may keep any of these others around,
+// so none of them may hold anything that expires with the process.
+func TestShellCarriesNoToken(t *testing.T) {
+	h := newHarness(t)
+	for _, path := range []string{"/manifest.webmanifest", "/sw.js", "/app.js", "/app.css"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h.srv.ServeHTTP(rec, req)
+		if strings.Contains(rec.Body.String(), h.srv.token) {
+			t.Errorf("GET %s: body carries the write token", path)
+		}
+	}
+}
+
+// TestWorkerAnswersNothing holds the worker to what it is for. It is
+// registered so the page can be installed to a home screen and for nothing
+// else; the moment it answers a request from a cache, the phone can show a
+// list the store disagrees with, and no devtools window exists there to find
+// out why.
+func TestWorkerAnswersNothing(t *testing.T) {
+	h := newHarness(t)
+	req := httptest.NewRequest(http.MethodGet, "/sw.js", nil)
+	rec := httptest.NewRecorder()
+	h.srv.ServeHTTP(rec, req)
+	// The comments in that file name both of these in explaining why they
+	// are absent, so the assertion is about the code and reads past them.
+	var code strings.Builder
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "//") {
+			code.WriteString(line)
+		}
+	}
+	for _, forbidden := range []string{"respondWith", "caches"} {
+		if strings.Contains(code.String(), forbidden) {
+			t.Errorf("the service worker uses %s; it is meant to intercept nothing", forbidden)
+		}
+	}
+}

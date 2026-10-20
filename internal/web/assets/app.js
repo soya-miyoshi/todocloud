@@ -415,3 +415,24 @@ document.addEventListener('keydown', (event) => {
 });
 
 reload().catch((err) => say(err.message, true));
+
+// --- installing to a home screen ---------------------------------------
+
+// The worker caches nothing; it exists so the page is installable to a home
+// screen. It is registered only in a secure context, which is where a
+// browser will accept one at all: over loopback, or behind TLS. Reached by
+// plain http across a tailnet there is no worker, the viewer works exactly
+// as before, and nothing here complains — `tailscale serve` is how that
+// install gets its https, and it is documented rather than demanded.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', () => {
+    // updateViaCache: 'none' so the worker itself is never served from the
+    // browser's HTTP cache: a phone has no devtools window to clear, and a
+    // worker one version behind is the one thing nobody can fix from there.
+    navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }).catch(() => {
+      // A viewer without a worker is a working viewer — the worker answers
+      // no requests. Only the install prompt is lost, which is not worth a
+      // message on screen.
+    });
+  });
+}
