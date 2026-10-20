@@ -149,6 +149,43 @@ func testPerspectives(t *testing.T, f *fixture) {
 		t.Fatalf("Perspectives must be sorted by name\n  got %v", perspectiveNames(all))
 	}
 
+	// Every field of a filter narrows a listing, so a field a provider
+	// drops on the way to the database or back makes the saved query wider
+	// than the one the user saved — and a wider listing is acted on rather
+	// than reported. Both providers store the filter as one JSON document,
+	// and this is what says they must keep all of it.
+	whole := &store.Perspective{
+		Name: "Everything set",
+		Filter: store.Filter{
+			Kinds:           []task.Kind{task.KindFolder, task.KindProject, task.KindTask},
+			Statuses:        []task.Status{task.StatusActive, task.StatusOnHold, task.StatusDone, task.StatusDropped},
+			Availability:    store.AvailabilityDeferred,
+			Flagged:         &flagged,
+			Scope:           store.Scope{ParentID: "01J3ZQK8V9XW5S6R7T8Y9Z0A1B", Children: true, Subtree: "01J3ZQK8V9XW5S6R7T8Y9Z0A1C", Inbox: true},
+			Tags:            []string{"home", "errand"},
+			TagsAny:         true,
+			DeferBefore:     timeAt(f.now, time.Hour),
+			DeferAfter:      timeAt(f.now, 2*time.Hour),
+			DueBefore:       timeAt(f.now, 3*time.Hour),
+			DueAfter:        timeAt(f.now, 4*time.Hour),
+			HasDue:          &flagged,
+			ReviewDueBefore: timeAt(f.now, 5*time.Hour),
+			IncludeDeleted:  true,
+			OnlyDeleted:     true,
+			Order:           store.OrderDefer,
+			Limit:           7,
+		},
+		CreatedAt: f.now,
+		UpdatedAt: f.now,
+	}
+	requireNoError(t, "a filter using every field must be storable", f.s.SavePerspective(f.ctx, whole))
+	back, err := f.s.Perspective(f.ctx, "everything set")
+	requireNoError(t, "a perspective using every filter field must be readable", err)
+	if !reflect.DeepEqual(back.Filter, whole.Filter) {
+		t.Fatalf("every field of a saved filter must survive the store, or the perspective runs as a different and usually wider query (PLAN.md §3.6)\n  got  %+v\n  want %+v", back.Filter, whole.Filter)
+	}
+	requireNoError(t, "tidying up the all-fields perspective", f.s.DeletePerspective(f.ctx, "everything set"))
+
 	requireNoError(t, "a perspective is a query, so deleting one is a real delete",
 		f.s.DeletePerspective(f.ctx, "NEXT"))
 	_, err = f.s.Perspective(f.ctx, "next")

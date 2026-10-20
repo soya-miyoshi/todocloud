@@ -252,6 +252,25 @@ func ParseValue(raw string) any {
 }
 
 // TimeFormat is the wire format for every timestamp the CLI writes.
+//
+// **It must stay fixed-width.** Timestamps are stored as text and the
+// providers compare them as text — `defer_at < ?`, `ORDER BY updated_at` —
+// so lexicographic order has to equal chronological order. RFC 3339 in UTC
+// is always the same twenty characters ending in Z, which makes that true.
+//
+// The trap is sub-second precision. `time.RFC3339Nano` **strips trailing
+// zeros**, so it is variable width and breaks the equality above:
+// "…:00.1Z" sorts after "…:00.05Z". If this ever needs milliseconds, the
+// only safe spelling is a fixed-width one such as
+// "2006-01-02T15:04:05.000Z07:00", and every stored timestamp has to be
+// rewritten by a migration step, because old and new rows would otherwise
+// be different widths and compare wrongly against each other.
+//
+// The cost of one-second resolution, accepted knowingly: PLAN.md resolves
+// a multi-device conflict by last-write-wins on updated_at, so two devices
+// editing the same task within the same second are indistinguishable and
+// the tie breaks arbitrarily. For one person on several machines that is
+// not worth more precision than it costs.
 const TimeFormat = time.RFC3339
 
 // FormatTime renders t in UTC in the wire format.

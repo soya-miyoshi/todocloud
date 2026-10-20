@@ -132,6 +132,23 @@ func Initial() []string { return append([]string(nil), initial...) }
 //     the new table created under a temporary name, IF NOT EXISTS.
 //   - A step is forward-only. There is no Down. A mistake is corrected by a
 //     further step, because the user's data has already moved.
+//
+// One case deserves its own note, because getting it wrong locks a user out
+// of their own tasks: **promoting a user-defined field to a column.** Until
+// it is promoted, `energy` lives in the open fields JSON and a user may
+// already have set it with `--set energy=high`. The moment it becomes a
+// required field its name is reserved, and from then on Task.MarshalJSON
+// skips the stored copy while Task.Validate refuses the task outright — so
+// the value disappears from output and the row can never be written again.
+// A step that adds such a column must therefore also move the data out of
+// the JSON, in the same step, idempotently:
+//
+//	UPDATE tasks SET energy = json_extract(fields, '$.energy'),
+//	                 fields = json_remove(fields, '$.energy')
+//	 WHERE json_extract(fields, '$.energy') IS NOT NULL;
+//
+// Running that twice is a no-op, because the WHERE clause stops matching
+// once the key is gone.
 type Step struct {
 	// To is the version this step produces. Steps are contiguous and the
 	// last one produces Version.

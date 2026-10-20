@@ -320,8 +320,8 @@ Per command:
 | `migrate` | `{"from":1,"to":1,"migrated":false,"backup_path":"","steps":[]}` |
 | `doctor` | `{"ok":true,"checks":[{"name":"config","ok":true,"detail":"…"}],"from":1,"to":1,"backup_path":"","steps":[]}` |
 | `login` | see below |
-| `export` | `{"version":1,"exported_at":"…","store":"sqlite: /path/to/tasks.db","tasks":[…],"count":n}` |
-| `import` | `{"imported":n,"skipped":n}` |
+| `export` | `{"version":1,"exported_at":"…","store":"sqlite: /path/to/tasks.db","tasks":[…],"count":n,"perspectives":[…],"perspective_count":n}` |
+| `import` | `{"imported":n,"skipped":n,"perspectives_imported":n,"perspectives_skipped":n}` |
 | `version` | `{"version":"…","commit":"…","go":"…"}` |
 | `config` | the resolved configuration, with every secret redacted |
 | any failure | `{"error":{"code":"…","message":"…"}}` |
@@ -340,6 +340,17 @@ comma-separated list.
 
 `export`'s `store` key names the store the archive was taken from, so an
 export is never anonymous about its origin.
+
+`export`'s `perspectives` are the saved queries, in the shape
+`perspective show` prints, and `import` restores them. An export is a backup
+and the way to move a list to another provider, so leaving the saved queries
+out of it would lose them on both paths. `count` is the number of tasks and
+only that — what it means beside a `tasks` array everywhere else in this
+document — and the saved queries are counted in `perspective_count`. The
+envelope's `version` names the shape of the file, and this is shape 1.
+`tdo export --csv` is a task
+table and carries no perspectives; when there are any to leave out it
+says so on stderr, so the CSV on stdout stays a CSV.
 
 ### What a listing selects, exactly
 
@@ -570,6 +581,17 @@ prefix, and listings rely on ids sorting into creation order.
   error and never a driver message. An existing task is never overwritten.
 - A file `tdo export` wrote imports with its ids intact, so re-importing an
   export into the same store is still a no-op.
+- **The file's `perspectives` are restored, and a name already in use is
+  skipped**, counted in `perspectives_skipped`. An import adds and never
+  overwrites, for a saved query as for a task: silently replacing the query
+  behind `tdo ls --perspective hot` would change what that command means with
+  nothing on screen to say so. Names are compared case-insensitively, and a
+  name repeated inside one file is a usage error. Perspectives are validated
+  with the tasks, before the first write, so a bad one leaves nothing stored.
+- **A stored filter carrying a key this binary does not know is refused**
+  (exit 2), naming the key. Every field of a filter narrows a listing, so
+  dropping one would run the saved query wider than it was saved — and a
+  listing that matches too much is acted on rather than noticed.
 
 ## Your own fields, from an agent
 

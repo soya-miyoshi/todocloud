@@ -16,11 +16,13 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/soya-miyoshi/todocloud/internal/task"
@@ -124,6 +126,18 @@ func (s Scope) Empty() bool {
 
 // Filter describes a listing. Only required fields appear here; a condition
 // on a user-defined field is a Condition, applied on the client.
+//
+// This type is a persisted format. A perspective is stored as
+// json.Marshal of the Filter below (§3.6), and `tdo export` writes the same
+// bytes into a backup, so the json tags here are on-disk structure, not a
+// rendering choice. Renaming a field, changing a tag or changing what a
+// field means rewrites the meaning of every perspective a user already
+// saved — a query saved as "flagged and not deferred" would come back
+// meaning something broader, and the user would act on the result without
+// being told. Adding a field is safe; anything else needs a migration of the
+// stored rows and a version to migrate on. TestTheStoredFilterFormatIsFixed
+// fails when the shape changes, and it is there to make that decision
+// deliberate rather than accidental.
 //
 // A zero Filter matches every live task in tree order. In particular an empty
 // Statuses matches every status: the command layer, not the store, decides
@@ -469,4 +483,31 @@ func sortByTime(tasks []*task.Task, at func(*task.Task) *time.Time) {
 func (f Filter) MarshalJSON() ([]byte, error) {
 	type alias Filter
 	return json.Marshal(alias(f))
+}
+
+// UnmarshalJSON refuses a stored filter carrying a key this binary does not
+// know.
+//
+// Ignoring it is the tempting option and the dangerous one: every field here
+// narrows a listing, so a key dropped on the way in produces a *wider* query
+// than the one that was saved. A perspective saved as "flagged, not
+// deferred, due this week" would quietly come back as "everything", and the
+// user would work from that list believing it was their saved one. A refusal
+// is visible; a wider answer is not. The caller turns this into a usage
+// error naming the perspective, so the way out is to re-save it with the
+// binary that wrote it, or to edit the stored filter by hand.
+func (f *Filter) UnmarshalJSON(data []byte) error {
+	type alias Filter
+	var a alias
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&a); err != nil {
+		if strings.HasPrefix(err.Error(), "json: unknown field ") {
+			return fmt.Errorf("filter: %s: it was written by a newer tdo, "+
+				"and running it here would widen the saved query rather than narrow it", err)
+		}
+		return err
+	}
+	*f = Filter(a)
+	return nil
 }

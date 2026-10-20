@@ -24,7 +24,8 @@ import (
 const bom = "\xef\xbb\xbf"
 
 // exportVersion is the version of the export envelope, not of the binary. It
-// changes only when the envelope's shape does.
+// changes when the envelope's shape does, so that a file says which shape it
+// is in rather than leaving a reader to sniff it.
 const exportVersion = 1
 
 // csvHeader is the column order of `tdo export --csv`. Every required field
@@ -110,7 +111,26 @@ func (a *app) exportCommand() *ucli.Command {
 			// for whoever is reading the terminal. It generates nothing
 			// either: export is a pure read (§3.4).
 
+			// A perspective is a saved query, and §3.7 calls an export a
+			// backup while §10 makes export/import the way to move a list to
+			// another provider. Leaving the saved queries out of both would
+			// lose them silently. Reading them is a pure read like the rest
+			// of export.
+			perspectives, err := st.Perspectives(ctx)
+			if err != nil {
+				return err
+			}
+			if perspectives == nil {
+				perspectives = []*store.Perspective{}
+			}
+
 			if cmd.Bool("csv") {
+				// CSV is a task table: a saved query has no row in it, and
+				// inventing one would make the file no longer a task table.
+				// The note goes to stderr, because stdout is the CSV.
+				if len(perspectives) > 0 {
+					a.out.Hintf("tdo: note: %d saved perspective(s) are not in a CSV export; use the JSON form to back them up", len(perspectives))
+				}
 				return writeCSV(a.out.Out, tasks)
 			}
 			// Export is machine output by nature, so it is JSON whether or
@@ -123,7 +143,13 @@ func (a *app) exportCommand() *ucli.Command {
 				// a credential: Store.Describe never returns a secret.
 				"store": st.Describe(),
 				"tasks": tasks,
-				"count": len(tasks),
+				// count is the number of tasks and nothing else, which is
+				// what `count` means beside a `tasks` array in every other
+				// command's --json. A second array gets a second count
+				// rather than being folded into this one.
+				"count":             len(tasks),
+				"perspectives":      perspectives,
+				"perspective_count": len(perspectives),
 			})
 		}),
 	}
@@ -204,10 +230,11 @@ func (a *app) importCommand() *ucli.Command {
 			if err != nil {
 				return exit.Usagef(err)
 			}
-			tasks, err := decodeImport(data)
+			file, err := decodeImport(data)
 			if err != nil {
 				return exit.Usagef(err)
 			}
+			tasks := file.Tasks
 
 			newIDs := cmd.Bool("new-ids")
 
@@ -215,6 +242,9 @@ func (a *app) importCommand() *ucli.Command {
 			// file is untrusted input, and rejecting it halfway through would
 			// leave the store holding part of it with no record of which part.
 			if err := prepareImport(tasks, newIDs); err != nil {
+				return err
+			}
+			if err := preparePerspectives(file.Perspectives, time.Now().UTC()); err != nil {
 				return err
 			}
 			// A child cannot be stored before its parent, because the store
@@ -241,10 +271,37 @@ func (a *app) importCommand() *ucli.Command {
 				imported++
 			}
 
+			// A perspective is restored only when its name is free. This is
+			// what `import` already does with a task whose id is taken: an
+			// import adds, it never overwrites. Silently replacing a saved
+			// query the user is still using would be the worse failure, and
+			// the count says it happened.
+			savedP, skippedP := 0, 0
+			for _, p := range file.Perspectives {
+				switch _, err := st.Perspective(ctx, p.Name); {
+				case err == nil:
+					skippedP++
+					continue
+				case errors.Is(err, store.ErrNotFound):
+				default:
+					return err
+				}
+				if err := st.SavePerspective(ctx, p); err != nil {
+					return err
+				}
+				savedP++
+			}
+
 			if a.out.JSON {
-				return a.out.Emit(map[string]any{"imported": imported, "skipped": skipped})
+				return a.out.Emit(map[string]any{
+					"imported": imported, "skipped": skipped,
+					"perspectives_imported": savedP, "perspectives_skipped": skippedP,
+				})
 			}
 			a.out.Printf("imported %d task(s), skipped %d\n", imported, skipped)
+			if savedP+skippedP > 0 {
+				a.out.Printf("imported %d perspective(s), skipped %d\n", savedP, skippedP)
+			}
 			return nil
 		}),
 	}
@@ -289,37 +346,87 @@ func prepareImport(tasks []*task.Task, newIDs bool) error {
 	return nil
 }
 
+// importFile is what an import file holds: the tasks, and the saved queries
+// the JSON envelope carries alongside them. The CSV form and a bare array
+// have no place for a perspective, so they leave it empty.
+type importFile struct {
+	Tasks        []*task.Task
+	Perspectives []*store.Perspective
+}
+
 // decodeImport accepts everything `tdo export` can produce: the JSON
 // envelope, a bare JSON array of tasks, and the CSV form. Unknown
 // user-defined fields are preserved, because every path ends in
 // task.Task.UnmarshalJSON.
-func decodeImport(data []byte) ([]*task.Task, error) {
+func decodeImport(data []byte) (importFile, error) {
 	trimmed := strings.TrimLeft(strings.TrimPrefix(string(data), bom), " \t\r\n")
 	if trimmed == "" {
-		return nil, errors.New("the file is empty")
+		return importFile{}, errors.New("the file is empty")
 	}
 
 	switch trimmed[0] {
 	case '[':
 		var tasks []*task.Task
 		if err := json.Unmarshal([]byte(trimmed), &tasks); err != nil {
-			return nil, fmt.Errorf("read tasks: %w", err)
+			return importFile{}, fmt.Errorf("read tasks: %w", err)
 		}
-		return tasks, nil
+		return importFile{Tasks: tasks}, nil
 	case '{':
 		var envelope struct {
-			Tasks []*task.Task `json:"tasks"`
+			Tasks        []*task.Task         `json:"tasks"`
+			Perspectives []*store.Perspective `json:"perspectives"`
 		}
 		if err := json.Unmarshal([]byte(trimmed), &envelope); err != nil {
-			return nil, fmt.Errorf("read tasks: %w", err)
+			return importFile{}, fmt.Errorf("read tasks: %w", err)
 		}
 		if envelope.Tasks == nil {
-			return nil, errors.New("no `tasks` array in the file")
+			return importFile{}, errors.New("no `tasks` array in the file")
 		}
-		return envelope.Tasks, nil
+		return importFile{Tasks: envelope.Tasks, Perspectives: envelope.Perspectives}, nil
 	default:
-		return decodeCSV(strings.NewReader(trimmed))
+		tasks, err := decodeCSV(strings.NewReader(trimmed))
+		if err != nil {
+			return importFile{}, err
+		}
+		return importFile{Tasks: tasks}, nil
 	}
+}
+
+// preparePerspectives validates every saved query before the first write,
+// for the same reason prepareImport does it for tasks: a file rejected
+// halfway through would leave the store holding part of it. It also drops a
+// name repeated inside one file, keeping the first, so that one file cannot
+// both create and overwrite the same perspective.
+func preparePerspectives(ps []*store.Perspective, now time.Time) error {
+	seen := make(map[string]bool, len(ps))
+	for i, p := range ps {
+		if p == nil {
+			return exit.Usagef(fmt.Errorf("perspective %d is null", i+1))
+		}
+		p.Name = strings.TrimSpace(p.Name)
+		if p.Name == "" {
+			return exit.Usagef(fmt.Errorf("perspective %d has no name", i+1))
+		}
+		// Names are compared case-insensitively everywhere else, so two
+		// spellings of one name in a file are one perspective.
+		key := strings.ToLower(p.Name)
+		if seen[key] {
+			return exit.Usagef(fmt.Errorf("perspective %d (%s) is in the file twice", i+1, p.Name))
+		}
+		seen[key] = true
+		if err := p.Filter.Validate(); err != nil {
+			return exit.Usagef(fmt.Errorf("perspective %d (%s): %w", i+1, p.Name, err))
+		}
+		// A hand-written file need not carry timestamps; a stored
+		// perspective always has them.
+		if p.UpdatedAt.IsZero() {
+			p.UpdatedAt = now
+		}
+		if p.CreatedAt.IsZero() {
+			p.CreatedAt = p.UpdatedAt
+		}
+	}
+	return nil
 }
 
 func decodeCSV(r io.Reader) ([]*task.Task, error) {

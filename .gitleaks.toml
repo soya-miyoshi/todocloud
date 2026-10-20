@@ -12,7 +12,7 @@ description = "Cloudflare API token"
 regex = '''(?i)\b[A-Za-z0-9_-]{40}\b'''
 path = '''(?i)(\.md|\.toml|\.ya?ml|\.go|\.sh|\.json)$'''
 entropy = 3.5
-[rules.allowlist]
+[[rules.allowlists]]
 regexTarget = "match"
 regexes = [
   '''TOKEN_GOES_HERE''',
@@ -20,6 +20,24 @@ regexes = [
   '''(?i)example''',
   '''(?i)placeholder''',
   '''(?i)redacted''',
+]
+
+# This project writes test names as sentences, so a Go identifier here is
+# routinely exactly forty characters and trips the rule above:
+# `TestConcurrentAddsNeverLoseATaskSilently` has the same shape as a
+# Cloudflare API token, and appears again in the doc comment above it.
+#
+# The exemption keys on the matched text, not on the line it sits in. An
+# earlier attempt exempted function declarations and prose comments, which
+# also exempted a token pasted bare into a comment — the case this rule most
+# needs to catch, and the one CLAUDE.md §1.1 forbids in so many words. Go
+# test identifiers begin with Test, Fuzz, Benchmark or Example; a credential
+# that happens to be exactly forty characters AND to begin with one of those
+# words is not a thing to design around.
+[[rules.allowlists]]
+regexTarget = "match"
+regexes = [
+  '''^(Test|Fuzz|Benchmark|Example)[A-Za-z0-9_]*$''',
 ]
 
 [[rules]]

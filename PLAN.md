@@ -285,6 +285,24 @@ live in a `perspectives` table and are applied with
 pins ids, so it cannot go stale; running one is exactly equivalent to typing
 its filter.
 
+Perspectives are part of a backup: `tdo export` writes them in a
+`perspectives` key alongside the tasks and `tdo import` restores them, since
+§10 makes export/import the way to move a list to another provider. An import
+never overwrites: a name already in use is skipped and counted, the same way
+a task whose id is taken is. CSV carries tasks only and says on stderr when
+it is leaving saved queries behind.
+
+A stored filter is the on-disk format of a perspective, so its JSON tags are
+structure rather than presentation; changing one changes the meaning of every
+perspective already saved and needs a migration. The in-memory `Filter` and
+the stored one are deliberately the same type: splitting them would buy an
+independent query API at the price of a conversion where a forgotten field
+stops being saved without failing to compile, which is the silent widening
+this is all guarding against. A golden test pins the shape instead. A stored filter holding a key
+this binary does not know is refused rather than ignored, because every field
+narrows a listing and a dropped one would run the saved query wider than it
+was saved.
+
 The honest limit: a perspective holds a server-side `Filter`, so the flags
 evaluated on the client — `--where`, `--priority`, `--untagged`,
 `--estimate-under` and `--sort title` — **cannot be saved in one**, and

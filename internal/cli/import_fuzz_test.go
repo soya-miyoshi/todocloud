@@ -59,10 +59,12 @@ func FuzzDecodeImport(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		tasks, err := decodeImport(data)
+		file, err := decodeImport(data)
+		tasks := file.Tasks
 		if err != nil {
-			if tasks != nil {
-				t.Fatalf("decodeImport returned %d task(s) alongside %v", len(tasks), err)
+			if tasks != nil || file.Perspectives != nil {
+				t.Fatalf("decodeImport returned %d task(s) and %d perspective(s) alongside %v",
+					len(tasks), len(file.Perspectives), err)
 			}
 			return
 		}
