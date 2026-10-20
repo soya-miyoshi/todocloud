@@ -2,13 +2,13 @@ package cli
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	ucli "github.com/urfave/cli/v3"
 
-	"github.com/soya-miyoshi/todocloud/internal/exit"
 	"github.com/soya-miyoshi/todocloud/internal/store"
+	"github.com/soya-miyoshi/todocloud/internal/task"
+	"github.com/soya-miyoshi/todocloud/internal/taskops"
 )
 
 func (a *app) editCommand() *ucli.Command {
@@ -35,56 +35,54 @@ func (a *app) editCommand() *ucli.Command {
 			if err != nil {
 				return err
 			}
-
-			// Edit a copy: the store still holds the value resolveRef
-			// returned, and a validation failure must not change anything.
-			t := found.Clone()
-			if cmd.IsSet("title") {
-				t.Title = strings.TrimSpace(cmd.String("title"))
-			}
-			if cmd.IsSet("note") {
-				t.Note = cmd.String("note")
-			}
-			if cmd.IsSet("estimate") {
-				minutes, err := parseMinutes(cmd.String("estimate"))
-				if err != nil {
-					return err
-				}
-				t.EstimatedMinutes = minutes
-			}
-			if cmd.IsSet("tag") {
-				// --tag replaces the set, which is what "these are its tags"
-				// means; --untag is the way to remove one of several.
-				t.SetTags(parseTags(cmd.StringSlice("tag")))
-			}
-			if cmd.IsSet("untag") {
-				remove := parseTags(cmd.StringSlice("untag"))
-				kept := make([]string, 0, len(t.Tags))
-				for _, tag := range t.Tags {
-					drop := false
-					for _, unwanted := range remove {
-						if strings.EqualFold(tag, unwanted) {
-							drop = true
-							break
-						}
-					}
-					if !drop {
-						kept = append(kept, tag)
-					}
-				}
-				t.SetTags(kept)
-			}
-			if err := applySetFlags(cmd, t.Fields); err != nil {
+			e, err := editFromFlags(cmd)
+			if err != nil {
 				return err
 			}
-			t.UpdatedAt = time.Now().UTC()
-			if err := t.Validate(); err != nil {
-				return exit.Usagef(err)
+			// The shared layer edits a copy, so a rejected change leaves
+			// the stored item exactly as it was, and what it rejects
+			// classifies as a usage error (taskops.ErrInvalid).
+			res, err := taskops.Apply(ctx, st, []*task.Task{found}, e, time.Now().UTC())
+			if err != nil {
+				return treeError(err)
 			}
-			if err := treeError(st.Update(ctx, t)); err != nil {
-				return err
-			}
-			return a.renderTask(ctx, st, t)
+			return a.renderTask(ctx, st, res.Tasks[0])
 		}),
 	}
+}
+
+// editFromFlags reads the edit flags into the shared change description, so
+// that `tdo edit` and `tdo serve` apply the same request the same way.
+func editFromFlags(cmd *ucli.Command) (taskops.Edit, error) {
+	var e taskops.Edit
+	if cmd.IsSet("title") {
+		title := cmd.String("title")
+		e.Title = &title
+	}
+	if cmd.IsSet("note") {
+		note := cmd.String("note")
+		e.Note = &note
+	}
+	if cmd.IsSet("estimate") {
+		minutes, err := parseMinutes(cmd.String("estimate"))
+		if err != nil {
+			return e, err
+		}
+		e.EstimatedMinutes = &minutes
+	}
+	if cmd.IsSet("tag") {
+		// --tag replaces the set, which is what "these are its tags" means;
+		// --untag is the way to remove one of several.
+		tags := cmd.StringSlice("tag")
+		e.Tags = &tags
+	}
+	if cmd.IsSet("untag") {
+		e.Untag = cmd.StringSlice("untag")
+	}
+	priority, set, unset, err := fieldFlags(cmd)
+	if err != nil {
+		return e, err
+	}
+	e.Priority, e.Set, e.Unset = priority, set, unset
+	return e, nil
 }

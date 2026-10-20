@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,14 +11,8 @@ import (
 	"github.com/soya-miyoshi/todocloud/internal/exit"
 	"github.com/soya-miyoshi/todocloud/internal/store"
 	"github.com/soya-miyoshi/todocloud/internal/task"
+	"github.com/soya-miyoshi/todocloud/internal/taskops"
 )
-
-// openStatuses are the statuses `tdo ls` means by "the list": the work that
-// is still in front of the user. Done and dropped items are the ones `--all`
-// and `--status` are for.
-func openStatuses() []task.Status {
-	return []task.Status{task.StatusActive, task.StatusOnHold}
-}
 
 // filterFlags are the selection flags of `tdo ls`. They are a function rather
 // than a variable because a perspective parses the same set a second time,
@@ -60,21 +52,11 @@ var filterFlagNames = []string{
 	"due-before", "defer-before", "estimate-under", "priority", "where",
 }
 
-// selection is a parsed listing request: what the store can filter, what has
-// to be filtered here, and how much of the result to keep.
+// selection is a listing request plus the one thing the shared layer has no
+// business knowing: whether the table shows the nesting.
 type selection struct {
-	filter store.Filter
-	cond   store.Condition
-	// untagged and maxMinutes are the two filters neither store.Filter nor
-	// store.Condition covers; they are applied in this package, after the
-	// store's own pass, like every other condition on an open field.
-	untagged   bool
-	maxMinutes int
-	// byTitle sorts the result by title. It is not a store.Order because no
-	// provider can be asked for a collation the others would match.
-	byTitle bool
-	limit   int
-	tree    bool
+	taskops.Selection
+	tree bool
 }
 
 // parseSelection reads the filter flags. It resolves --project and --under
@@ -103,10 +85,10 @@ func (a *app) parseSelection(ctx context.Context, cmd *ucli.Command, st store.St
 		// Everything: `--all` is the escape hatch from every default.
 	case cmd.Bool("blocked"):
 		f.Availability = store.AvailabilityBlocked
-		f.Statuses = openStatuses()
+		f.Statuses = taskops.OpenStatuses()
 	case cmd.Bool("deferred"):
 		f.Availability = store.AvailabilityDeferred
-		f.Statuses = openStatuses()
+		f.Statuses = taskops.OpenStatuses()
 	case len(statuses) > 0:
 		// An explicit status is an explicit question — "what did I drop?" —
 		// and answering it with the availability default would return
@@ -119,7 +101,7 @@ func (a *app) parseSelection(ctx context.Context, cmd *ucli.Command, st store.St
 		// The default of §4.1: what can be worked on now. The command layer
 		// decides this, not the store.
 		f.Availability = store.AvailabilityAvailable
-		f.Statuses = openStatuses()
+		f.Statuses = taskops.OpenStatuses()
 	}
 	if len(statuses) > 0 {
 		f.Statuses = statuses
@@ -169,8 +151,8 @@ func (a *app) parseSelection(ctx context.Context, cmd *ucli.Command, st store.St
 	}
 
 	f.Tags = parseTags(cmd.StringSlice("tag"))
-	s.untagged = cmd.Bool("untagged")
-	if s.untagged && len(f.Tags) > 0 {
+	s.Untagged = cmd.Bool("untagged")
+	if s.Untagged && len(f.Tags) > 0 {
 		return nil, usagef("--untagged and --tag ask for opposite things")
 	}
 
@@ -196,7 +178,7 @@ func (a *app) parseSelection(ctx context.Context, cmd *ucli.Command, st store.St
 		if minutes <= 0 {
 			return nil, usagef("--estimate-under expects a positive duration, for example 30m")
 		}
-		s.maxMinutes = minutes
+		s.MaxMinutes = minutes
 	}
 
 	order, byTitle, err := parseOrder(cmd.String("sort"))
@@ -204,24 +186,24 @@ func (a *app) parseSelection(ctx context.Context, cmd *ucli.Command, st store.St
 		return nil, err
 	}
 	f.Order = order
-	s.byTitle = byTitle
+	s.ByTitle = byTitle
 
 	cond, err := listCondition(cmd)
 	if err != nil {
 		return nil, err
 	}
-	s.cond = cond
+	s.Cond = cond
 
 	limit := cmd.Int("limit")
 	if limit < 0 {
 		return nil, usagef("--limit must not be negative")
 	}
-	s.limit = int(limit)
+	s.Limit = int(limit)
 
 	if err := f.Validate(); err != nil {
 		return nil, exit.Usagef(err)
 	}
-	s.filter = f
+	s.Filter = f
 	return s, nil
 }
 
@@ -284,24 +266,14 @@ func parseOrder(value string) (store.Order, bool, error) {
 	}
 }
 
-// parseMinutes reads a duration in the spelling the flags accept: 25m, 2h,
-// 1h30m, or a bare number of minutes.
+// parseMinutes reads a duration in the spelling the flags accept. The
+// spelling is the shared layer's, so --estimate and the API agree.
 func parseMinutes(raw string) (int, error) {
-	s := strings.TrimSpace(strings.ToLower(raw))
-	if s == "" {
-		return 0, usagef("expected a duration, for example 25m")
+	minutes, err := taskops.ParseMinutes(raw)
+	if err != nil {
+		return 0, exit.Usagef(err)
 	}
-	if n, err := strconv.Atoi(s); err == nil {
-		if n < 0 {
-			return 0, usagef("a duration must not be negative, got %q", raw)
-		}
-		return n, nil
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil || d < 0 {
-		return 0, usagef("%q is not a duration; write it as 25m, 2h or 1h30m", raw)
-	}
-	return int(d / time.Minute), nil
+	return minutes, nil
 }
 
 // listCondition builds the client-side filter over the user-defined fields.
@@ -330,49 +302,10 @@ func listCondition(cmd *ucli.Command) (store.Condition, error) {
 	return c, nil
 }
 
-// run executes a selection: the store filters what it can, this package
-// filters the rest, and the limit is applied wherever the filtering ends so
-// that it always counts items the user actually asked to see.
+// runSelection executes a selection through the shared layer, so that a
+// listing is the same answer whichever front end asked for it.
 func (a *app) runSelection(ctx context.Context, st store.Store, s *selection) ([]*task.Task, error) {
-	f := s.filter
-	clientSide := !s.cond.Empty() || s.untagged || s.maxMinutes > 0 || s.byTitle
-	if !clientSide {
-		f.Limit = s.limit
-	}
-
-	tasks, err := st.List(ctx, f)
-	if err != nil {
-		return nil, err
-	}
-	if s.untagged || s.maxMinutes > 0 {
-		kept := tasks[:0]
-		for _, t := range tasks {
-			if s.untagged && len(t.Tags) > 0 {
-				continue
-			}
-			if s.maxMinutes > 0 && (t.EstimatedMinutes <= 0 || t.EstimatedMinutes >= s.maxMinutes) {
-				continue
-			}
-			kept = append(kept, t)
-		}
-		tasks = kept
-	}
-	if s.byTitle {
-		sort.SliceStable(tasks, func(i, j int) bool {
-			a, b := strings.ToLower(tasks[i].Title), strings.ToLower(tasks[j].Title)
-			if a != b {
-				return a < b
-			}
-			return tasks[i].ID < tasks[j].ID
-		})
-	}
-	if clientSide {
-		tasks = store.Apply(tasks, s.cond, s.limit)
-	}
-	if tasks == nil {
-		tasks = []*task.Task{}
-	}
-	return tasks, nil
+	return taskops.Run(ctx, st, s.Selection)
 }
 
 func (a *app) listCommand() *ucli.Command {
@@ -445,8 +378,8 @@ func (a *app) selectionOrPerspective(ctx context.Context, cmd *ucli.Command, st 
 		// quietly means something else.
 		return nil, exit.Usagef(fmt.Errorf("perspective %q: %w", name, err))
 	}
-	s := &selection{filter: f, tree: cmd.Bool("tree"), limit: int(cmd.Int("limit"))}
-	if s.limit < 0 {
+	s := &selection{Selection: taskops.Selection{Filter: f, Limit: int(cmd.Int("limit"))}, tree: cmd.Bool("tree")}
+	if s.Limit < 0 {
 		return nil, usagef("--limit must not be negative")
 	}
 	order, byTitle, err := parseOrder(cmd.String("sort"))
@@ -454,8 +387,8 @@ func (a *app) selectionOrPerspective(ctx context.Context, cmd *ucli.Command, st 
 		return nil, err
 	}
 	if cmd.IsSet("sort") {
-		s.filter.Order = order
-		s.byTitle = byTitle
+		s.Filter.Order = order
+		s.ByTitle = byTitle
 	}
 	return s, nil
 }
@@ -539,7 +472,7 @@ func (a *app) inboxList(ctx context.Context, cmd *ucli.Command, st store.Store) 
 	// whether or not it is deferred, and hiding it would hide the work.
 	tasks, err := st.List(ctx, store.Filter{
 		Scope:    store.Scope{Inbox: true},
-		Statuses: openStatuses(),
+		Statuses: taskops.OpenStatuses(),
 		Order:    store.OrderPosition,
 	})
 	if err != nil {

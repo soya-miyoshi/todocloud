@@ -11,6 +11,7 @@ import (
 	"github.com/soya-miyoshi/todocloud/internal/recur"
 	"github.com/soya-miyoshi/todocloud/internal/store"
 	"github.com/soya-miyoshi/todocloud/internal/task"
+	"github.com/soya-miyoshi/todocloud/internal/taskops"
 )
 
 func (a *app) repeatCommand() *ucli.Command {
@@ -155,7 +156,7 @@ func (a *app) reviewList(ctx context.Context, st store.Store) error {
 	cut := now.Add(time.Millisecond)
 	tasks, err := st.List(ctx, store.Filter{
 		Kinds:           []task.Kind{task.KindFolder, task.KindProject},
-		Statuses:        openStatuses(),
+		Statuses:        taskops.OpenStatuses(),
 		ReviewDueBefore: &cut,
 		Order:           store.OrderPosition,
 		Now:             now,
@@ -285,15 +286,15 @@ func (a *app) perspectiveSave(ctx context.Context, st store.Store, args []string
 	if saved == nil {
 		return usagef("perspective save expects at least one `ls` flag")
 	}
-	if !saved.cond.Empty() || saved.untagged || saved.maxMinutes > 0 || saved.byTitle {
+	if !saved.Cond.Empty() || saved.Untagged || saved.MaxMinutes > 0 || saved.ByTitle {
 		// These are evaluated on the client, outside the stored Filter, so
 		// saving them would produce a perspective that does not mean what it
 		// says when it is run.
 		return usagef("--where, --priority, --untagged, --estimate-under and --sort title cannot be saved in a perspective yet")
 	}
 
-	f := saved.filter
-	f.Limit = saved.limit
+	f := saved.Filter
+	f.Limit = saved.Limit
 	now := time.Now().UTC()
 	p := &store.Perspective{Name: name, Filter: f, CreatedAt: now, UpdatedAt: now}
 	if err := st.SavePerspective(ctx, p); err != nil {

@@ -7,9 +7,9 @@ import (
 	ucli "github.com/urfave/cli/v3"
 
 	"github.com/soya-miyoshi/todocloud/internal/id"
-	"github.com/soya-miyoshi/todocloud/internal/recur"
 	"github.com/soya-miyoshi/todocloud/internal/store"
 	"github.com/soya-miyoshi/todocloud/internal/task"
+	"github.com/soya-miyoshi/todocloud/internal/taskops"
 )
 
 func (a *app) doneCommand() *ucli.Command {
@@ -30,48 +30,11 @@ func (a *app) doneCommand() *ucli.Command {
 			}
 			noRepeat := cmd.Bool("no-repeat")
 
-			now := time.Now().UTC()
-			completed := make([]*task.Task, 0, len(tasks))
-			successors := make([]*task.Task, 0, len(tasks))
-			var auto autoCompletions
-			for _, found := range tasks {
-				t := found.Clone()
-				var next *task.Task
-				if noRepeat {
-					// The one way to end a repeating item without a
-					// successor, short of `tdo repeat --stop`.
-					t.SetStatus(task.StatusDone, now)
-				} else {
-					// This is the only call in the CLI that creates a row
-					// nobody typed, and it is reached only from here (§3.4).
-					next, err = recur.Complete(t, now, id.New())
-					if err != nil {
-						return err
-					}
-				}
-				// The successor goes in BEFORE the instance is completed,
-				// and the order is load-bearing. Completing the instance may
-				// be the last action of a complete-with-last container
-				// (PLAN.md §3.3a), and the store closes that container as
-				// part of the same Update. Adding the successor afterwards
-				// would file it under a container that is already done;
-				// adding it first makes it the live sibling that correctly
-				// prevents the auto-completion. It also fails more safely:
-				// if Add fails, the instance is still open.
-				if next != nil {
-					if err := treeError(st.Add(ctx, next)); err != nil {
-						return err
-					}
-					successors = append(successors, next)
-				}
-				if err := auto.collect(ctx, st, t, now); err != nil {
-					return err
-				}
-				if err := st.Update(ctx, t); err != nil {
-					return err
-				}
-				completed = append(completed, t)
+			res, err := taskops.Complete(ctx, st, tasks, time.Now().UTC(), noRepeat, id.New)
+			if err != nil {
+				return treeError(err)
 			}
+			successors := res.Successors
 
 			if !a.out.JSON && len(successors) > 0 {
 				// "says so" of §4.1: a successor appearing is the point of a
@@ -84,8 +47,8 @@ func (a *app) doneCommand() *ucli.Command {
 			if err != nil {
 				return err
 			}
-			return a.renderTasks(ctx, st, completed,
-				a.report(&auto, map[string]any{"repeated": views(successors, av)}))
+			return a.renderTasks(ctx, st, res.Tasks,
+				a.report(res.AutoCompleted, map[string]any{"repeated": views(successors, av)}))
 		}),
 	}
 }
@@ -103,21 +66,11 @@ func (a *app) statusCommand(name, usage string, status task.Status) *ucli.Comman
 			if err != nil {
 				return err
 			}
-			now := time.Now().UTC()
-			updated := make([]*task.Task, 0, len(tasks))
-			var auto autoCompletions
-			for _, found := range tasks {
-				t := found.Clone()
-				t.SetStatus(status, now)
-				if err := auto.collect(ctx, st, t, now); err != nil {
-					return err
-				}
-				if err := st.Update(ctx, t); err != nil {
-					return err
-				}
-				updated = append(updated, t)
+			res, err := taskops.SetStatus(ctx, st, tasks, status, time.Now().UTC())
+			if err != nil {
+				return err
 			}
-			return a.renderTasks(ctx, st, updated, a.report(&auto, nil))
+			return a.renderTasks(ctx, st, res.Tasks, a.report(res.AutoCompleted, nil))
 		}),
 	}
 }
@@ -133,18 +86,11 @@ func (a *app) flagCommand(name, usage string, flagged bool) *ucli.Command {
 			if err != nil {
 				return err
 			}
-			now := time.Now().UTC()
-			updated := make([]*task.Task, 0, len(tasks))
-			for _, found := range tasks {
-				t := found.Clone()
-				t.Flagged = flagged
-				t.UpdatedAt = now
-				if err := st.Update(ctx, t); err != nil {
-					return err
-				}
-				updated = append(updated, t)
+			res, err := taskops.SetFlagged(ctx, st, tasks, flagged, time.Now().UTC())
+			if err != nil {
+				return err
 			}
-			return a.renderTasks(ctx, st, updated, nil)
+			return a.renderTasks(ctx, st, res.Tasks, nil)
 		}),
 	}
 }
@@ -152,7 +98,7 @@ func (a *app) flagCommand(name, usage string, flagged bool) *ucli.Command {
 // dateCommand builds `tdo defer` and `tdo due`, which differ only in which
 // date they write. The date is the last argument, so that several items can
 // be given one date in one command; --clear takes its place.
-func (a *app) dateCommand(name, usage string, set func(t *task.Task, at *time.Time)) *ucli.Command {
+func (a *app) dateCommand(name, usage string, field taskops.DateField) *ucli.Command {
 	return &ucli.Command{
 		Name:      name,
 		Usage:     usage,
@@ -181,18 +127,11 @@ func (a *app) dateCommand(name, usage string, set func(t *task.Task, at *time.Ti
 			if err != nil {
 				return err
 			}
-			now := time.Now().UTC()
-			updated := make([]*task.Task, 0, len(tasks))
-			for _, found := range tasks {
-				t := found.Clone()
-				set(t, at)
-				t.UpdatedAt = now
-				if err := st.Update(ctx, t); err != nil {
-					return err
-				}
-				updated = append(updated, t)
+			res, err := taskops.SetDate(ctx, st, tasks, field, at, time.Now().UTC())
+			if err != nil {
+				return err
 			}
-			return a.renderTasks(ctx, st, updated, nil)
+			return a.renderTasks(ctx, st, res.Tasks, nil)
 		}),
 	}
 }
@@ -238,19 +177,11 @@ func (a *app) moveCommand() *ucli.Command {
 			if err != nil {
 				return err
 			}
-			now := time.Now().UTC()
-			moved := make([]*task.Task, 0, len(tasks))
-			for _, t := range tasks {
-				if err := treeError(st.Move(ctx, t.ID, parentID, t.Position, now)); err != nil {
-					return err
-				}
-				after, err := st.Get(ctx, t.ID)
-				if err != nil {
-					return err
-				}
-				moved = append(moved, after)
+			res, err := taskops.MoveTo(ctx, st, tasks, parentID, time.Now().UTC())
+			if err != nil {
+				return treeError(err)
 			}
-			return a.renderTasks(ctx, st, moved, nil)
+			return a.renderTasks(ctx, st, res.Tasks, nil)
 		}),
 	}
 }
@@ -266,10 +197,8 @@ func (a *app) markCommands() []*ucli.Command {
 		a.statusCommand("unhold", "take items off hold", task.StatusActive),
 		a.flagCommand("flag", "flag items", true),
 		a.flagCommand("unflag", "remove the flag from items", false),
-		a.dateCommand("defer", "set or clear the date before which items are not available",
-			func(t *task.Task, at *time.Time) { t.DeferAt = at }),
-		a.dateCommand("due", "set or clear the date items are due",
-			func(t *task.Task, at *time.Time) { t.DueAt = at }),
+		a.dateCommand("defer", "set or clear the date before which items are not available", taskops.DeferDate),
+		a.dateCommand("due", "set or clear the date items are due", taskops.DueDate),
 		a.moveCommand(),
 	}
 }

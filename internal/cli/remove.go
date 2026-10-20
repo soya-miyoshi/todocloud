@@ -14,6 +14,7 @@ import (
 
 	"github.com/soya-miyoshi/todocloud/internal/store"
 	"github.com/soya-miyoshi/todocloud/internal/task"
+	"github.com/soya-miyoshi/todocloud/internal/taskops"
 )
 
 func (a *app) removeCommand() *ucli.Command {
@@ -57,43 +58,11 @@ func (a *app) removeCommand() *ucli.Command {
 // would make them orphans, which §3.3 refuses to call available — so they
 // would vanish from every listing while still being there.
 func (a *app) tombstone(ctx context.Context, st store.Store, tasks []*task.Task) error {
-	now := time.Now().UTC()
-	removed := make([]*task.Task, 0, len(tasks))
-	seen := make(map[string]bool, len(tasks))
-	var auto autoCompletions
-	for _, found := range tasks {
-		subtree, err := st.Subtree(ctx, found.ID)
-		if err != nil {
-			return err
-		}
-		for _, node := range subtree {
-			if seen[node.ID] {
-				continue
-			}
-			seen[node.ID] = true
-			t := node.Clone()
-			if t.DeletedAt == nil {
-				deleted := now
-				t.DeletedAt = &deleted
-				t.UpdatedAt = now
-				// Only the item the user named can complete something that
-				// survives this command: everything else in the subtree is
-				// being tombstoned alongside it, and its own ancestors are
-				// inside the subtree. Predicting for every node would also
-				// read the whole store once per node.
-				if node.ID == found.ID {
-					if err := auto.collect(ctx, st, t, now); err != nil {
-						return err
-					}
-				}
-				if err := st.Update(ctx, t); err != nil {
-					return err
-				}
-			}
-			removed = append(removed, t)
-		}
+	res, err := taskops.Tombstone(ctx, st, tasks, time.Now().UTC())
+	if err != nil {
+		return err
 	}
-	return a.renderTasks(ctx, st, removed, a.report(&auto, nil))
+	return a.renderTasks(ctx, st, res.Tasks, a.report(res.AutoCompleted, nil))
 }
 
 // purge is the only irreversible path in the CLI, so it is the only one that

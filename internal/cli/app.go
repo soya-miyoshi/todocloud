@@ -180,6 +180,7 @@ func (a *app) root() *ucli.Command {
 		a.listCommand(),
 		a.showCommand(),
 		a.nextCommand(),
+		a.serveCommand(),
 	}
 	// done, undone, drop, hold, unhold, flag, unflag, defer, due and mv are
 	// one family: they change a single property of each item they are given,

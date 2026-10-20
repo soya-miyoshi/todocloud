@@ -133,6 +133,32 @@ A `<ref>` is the small number the last `tdo ls` printed, or an unambiguous id
 prefix (`tdo done 01M5C`). The numbers come from a cache of the last *human*
 listing; `--json` output never refreshes it.
 
+## A browser viewer
+
+`tdo serve` serves a small read-write viewer for your list on a local port:
+perspectives on the left, the items in the middle, one item's details on the
+right.
+
+```sh
+tdo serve                  # http://127.0.0.1:7373/
+tdo serve --port 8080      # somewhere else
+tdo serve --port 0         # any free port; it prints the one it got
+```
+
+It reads and writes through the same code the commands do, so completing
+something in the browser is `tdo done`, repeat and all. Two things worth
+knowing:
+
+- It listens on `127.0.0.1`. `tdo serve --addr 0.0.0.0` makes it reachable
+  from your network, and says so when you do — anyone who can load the page
+  can edit the list.
+- Writes carry a token minted when the server starts and handed to the page,
+  so another site open in the same browser cannot change your list. Restarting
+  the server invalidates it; reload the page.
+
+There is no purge button. `tdo rm --purge` stays at the terminal, where it can
+ask you first.
+
 ## Providers
 
 | Provider | Credential | Can the credential be scoped to just this database? | State |

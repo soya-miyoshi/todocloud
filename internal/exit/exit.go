@@ -9,6 +9,7 @@ import (
 	"errors"
 
 	"github.com/soya-miyoshi/todocloud/internal/store"
+	"github.com/soya-miyoshi/todocloud/internal/taskops"
 )
 
 // Codes returned by the process.
@@ -86,6 +87,12 @@ func Classify(err error) (int, string) {
 		// A store at the wrong schema version is a configuration problem
 		// whichever way it points: run `tdo migrate`, or upgrade tdo.
 		return Config, CodeConfig
+	}
+
+	if errors.Is(err, taskops.ErrInvalid) {
+		// A request the shared layer refused is a mistake in the request,
+		// wherever it came from: exit 2, like any other usage error.
+		return Usage, CodeUsage
 	}
 
 	var ue usageError

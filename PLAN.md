@@ -703,7 +703,36 @@ no terminal access, hosted assistants). If added, it is a thin `tdo mcp`
 subcommand that serves stdio MCP and exposes the same operations as tools
 (`add_task`, `list_tasks`, `complete_task`, …) by calling the same internal
 `Store` interface — never a reimplementation, and never a network listener by
-default. The user's credentials stay in their environment exactly as before.
+default. (The one listener the tool does have is `tdo serve`, §8.1, which is
+loopback unless the user asks otherwise.) The user's credentials stay in their environment exactly as before.
+
+### 8.1 The browser viewer
+
+`tdo serve` serves a local viewer: an OmniFocus-shaped three-pane page over
+the store, with full editing. It is the one listener in the tool, and the
+rules that keep it from turning the project into the service §1 dropped:
+
+- **Loopback by default.** `--port` chooses the port; reaching it from the
+  network takes `--addr`, and saying so earns a warning naming what was
+  exposed.
+- **A front end, not a second implementation.** Every read and write goes
+  through `internal/taskops`, the layer the command bodies go through, and a
+  task is serialized as `output.TaskView` — the documented `--json` shape.
+  Completing a repeating item in the browser is the same call `tdo done`
+  makes, so §3.4 cannot have two answers.
+- **Writes need a per-process token**, handed to the page and sent as a
+  header. A browser will connect to localhost from any page, but it cannot
+  read the page or the response, so it cannot write. A cookie would have been
+  attached automatically and would have been the vulnerability.
+- **No purge, and no credential.** The irreversible path (§4.2) stays where it
+  can prompt, and the viewer never shows or accepts a token: it talks to the
+  store the process already opened.
+- **One request at a time.** A `Store` is safe for one goroutine; the server
+  holds a mutex rather than inventing a pool.
+
+The assets are three files under `internal/web/assets`, embedded with
+`go:embed` and written by hand: no bundler, no framework, no dependency, and
+`CGO_ENABLED=0` untouched.
 
 ## 9. Milestones
 

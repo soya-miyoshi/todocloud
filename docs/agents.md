@@ -48,6 +48,10 @@ This document is the contract. Changing anything in it is a breaking change.
   `tdo ls --deleted`.
 - **Mint or delete a credential.** Both paths confirm first and refuse without
   a terminal unless `--yes` is passed.
+- **Listen on a port.** Only `tdo serve` opens a listener, and only on
+  `127.0.0.1` unless `--addr` names something else. Nothing else in the tool
+  accepts a connection, and no command ever sends anything anywhere but to
+  your own database.
 
 ## Running several at once
 
@@ -108,6 +112,7 @@ tdo ls [--available|--blocked|--deferred|--all] [--deleted] [--inbox] [--flagged
        [--sort position|created|updated|due|defer|title] [--tree]
 tdo show <ref>
 tdo next [--project P]
+tdo serve [--port N] [--addr ADDR]
 
 # Changing things
 tdo done <ref...> [--no-repeat]
@@ -703,6 +708,49 @@ pointed at. Use the user's own configuration unless they told you otherwise.
 
 If you are an AI assistant working *on this repository* rather than using it,
 read `CLAUDE.md` first.
+
+## `tdo serve`
+
+`tdo serve` puts a browser viewer on a local port: three panes — perspectives,
+a list, an inspector — over the same store the commands write to.
+
+```
+tdo serve                  # http://127.0.0.1:7373/
+tdo serve --port 8080
+tdo serve --port 0         # any free port; the chosen one is printed
+tdo serve --addr 0.0.0.0   # reachable from the network, with a warning
+tdo serve --json           # one object naming the url, printed once listening
+```
+
+It is a front end and not a second implementation. Every read and every write
+goes through the same internal layer `tdo ls` and `tdo done` go through, and a
+task is rendered as the same object `--json` renders, derived keys included
+(§ *JSON shapes*). Completing a repeating item through the viewer creates the
+same successor `tdo done` creates, because it is the same call.
+
+For an agent there is nothing here worth using: the CLI is the interface, the
+JSON is the same, and a long-lived process is a liability where a command is
+not. The notes below are about what the listener is, not an invitation to
+drive it.
+
+- **Loopback by default.** `--addr` is how a user asks for more, and when they
+  do, the warning says what they have exposed.
+- **A write needs a token.** One is minted per process and handed to the page
+  it serves; mutating requests must carry it in `X-Tdo-Token` and be
+  `application/json`. Another site open in the same browser can reach the port
+  — browsers connect to localhost from anywhere — but it cannot read the page,
+  cannot read a response (no CORS header is ever sent), and so cannot write.
+  The token is a header and not a cookie for exactly that reason.
+- **One request at a time.** A store is safe for one goroutine, so the server
+  serializes requests. A local viewer has one user.
+- **No purge.** `DELETE` writes a tombstone and takes the subtree with it,
+  like `tdo rm`. The irreversible path stays at a terminal, where it can ask
+  (§ *What `tdo` will not do unless you ask for it*).
+- **Exit codes have status codes.** The same failure classes, named for the
+  other front end: `400` for a bad request (including the tree rules of §3.1
+  and a rejected field), `403` for a missing token, `404` for an unknown id,
+  `409` ambiguous, `503` for a store that is not initialized or at the wrong
+  schema version. The error body is the `--json` error envelope.
 
 ## MCP
 

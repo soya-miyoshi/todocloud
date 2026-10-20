@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>tdo</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body data-token="{{.Token}}">
+<header id="bar">
+  <h1>tdo</h1>
+  <form id="quick" autocomplete="off">
+    <input id="quick-title" type="text" placeholder="Capture to the inbox…" aria-label="New item title">
+    <button type="submit">Add</button>
+  </form>
+  <span id="store" title="where these tasks live">{{.Store}}</span>
+  <span id="status" role="status" aria-live="polite"></span>
+</header>
+
+<main>
+  <nav id="sidebar" aria-label="Perspectives">
+    <ul id="views"></ul>
+    <h2>Projects</h2>
+    <ul id="projects"></ul>
+    <h2>Saved</h2>
+    <ul id="saved"></ul>
+    <h2>Tags</h2>
+    <ul id="tags"></ul>
+  </nav>
+
+  <section id="list" aria-label="Items">
+    <h2 id="list-title">Inbox</h2>
+    <ol id="items"></ol>
+    <p id="empty" hidden>Nothing here.</p>
+  </section>
+
+  <aside id="inspector" aria-label="Inspector">
+    <p id="no-selection">Select an item to see it here.</p>
+    <form id="detail" hidden>
+      <label>Title <input name="title" type="text"></label>
+      <label>Note <textarea name="note" rows="4"></textarea></label>
+      <label>Tags <input name="tags" type="text" placeholder="comma,separated"></label>
+      <div class="pair">
+        <label>Defer <input name="defer_at" type="date"></label>
+        <label>Due <input name="due_at" type="date"></label>
+      </div>
+      <div class="pair">
+        <label>Estimate <input name="estimate" type="text" placeholder="25m"></label>
+        <label>Priority
+          <select name="priority">
+            <option value="0">none</option>
+            <option value="1">low</option>
+            <option value="2">medium</option>
+            <option value="3">high</option>
+          </select>
+        </label>
+      </div>
+      <div class="pair">
+        <label>Status
+          <select name="status">
+            <option value="active">active</option>
+            <option value="on_hold">on hold</option>
+            <option value="dropped">dropped</option>
+          </select>
+        </label>
+        <label>Parent
+          <select name="parent_id"></select>
+        </label>
+      </div>
+      <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
+      <dl id="facts"></dl>
+      <div class="actions">
+        <button type="submit">Save</button>
+        <button type="button" id="complete">Complete</button>
+        <button type="button" id="remove" class="danger">Remove</button>
+      </div>
+    </form>
+  </aside>
+</main>
+
+<footer id="keys">
+  <span><kbd>j</kbd>/<kbd>k</kbd> move</span>
+  <span><kbd>space</kbd> complete</span>
+  <span><kbd>f</kbd> flag</span>
+  <span><kbd>n</kbd> capture</span>
+  <span><kbd>r</kbd> reload</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

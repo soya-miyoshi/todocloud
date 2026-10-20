@@ -112,6 +112,7 @@ var matrixSubcommands = []struct {
 	{name: "defer"},
 	{name: "due"},
 	{name: "mv"},
+	{name: "serve"},
 	{name: "show"},
 	{name: "done"},
 	{name: "undone"},
@@ -383,6 +384,9 @@ func matrixRows(f *matrixFixture) []matrixCommand {
 	// The failures a user meets for real.
 	rows = append(rows,
 		matrixCommand{name: "unknown command", args: []string{"nosuchcommand"}},
+		// serve is only ever exercised through a failure here: a row that
+		// succeeded would block the test on a listener.
+		matrixCommand{name: "serve with an impossible port", args: []string{"serve", "--port", "70000"}},
 		matrixCommand{name: "unknown reference", args: []string{"show", "999999"}},
 		matrixCommand{name: "malformed reference", args: []string{"done", "not-an-id"}},
 		matrixCommand{name: "missing store", args: []string{"--config", f.strayConfig, "ls"}},

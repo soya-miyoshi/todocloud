@@ -11,6 +11,7 @@ import (
 	"github.com/soya-miyoshi/todocloud/internal/recur"
 	"github.com/soya-miyoshi/todocloud/internal/store"
 	"github.com/soya-miyoshi/todocloud/internal/task"
+	"github.com/soya-miyoshi/todocloud/internal/taskops"
 )
 
 // The structure commands take a verb as their first argument rather than a
@@ -176,7 +177,7 @@ func (a *app) containerList(ctx context.Context, cmd *ucli.Command, st store.Sto
 		return err
 	}
 	if len(statuses) == 0 {
-		statuses = openStatuses()
+		statuses = taskops.OpenStatuses()
 	}
 	f := store.Filter{
 		Kinds:    []task.Kind{kind},

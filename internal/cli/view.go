@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -10,109 +9,21 @@ import (
 	"github.com/soya-miyoshi/todocloud/internal/exit"
 	"github.com/soya-miyoshi/todocloud/internal/id"
 	"github.com/soya-miyoshi/todocloud/internal/output"
-	"github.com/soya-miyoshi/todocloud/internal/recur"
 	"github.com/soya-miyoshi/todocloud/internal/store"
 	"github.com/soya-miyoshi/todocloud/internal/task"
+	"github.com/soya-miyoshi/todocloud/internal/taskops"
 )
 
-// taskView is the JSON shape of one task everywhere in the CLI: the stored
-// task, flattened as task.Task marshals it, plus the three derived keys a
-// caller must not have to recompute — `available`, `blocked_by` and
-// `next_review_at` (§3.3, §3.5).
-//
-// Every command that emits a task emits this, so an agent parses one shape
-// rather than one per command. `blocked_by` is null when the item is
-// available, and an object naming the rule and the item responsible when it
-// is not.
-type taskView struct {
-	task         *task.Task
-	availability store.Availability
-	// asked records that availability was computed for this task. A command
-	// that cannot know it — there is none today — would emit null rather
-	// than claim the item is blocked for no reason.
-	asked bool
+// views pairs tasks with the availability answer for each of them. The shape
+// it renders lives in output, because `tdo serve` emits the same one.
+func views(tasks []*task.Task, av map[string]store.Availability) []output.TaskView {
+	return output.Views(tasks, av)
 }
 
-// blockedBy is the documented object under the `blocked_by` key.
-type blockedBy struct {
-	Rule   string `json:"rule"`
-	TaskID string `json:"task_id"`
-}
-
-func (v taskView) MarshalJSON() ([]byte, error) {
-	data, err := json.Marshal(v.task)
-	if err != nil {
-		return nil, err
-	}
-	var out map[string]json.RawMessage
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, err
-	}
-
-	add := func(key string, value any) error {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		out[key] = encoded
-		return nil
-	}
-
-	if v.asked {
-		if err := add(task.KeyAvailable, v.availability.Available); err != nil {
-			return nil, err
-		}
-		var blocker any
-		if !v.availability.Available {
-			blocker = blockedBy{Rule: string(v.availability.Rule), TaskID: v.availability.BlockedBy}
-		}
-		if err := add(task.KeyBlockedBy, blocker); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := add(task.KeyAvailable, nil); err != nil {
-			return nil, err
-		}
-		if err := add(task.KeyBlockedBy, nil); err != nil {
-			return nil, err
-		}
-	}
-
-	// next_review_at is derived from last_reviewed_at and the interval, so it
-	// cannot drift out of sync with either half (§3.5). It is null on
-	// anything with no review interval, which is every task.
-	var nextReview any
-	if next, ok := recur.NextReviewAt(v.task, v.task.UpdatedAt); ok {
-		nextReview = task.FormatTime(next)
-	}
-	if err := add(task.KeyNextReview, nextReview); err != nil {
-		return nil, err
-	}
-	return json.Marshal(out)
-}
-
-// views pairs tasks with the availability answer for each of them.
-func views(tasks []*task.Task, av map[string]store.Availability) []taskView {
-	out := make([]taskView, 0, len(tasks))
-	for _, t := range tasks {
-		a, ok := av[t.ID]
-		out = append(out, taskView{task: t, availability: a, asked: ok})
-	}
-	return out
-}
-
-// availabilityOf asks the store for §3.3 over these tasks. It is a read, and
-// the one place the command layer learns why something is blocked: the rules
+// availabilityOf asks the shared layer for §3.3 over these tasks: the rules
 // are computed in the store so that every provider and every command agree.
 func (a *app) availabilityOf(ctx context.Context, st store.Store, tasks []*task.Task) (map[string]store.Availability, error) {
-	if len(tasks) == 0 {
-		return map[string]store.Availability{}, nil
-	}
-	ids := make([]string, 0, len(tasks))
-	for _, t := range tasks {
-		ids = append(ids, t.ID)
-	}
-	return st.Availability(ctx, time.Now().UTC(), ids...)
+	return taskops.AvailabilityOf(ctx, st, tasks, time.Now().UTC())
 }
 
 // renderTask writes the single-task shape, {"task":{…}}, or a human detail
@@ -124,7 +35,7 @@ func (a *app) renderTask(ctx context.Context, st store.Store, t *task.Task) erro
 	}
 	answer, asked := av[t.ID]
 	if a.out.JSON {
-		return a.out.Emit(map[string]any{"task": taskView{task: t, availability: answer, asked: asked}})
+		return a.out.Emit(map[string]any{"task": output.NewTaskView(t, answer, asked)})
 	}
 	// The item holding this one back is usually somewhere else in the tree,
 	// so it is fetched by id rather than inferred from what is on screen.
@@ -196,47 +107,16 @@ func countLine(n int, singular, plural string) string {
 	return fmt.Sprintf("%d %s", n, plural)
 }
 
-// autoCompletions collects the containers that writing t will complete under
-// PLAN.md §3.3a. It is called immediately before the write, because the rule
-// reads the tree as it will be afterwards, and it uses the same shared
-// function the providers do, so what is reported and what is written cannot
-// drift apart.
-//
-// A container appears once however many of its children closed in the same
-// command: `tdo done a b` where a and b are the last two actions of one
-// project completes that project once.
-type autoCompletions struct {
-	seen  map[string]bool
-	tasks []*task.Task
-}
-
-func (c *autoCompletions) collect(ctx context.Context, st store.Store, t *task.Task, now time.Time) error {
-	containers, err := store.PendingAutoCompletions(ctx, st, t, now)
-	if err != nil {
-		return err
-	}
-	if c.seen == nil {
-		c.seen = map[string]bool{}
-	}
-	for _, container := range containers {
-		if c.seen[container.ID] {
-			continue
-		}
-		c.seen[container.ID] = true
-		c.tasks = append(c.tasks, container)
-	}
-	return nil
-}
-
-// report adds the containers to a command's output: a line on stderr for a
+// report adds the containers a write closed under §3.3a to a command's
+// output: a line on stderr for a
 // human, and a "completed_with_last" array for a machine. A project leaving
 // `tdo ls` because its last action closed is not something to discover later.
-func (a *app) report(c *autoCompletions, extra map[string]any) map[string]any {
-	if len(c.tasks) == 0 {
+func (a *app) report(completed []*task.Task, extra map[string]any) map[string]any {
+	if len(completed) == 0 {
 		return extra
 	}
 	if !a.out.JSON {
-		for _, container := range c.tasks {
+		for _, container := range completed {
 			a.out.Hintf("completed with its last action: %s %s",
 				id.Short(container.ID, 8), container.Title)
 		}
@@ -245,6 +125,6 @@ func (a *app) report(c *autoCompletions, extra map[string]any) map[string]any {
 	if extra == nil {
 		extra = map[string]any{}
 	}
-	extra["completed_with_last"] = views(c.tasks, nil)
+	extra["completed_with_last"] = views(completed, nil)
 	return extra
 }
