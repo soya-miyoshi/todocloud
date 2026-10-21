@@ -1,0 +1,58 @@
+{
+  "name": "@todocloud/core",
+  "version": "0.0.0",
+  "//private": "The published package is staged by scripts/pack-npm.mjs, never published from this directory: this manifest points at .ts for development. `private` is kept so that an `npm publish` run here refuses outright rather than pushing the TypeScript sources and the tests to the registry; the staged copy drops it.",
+  "private": true,
+  "description": "Runtime-agnostic core of todocloud: the task model, availability, repeats and the Store interface",
+  "license": "MIT",
+  "homepage": "https://github.com/soya-miyoshi/todocloud#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soya-miyoshi/todocloud.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/soya-miyoshi/todocloud/issues"
+  },
+  "keywords": [
+    "todo",
+    "gtd",
+    "tasks",
+    "todocloud"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./task": "./src/task.ts",
+    "./exit": "./src/exit.ts",
+    "./id": "./src/id.ts",
+    "./secret": "./src/secret.ts",
+    "./providercli": "./src/providercli.ts",
+    "./recur": "./src/recur.ts",
+    "./store": "./src/store/store.ts",
+    "./store/schema": "./src/store/schema.ts",
+    "./store/historical": "./src/store/historical.ts",
+    "./store/availability": "./src/store/availability.ts",
+    "./store/completion": "./src/store/completion.ts",
+    "./store/filter": "./src/store/filter.ts",
+    "./store/version": "./src/store/version.ts",
+    "./output": "./src/output/output.ts",
+    "./output/task": "./src/output/task.ts",
+    "./output/view": "./src/output/view.ts",
+    "./taskops": "./src/taskops/taskops.ts",
+    "./taskops/edit": "./src/taskops/edit.ts",
+    "./taskops/select": "./src/taskops/select.ts",
+    "./webapi": "./src/webapi/api.ts",
+    "./webapi/http": "./src/webapi/http.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\""
+  }
+}

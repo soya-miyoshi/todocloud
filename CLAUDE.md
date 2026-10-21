@@ -35,7 +35,9 @@ This is an open-source repository. A leaked token is public forever.
    `wrangler whoami`, `gcloud auth print-access-token`). If a value is needed,
    ask the user to check it themselves.
 5. **Never make a request against the user's real provider account** to "verify"
-   something. Tests use local SQLite and `httptest` fake servers. If a real
+   something. Tests use local SQLite and a `node:http` fake server
+   (`packages/store-turso/src/fakeserver.test.ts`, backed by a real in-memory
+   `node:sqlite` engine). If a real
    credential is genuinely required for a one-off check, print the command and
    let the user run it.
 6. **Never add a flag that takes a secret.** `argv` is world-readable via `ps`
@@ -71,22 +73,35 @@ reporting.
 
 ## 3. Engineering conventions
 
-- **Go standard library first.** The four direct dependencies, and the reason
-  each one is here:
-  - `modernc.org/sqlite` — pure Go, so `CGO_ENABLED=0` keeps working.
-  - `github.com/urfave/cli/v3` — the command and flag tree.
-  - `github.com/oklog/ulid/v2` — task ids.
-  - `github.com/mattn/go-isatty` — `tdo rm --purge` must refuse rather than
-    prompt when stdin is not a terminal, and `os.ModeCharDevice` is not enough
-    because `/dev/null` is a character device too. It was already in the module
-    graph via `urfave/cli`, so it adds no new supply-chain surface.
+The CLI is TypeScript on Node 24+. Node is the development runtime, the one
+`npm test` and the published npm package use, and the one pinned in
+`mise.toml`; the shipped executable is compiled by Bun with
+`bun build --compile` (`make binary`, `ARGS=--all` to cross-compile every
+target), also pinned there. Both runtimes must stay green — `npm test` and
+`bun test` — because one is what users on npm run and the other is what the
+downloaded binary carries. `MIGRATION.md` records what the port decided and
+why, the Node single executable this build replaced and the measurements that
+replaced it, and the two Go bugs it deliberately does not carry over.
 
-  `golang.org/x/oauth2` is planned for the Firestore milestone and is not a
-  dependency yet. Anything beyond this list needs the user's agreement, with
-  the reason recorded in the PR. There is no TOML library: the config parser is
-  a hand-written subset, deliberately.
-- `CGO_ENABLED=0` must keep working for darwin/linux/windows × amd64/arm64.
-  Never introduce a cgo dependency.
+- **Node standard library first. The direct dependency set is empty.**
+  `typescript` is the only devDependency. What the four Go dependencies did:
+  - `node:sqlite` replaces `modernc.org/sqlite`, and is built in, so there is
+    no native build step.
+  - `node:util` `parseArgs`, under a hand-written subcommand dispatcher,
+    replaces `urfave/cli/v3`. No CLI framework: exit code `2` for usage errors
+    and the `--json` shapes are contracts, and a framework owns both.
+  - ULID generation is hand-written over `crypto.getRandomValues`, which exists
+    in Node and in browsers, replacing `oklog/ulid/v2`.
+  - `node:tty` `isatty` replaces `mattn/go-isatty` — `tdo rm --purge` must
+    refuse rather than prompt when stdin is not a terminal.
+
+  Anything beyond this needs the user's agreement, with the reason recorded in
+  the PR. There is still no TOML library: the config parser is a hand-written
+  subset, deliberately.
+- **`packages/core` must run in a browser.** The PWA imports it, so nothing in
+  it may import `node:*`. Runtime-specific code lives in `packages/store-sqlite`
+  (Node only) and `packages/cli`; `packages/store-turso` uses `fetch` and works
+  in both. Tests for core may use `node:*`.
 - **Providers go behind the `Store` interface.** No provider-specific type may
   escape its package into the command layer.
 - **Machine output on stdout, everything else on stderr.** Every command
@@ -94,9 +109,12 @@ reporting.
   is a breaking change.
 - Exit codes are fixed: `0` ok, `1` error, `2` usage, `3` config/credential,
   `4` provider/network, `5` not found, `6` ambiguous id.
-- `gofmt` and `go vet` are clean before every commit. Tests: `go test ./...`
-  must pass with no network access.
-- Match the surrounding code's style, naming and comment density.
+- `tsc` is clean under `--strict` before every commit, including
+  `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Tests:
+  `npm test` must pass with no network access.
+- Match the surrounding code's style, naming and comment density. This
+  repository writes substantial "why" comments; keep them when porting rather
+  than dropping them.
 
 ## 4. Things to ask about rather than decide
 

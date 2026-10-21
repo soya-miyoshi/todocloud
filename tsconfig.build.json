@@ -1,0 +1,18 @@
+{
+  "//": "Emits JavaScript for the SEA build. The default tsconfig.json only",
+  "//2": "type-checks, because Node runs the .ts files directly in development.",
+  "//3": "A SEA does not strip types, so the embedded code has to be JS.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "rewriteRelativeImportExtensions": true,
+    "declaration": false,
+    "sourceMap": false,
+    "outDir": "dist",
+    "rootDir": "packages"
+  },
+  "include": ["packages/*/src/**/*.ts"],
+  "//exclude": "Nothing that only the tests use is emitted, so neither the executable nor an npm tarball carries test scaffolding. `**/testsupport.ts` rather than the top level alone: core/src/taskops/ and cli/src/web/ each have one, and only *.test.ts imports any of them.",
+  "exclude": ["packages/*/src/**/*.test.ts", "packages/*/src/**/testsupport.ts"]
+}

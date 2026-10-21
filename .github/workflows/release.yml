@@ -1,8 +1,9 @@
 name: release
 
-# Tagging is the whole trigger: pushing v1.2.3 builds the six binaries, makes
-# the GitHub release, and updates the Homebrew tap. Nothing here runs on an
-# ordinary push, and nothing here can be started by a fork.
+# Tagging is the whole trigger: pushing v1.2.3 cross-compiles the single
+# executable for every supported platform, makes the GitHub release, and
+# updates the Homebrew tap. Nothing here runs on an ordinary push, and nothing
+# here can be started by a fork.
 on:
   push:
     tags: ["v*"]
@@ -16,40 +17,55 @@ env:
 
 jobs:
   # The release is not cut unless the tree that is being tagged passes the
-  # same checks main does. A broken release cannot be unpublished from the
-  # machines that already downloaded it.
+  # same checks main does — on both runtimes, because Node is what the npm
+  # package runs on and Bun is what compiles the executable below. A release
+  # must not be the first time the shipped engine sees the test suite. The
+  # two runners report different totals (`npm test` counts subtests that
+  # `bun test` folds into their parent); the set of tests is the same.
+  #
+  # A broken release cannot be unpublished from the machines that already
+  # downloaded it.
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-node@v4
         with:
-          go-version: stable
-      - run: go vet ./...
-      - run: go test -race ./...
-      - name: Check that gofmt has nothing to say
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "${unformatted}" ]; then
-            echo "these files are not gofmt'd:"
-            echo "${unformatted}"
-            exit 1
-          fi
-
-  build:
-    needs: verify
+          # 26, matching the pin in mise.toml. The old 25.5 floor existed
+          # because Node's own single-executable build looked for a sentinel
+          # string that only the official node binaries carry; Bun compiles
+          # the executable now, so this is a plain pin.
+          node-version: "26"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # The version mise.toml pins: the compiled executable embeds this
+          # exact Bun runtime, so it is also the version the suite is run
+          # against here.
+          bun-version: "1.4.3"
+      - run: npm ci
+      - name: Type-check
+        # `tsc --strict` is what replaced `go vet` and `gofmt` here, so this is
+        # the whole of the static check.
+        run: npm run typecheck
+      - name: Test on Node
+        # Must pass with no network access (CLAUDE.md §3).
+        run: npm test
+      - name: Test on Bun
+        # The runtime the shipped binary carries.
+        run: bun test
+  # The tag is parsed once, in one place. It mattered more when four build
+  # jobs each had to agree about the version, and it stays: the build, the
+  # tap and the npm publish all read `needs.meta.outputs.version`, so there
+  # is one answer rather than three parsers that could drift.
+  meta:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
       - name: Read the version from the tag
         id: meta
         run: |
+          set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           # Homebrew wants 1.2.3; the tag is v1.2.3.
           version="${tag#v}"
@@ -59,62 +75,150 @@ jobs:
           esac
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build every target
+  build:
+    # One job builds every archive. The Go pipeline could do that because
+    # `CGO_ENABLED=0` made cross-compilation free; the Node SEA could not,
+    # because a SEA is the *target platform's own* official node binary with
+    # code injected into it, so it needed one runner per platform and could
+    # not produce macOS x64 at all. `bun build --compile --target=...` goes
+    # back to cross-compiling, and scripts/build-binary.mjs holds the target
+    # list, so this job runs it once with --all.
+    #
+    # darwin_amd64 is back with it: an Intel Mac has an archive and a bottle
+    # again, and the Homebrew formula below has its `on_intel` branch back.
+    #
+    # windows_arm64 is still absent. That was never about the build host —
+    # it is not in the target list, and adding it is a change to that list
+    # rather than to this workflow.
+    needs: [verify, meta]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.3"
+      - run: npm ci
+
+      # Go put the version in with `-ldflags -X`. There is no linker now, so
+      # the version is written into the shipped manifests BEFORE anything is
+      # built, and everything downstream reads it back from there:
+      # packages/cli/src/admin.ts reads its own package.json, and
+      # scripts/build-binary.mjs embeds that same file into the executable
+      # with `--asset` and names each output directory after the version it
+      # read from it. One step, one place, and the npm job below writes the
+      # same number the same way.
+      #
+      # This replaced a rewrite of the Node SEA's generated boot shim that
+      # ran *after* the build, injected `process.env.TODOCLOUD_VERSION` and
+      # had to turn the shim's static import into a dynamic one to beat ESM's
+      # evaluation order, then built the executable a second time.
+      # scripts/set-version.mjs records why that and its counterpart in
+      # scripts/pack-npm.mjs are gone.
+      #
+      # TODOCLOUD_COMMIT stays an environment variable, because a git SHA is
+      # not a package's business and no manifest has a home for it. Nothing
+      # bakes it in any more, so a released executable reports an empty
+      # commit, exactly as an npm install always did. That is the price of
+      # dropping the shim rewrite, and it is a fair one: the tag is the
+      # identifier the release promises and the GitHub release records which
+      # commit it was cut from. A reader who wants it in the binary should get
+      # it from a generated source file written by this step, not from an edit
+      # to compiled output.
+      - name: Write the tagged version into the manifests
+        shell: bash
         env:
-          VERSION: ${{ steps.meta.outputs.version }}
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
-          mkdir -p dist
-          # CGO_ENABLED=0 is not an optimisation here: it is what makes one
-          # job able to produce all six binaries, and what keeps the result
-          # a single file with no runtime to install.
-          export CGO_ENABLED=0
-          pkg=github.com/soya-miyoshi/todocloud/internal/cli
-          flags="-s -w -X ${pkg}.version=${VERSION} -X ${pkg}.commit=${GITHUB_SHA}"
-          for target in \
-            darwin/amd64 darwin/arm64 \
-            linux/amd64 linux/arm64 \
-            windows/amd64 windows/arm64
-          do
-            os="${target%/*}"
-            arch="${target#*/}"
-            out="${BINARY}"
-            [ "${os}" = "windows" ] && out="${BINARY}.exe"
-            echo "building ${os}/${arch}"
-            GOOS="${os}" GOARCH="${arch}" go build -trimpath -ldflags "${flags}" -o "dist/${out}" ./cmd/tdo
-            base="${BINARY}_${VERSION}_${os}_${arch}"
-            if [ "${os}" = "windows" ]; then
-              (cd dist && zip -q "${base}.zip" "${out}" && rm "${out}")
-            else
-              (cd dist && tar -czf "${base}.tar.gz" "${out}" && rm "${out}")
-            fi
-          done
-          (cd dist && sha256sum ./* > SHA256SUMS)
-          cat dist/SHA256SUMS
+          node scripts/set-version.mjs "${VERSION}"
+          git diff --stat
+
+      - name: Build every target
+        shell: bash
+        # --all is the whole target list; the script smoke-tests the host
+        # binary it just built through scripts/smoke.sh on its way out.
+        run: |
+          set -euo pipefail
+          node scripts/build-binary.mjs --all
+          ls -l dist-bin
 
       # A tag that claims to be 1.2.3 and produces a binary saying something
       # else is the kind of thing nobody notices until they are debugging the
       # wrong version, so it is checked rather than trusted.
-      - name: Check the binary reports the tagged version
+      #
+      # Only the host's binary can answer: the other four are built for
+      # platforms this runner cannot exec. They carry the same embedded
+      # packages/cli/package.json from the same build, written by the step
+      # above, so what is checked here is the one route the version travels
+      # rather than one artifact out of five. dist-bin/tdo is the symlink the
+      # build leaves pointing at the host target.
+      #
+      # TODOCLOUD_VERSION is deliberately not set anywhere in this workflow:
+      # it is the developer's override, and setting it here would make this
+      # check prove only that the variable was readable.
+      - name: Check the host executable reports the tagged version
+        shell: bash
         env:
-          VERSION: ${{ steps.meta.outputs.version }}
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
-          tar -xzf "dist/${BINARY}_${VERSION}_linux_amd64.tar.gz" -C "${RUNNER_TEMP}"
-          reported=$("${RUNNER_TEMP}/${BINARY}" version --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          reported=$(./dist-bin/tdo version --json | node -e '
+            let s = "";
+            process.stdin.on("data", (c) => { s += c; });
+            process.stdin.on("end", () => { process.stdout.write(JSON.parse(s).version); });
+          ')
           if [ "${reported}" != "${VERSION}" ]; then
-            echo "the binary reports ${reported}, the tag says ${VERSION}"
+            echo "the executable reports ${reported}, the tag says ${VERSION}"
             exit 1
           fi
 
+      # One archive per target directory. The directory is already named
+      # `tdo_<version>_<os>_<arch>` by the build, which is exactly the archive
+      # base name, so the loop reads the names rather than repeating the
+      # target list a second time — a list that disagreed with
+      # scripts/build-binary.mjs would silently drop a platform.
+      #
+      # The archive holds the executable at its root under the name a user
+      # types, `tdo` (`tdo.exe` on Windows), as every archive since the Go
+      # tree has. `dist-bin/tdo` itself is skipped: it is the host symlink for
+      # local use, not a target.
+      #
+      # The Windows zip is written here, on Linux, because this is where the
+      # Windows binary is now built. `7z` was what the old windows-latest
+      # runner had; `zip` is what the Ubuntu image has.
+      - name: Archive each target
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for dir in dist-bin/"${BINARY}_${VERSION}"_*; do
+            base="$(basename "${dir}")"
+            if [ -f "${dir}/${BINARY}.exe" ]; then
+              (cd "${dir}" && zip -q -X "${GITHUB_WORKSPACE}/dist/${base}.zip" "${BINARY}.exe")
+            else
+              tar -czf "dist/${base}.tar.gz" -C "${dir}" "${BINARY}"
+            fi
+          done
+          ls -l dist
+
+      # A single artifact now that a single job produces the whole set, which
+      # is also why there is no `merge-multiple` below any more. The name is
+      # still `dist-binaries` rather than `dist`: `publish` re-uploads the
+      # gathered set plus SHA256SUMS under `dist`, and upload-artifact@v4
+      # refuses to let two jobs write the same name.
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: dist-binaries
           path: dist/
           retention-days: 7
-
+          if-no-files-found: error
   publish:
-    needs: build
+    needs: [meta, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -122,8 +226,20 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: dist-binaries
           path: dist
+
+      # SHA256SUMS is computed here, over the gathered set, and not in the
+      # build job. It could be, now that one job builds everything — but it
+      # belongs to the release rather than to the build, and keeping it here
+      # means the file describes exactly the bytes `gh release create` is
+      # about to upload, which is the thing a downloader checks against.
+      - name: Checksum every archive
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum ./* > SHA256SUMS)
+          cat dist/SHA256SUMS
+
       # gh does not read the tag name: v0.1.0-rc.1 would be published as the
       # latest release and handed to everyone who follows the README unless
       # --prerelease says otherwise. The same hyphen test gates the tap job.
@@ -138,13 +254,23 @@ jobs:
             --verify-tag \
             ${PRERELEASE}
 
+      # The gathered set, checksums included, is re-uploaded under one name so
+      # the tap job downloads exactly what was released instead of gathering
+      # and re-checksumming it a second time.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
   # Updating the tap is a separate job because it writes to a DIFFERENT
   # repository and therefore needs a token of its own: GITHUB_TOKEN cannot
   # reach soya-miyoshi/homebrew-tap. Without that secret the release still
   # happens and this step is skipped, so a missing token never costs a
   # release — it costs a `brew upgrade`.
   homebrew:
-    needs: [build, publish]
+    needs: [meta, publish]
     runs-on: ubuntu-latest
     if: ${{ !contains(github.ref_name, '-') }}
     steps:
@@ -169,7 +295,7 @@ jobs:
         if: steps.token.outputs.present == 'true'
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          VERSION: ${{ needs.build.outputs.version }}
+          VERSION: ${{ needs.meta.outputs.version }}
           TAP_REPO: soya-miyoshi/homebrew-tap
         run: |
           set -euo pipefail
@@ -240,3 +366,146 @@ jobs:
           git add Formula/tdo.rb
           git commit -m "tdo ${VERSION}"
           git push origin HEAD
+
+  # npm is the other half of the distribution story. It is no longer the only
+  # half for anybody — the SEA's missing macOS x64 target is what used to make
+  # it that, and `bun build --compile` produces darwin_amd64, so every
+  # supported platform has an archive and Homebrew covers the three it covers.
+  # npm remains the route for anyone who wants `tdo` on the Node they already
+  # have, on a platform with no archive, or without seventy-odd megabytes of
+  # embedded runtime, and it is the only thing the four `@todocloud/*`
+  # libraries ship through at all.
+  #
+  # It needs [verify, meta] rather than [meta, publish] deliberately. The
+  # archives are not an input here — npm ships the emitted JavaScript, not the
+  # executable — so a failed binary build should not withhold a tarball that
+  # was never built from it.
+  #
+  # A prerelease is skipped, by the same hyphen test as the tap. npm's `latest`
+  # tag is what `npm install -g todocloud` resolves to, and a prerelease must
+  # not become that. Publishing one under `--tag next` was the alternative; it
+  # is not done because README.md already states the policy that a prerelease
+  # lives on the releases page only, and a second channel nobody documented is
+  # a channel nobody tests. The day a prerelease channel is wanted, `--tag
+  # next` here is the whole change.
+  #
+  # Like the tap, a missing secret costs an update and never a release.
+  npm-publish:
+    needs: [verify, meta]
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref_name, '-') }}
+    permissions:
+      contents: read
+      # Required by `npm publish --provenance`: npm exchanges this for a signed
+      # attestation tying the tarball to this workflow, this commit and this
+      # runner. Nothing else in the job uses it.
+      id-token: write
+    steps:
+      - name: Check for the npm token
+        id: token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NPM_TOKEN}" ]; then
+            echo "NPM_TOKEN is not set; skipping the npm publish." >&2
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "present=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          node-version: "26"
+          # registry-url is what makes setup-node write the .npmrc, and the
+          # line it writes is a *reference* to NODE_AUTH_TOKEN rather than its
+          # value — the substitution happens inside npm, so the token is never
+          # on a command line and never in a file. Writing an .npmrc by hand
+          # here would put it on disk in cleartext.
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+        if: steps.token.outputs.present == 'true'
+
+      # The same step the build job runs, and the same script: the version
+      # enters the build in exactly one place. pack-npm.mjs then carries it
+      # into every staged manifest and into the pinned @todocloud/* ranges, so
+      # it is never passed twice and the two halves of the release cannot
+      # disagree about what the tag was.
+      - name: Write the tagged version into the manifests
+        if: steps.token.outputs.present == 'true'
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/set-version.mjs "${VERSION}"
+          git diff --stat
+
+      # The staged packages. The manifests in packages/ point at .ts because
+      # the repository runs the sources directly (MIGRATION.md, "No build
+      # step"); the staged copies point at the emitted .js, which is what a
+      # consumer's Node needs and what `bin` has to be. `tdo version` needs no
+      # staging-time surgery any more — it reads the manifest it is installed
+      # beside, which is the one written above.
+      - name: Stage the packages
+        if: steps.token.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          node scripts/pack-npm.mjs
+          for pkg in core store-sqlite store-turso cli; do
+            echo "::group::${pkg}"
+            (cd "dist-npm/${pkg}" && npm pack --dry-run)
+            echo "::endgroup::"
+          done
+
+      # The same check the build job makes of the executable, made of the
+      # tarballs: install the four of them into a scratch directory and ask the
+      # installed command what version it is. It proves three things at once —
+      # that `bin` resolves to something runnable, that a bare
+      # `@todocloud/core` specifier resolves from a real node_modules rather
+      # than from this workspace's symlinks, and that `tdo version` reports the
+      # tag. The tarballs are installed rather than the directories so npm
+      # resolves the pinned exact versions out of what is in hand; nothing is
+      # fetched from the registry, which is also why this can run before the
+      # publish rather than after it.
+      - name: Check the tarballs install and report the tagged version
+        if: steps.token.outputs.present == 'true'
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/npm-verify"
+          mkdir -p "${work}/tgz" "${work}/app"
+          for pkg in core store-sqlite store-turso cli; do
+            (cd "dist-npm/${pkg}" && npm pack --silent --pack-destination "${work}/tgz")
+          done
+          cd "${work}/app"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "${work}"/tgz/*.tgz
+          reported=$(./node_modules/.bin/tdo version --json | node -e '
+            let s = "";
+            process.stdin.on("data", (c) => { s += c; });
+            process.stdin.on("end", () => { process.stdout.write(JSON.parse(s).version); });
+          ')
+          if [ "${reported}" != "${VERSION}" ]; then
+            echo "the npm package reports ${reported}, the tag says ${VERSION}"
+            exit 1
+          fi
+          test -f node_modules/todocloud/assets/app.js # `tdo serve` reads this at startup
+
+      # Order matters: `todocloud` pins an exact version of each scoped
+      # package, so those have to exist on the registry first or the first
+      # `npm install -g todocloud` cannot resolve. --access public because a
+      # scoped package is private by default and would publish to a 402 on a
+      # free account. --provenance needs id-token: write above and a public
+      # repository; both hold here.
+      - name: Publish to npm
+        if: steps.token.outputs.present == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for pkg in core store-sqlite store-turso cli; do
+            npm publish "dist-npm/${pkg}" --access public --provenance
+          done

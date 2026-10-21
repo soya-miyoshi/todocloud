@@ -1,0 +1,39 @@
+{
+  "name": "@todocloud/store-turso",
+  "version": "0.0.0",
+  "//private": "The published package is staged by scripts/pack-npm.mjs, never published from this directory: this manifest points at .ts for development. `private` is kept so that an `npm publish` run here refuses outright rather than pushing the TypeScript sources and the tests to the registry; the staged copy drops it.",
+  "private": true,
+  "description": "Turso (libSQL) store for todocloud, over the /v2/pipeline HTTP API",
+  "license": "MIT",
+  "homepage": "https://github.com/soya-miyoshi/todocloud#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soya-miyoshi/todocloud.git",
+    "directory": "packages/store-turso"
+  },
+  "bugs": {
+    "url": "https://github.com/soya-miyoshi/todocloud/issues"
+  },
+  "keywords": [
+    "todocloud",
+    "turso",
+    "libsql",
+    "store"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/turso.ts"
+  },
+  "dependencies": {
+    "@todocloud/core": "*"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\""
+  }
+}

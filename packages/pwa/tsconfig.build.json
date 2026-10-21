@@ -1,0 +1,57 @@
+{
+  // The one build step in this repository, and it exists because a browser
+  // does not strip types.
+  //
+  // `tdo` runs its `.ts` files directly on Node 24 and needs no emit
+  // (`MIGRATION.md`, "No build step"), so the root `tsconfig.json` is
+  // `noEmit` and `packages/pwa/tsconfig.json` inherits that: both of them
+  // check this package, neither produces anything. A browser has no
+  // type-stripping loader and no `exports` map, so the PWA is the one place
+  // that has to emit. `npm run build --workspace @todocloud/pwa` is the
+  // whole of it: `tsc` with this file, then the static shell copied over the
+  // result. No bundler, and nothing added to the dependency set.
+  //
+  // What comes out, and why it is shaped this way:
+  //
+  //   - `rootDir` is `..`, the packages directory, because the inputs are
+  //     this package *and* the two it imports — `tsc` follows an import into
+  //     `@todocloud/core` and emits it as well. So `dist/` holds
+  //     `pwa/src/*.js`, `core/src/**/*.js` and `store-turso/src/*.js`, and
+  //     the import map in `public/index.html` is written against exactly
+  //     that layout. It is the layout `tsc` arrives at on its own; nothing
+  //     moves files afterwards.
+  //   - `rewriteRelativeImportExtensions` turns the `./task.ts` specifiers
+  //     the source uses into `./task.js`, which is what the emitted files
+  //     have to say. Cross-package imports stay the bare specifiers they
+  //     are (`@todocloud/core/taskops`) and the import map resolves them;
+  //     that is why the map has one line per entry in core's `exports`.
+  //   - The tests are excluded. They are Node tests — `node:test`,
+  //     `node:http`, `node:sqlite` behind the fake server — and have no
+  //     business in a browser bundle.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "..",
+    "outDir": "dist",
+    "rewriteRelativeImportExtensions": true,
+    "sourceMap": true,
+    "declaration": false
+  },
+  //
+  // The two dependencies are listed as inputs rather than left to import
+  // resolution: a file `tsc` reaches *through* `node_modules` — which is
+  // where the workspace symlinks live — is type-checked but never emitted,
+  // so naming their sources here is what puts them in `dist/`.
+  "include": [
+    "src/**/*.ts",
+    "../core/src/**/*.ts",
+    "../store-turso/src/**/*.ts"
+  ],
+  // Spelled out per directory: an exclude pattern is relative to this file,
+  // and `**/` does not reach up past it.
+  "exclude": [
+    "src/**/*.test.ts",
+    "../core/src/**/*.test.ts",
+    "../store-turso/src/**/*.test.ts"
+  ]
+}

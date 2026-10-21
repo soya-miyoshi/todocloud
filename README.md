@@ -26,9 +26,42 @@ and answering it needs projects, deferral and sequencing.
 ```sh
 brew install soya-miyoshi/tap/tdo
 
-# or, with a Go toolchain:
-go install github.com/soya-miyoshi/todocloud/cmd/tdo@latest
+# or, with Node 24 or newer already installed:
+npm install -g todocloud
+
+# or, from a clone, with Node and Bun (see mise.toml):
+make install
 ```
+
+`tdo` is one file with no runtime to install: the executable is compiled with
+`bun build --compile`, so it carries its own JavaScript engine. Node and Bun
+are needed to *build* it, not to run it.
+
+Archives are published for Linux, macOS and Windows, on both Intel and Apple
+Silicon / arm64 — Homebrew covers macOS and Linux, and the releases page has
+the rest.
+
+### From npm
+
+The npm package is called `todocloud` and the command it installs is `tdo`
+(`tdo` on npm is somebody else's package):
+
+```sh
+npm install -g todocloud      # installs the `tdo` command
+npx todocloud ls              # or try it without installing anything
+```
+
+This route needs Node 24 or newer — `node:sqlite` is stable there — and it
+runs the same code the executable carries, as ordinary JavaScript on your own
+Node rather than bundled with an engine of its own. It is also smaller by two
+orders of magnitude, since nothing about a runtime ships with it.
+
+**One thing worth knowing before you choose it.** A global npm install belongs
+to the Node version that installed it, so if you manage Node with nvm, fnm or
+mise, `tdo` disappears the moment you switch versions and comes back when you
+switch back. `npx todocloud` has the same property, one invocation at a time.
+If that is annoying rather than acceptable, use Homebrew or the archive — those
+install a binary that does not care which Node is on your `PATH`.
 
 The tap carries the latest `vX.Y.Z` tag. A prerelease (`-rc.1` and the like)
 is on the releases page only, deliberately: `brew upgrade` should not move
@@ -40,12 +73,15 @@ Or download an archive for your platform from the
 against the `SHA256SUMS` file published beside it before unpacking. Each
 archive holds one static binary with nothing to install alongside it.
 
-Releases are cut by pushing a `vX.Y.Z` tag: the workflow runs the tests, builds
-darwin, linux and windows for amd64 and arm64, publishes the GitHub release,
+Releases are cut by pushing a `vX.Y.Z` tag: the workflow runs the tests on both
+runtimes, cross-compiles linux amd64 and arm64, darwin amd64 and arm64 and
+windows amd64 from one machine, publishes the GitHub release,
 and pushes the formula to the `soya-miyoshi/homebrew-tap` repository. The tap
 update needs a `HOMEBREW_TAP_TOKEN` secret and is skipped when it is absent —
 a missing token costs a `brew upgrade`, not a release — and a prerelease tag
-(one containing a `-`) never touches the tap. See
+(one containing a `-`) never touches the tap. The npm publish works the same
+way: it needs an `NPM_TOKEN` secret, is skipped without it, and skips a
+prerelease so that `npm install -g todocloud` never resolves to one. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the full procedure.
 
 ## First run
@@ -297,13 +333,22 @@ that cannot run shell commands.
 
 ## Contributing
 
-Go 1.27 or newer is required to build. The toolchain is pinned in `mise.toml`,
-so `mise install` picks up the pinned version if you use mise; plain
-`go build` works for everyone else.
+Two toolchains, both pinned in `mise.toml`, so `mise install` gets you the
+right ones. Node runs the sources directly and runs the tests; Bun compiles
+the shipped executable. Node 24 or newer is enough to develop and test
+against — the old "official Node 25.5 or newer" requirement was Node's own
+single-executable build looking for a sentinel string Homebrew's node does not
+carry, and that build is gone.
+
+There are no runtime dependencies at all, and `typescript` is the only
+devDependency.
 
 ```sh
-make hooks   # install the pre-commit secret scan — do this first
-make check   # fmt, vet, test, secret scan
+npm ci
+make hooks     # install the pre-commit secret scan — do this first
+make check     # type-check, test, secret scan
+make binary    # compile the single executable into ./dist-bin/tdo
+make binary ARGS=--all   # ...and every other platform's, from this machine
 ```
 
 Nothing in this repository needs a real credential: tests run against local

@@ -1,0 +1,7 @@
+{
+  "//": "No rootDir: router.test.ts reaches store-turso's fake pipeline server",
+  "//2": "by relative path rather than standing up a second fake of the wire",
+  "//3": "protocol, and rootDir would make that an out-of-scope-input error.",
+  "extends": "../../tsconfig.base.json",
+  "include": ["src/**/*.ts"]
+}

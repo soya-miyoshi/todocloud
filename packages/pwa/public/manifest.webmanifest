@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "tdo",
+  "short_name": "tdo",
+  "description": "Your own Turso database, as a todo list, straight from the browser.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f2f1f6",
+  "theme_color": "#7a4fd4",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

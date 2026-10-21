@@ -12,11 +12,13 @@ repo_root="$(git rev-parse --show-toplevel)"
 
 "$repo_root/scripts/scan-secrets.sh" --staged
 
-if command -v gofmt >/dev/null 2>&1; then
-  unformatted=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go' \
-    | xargs -r gofmt -l)
-  if [ -n "$unformatted" ]; then
-    printf 'gofmt needed:\n%s\n' "$unformatted" >&2
+# A staged TypeScript change that does not type-check is not ready to commit.
+# Skipped when the dependencies are not installed, so a fresh clone can still
+# commit before its first `npm ci`.
+if git diff --cached --name-only --diff-filter=ACMR -- '*.ts' | grep -q . \
+  && [ -d "$repo_root/node_modules/typescript" ]; then
+  if ! (cd "$repo_root" && npx --no-install tsc --noEmit -p tsconfig.json); then
+    printf 'tsc reported errors; fix them or commit without --no-verify at your peril.\n' >&2
     exit 1
   fi
 fi

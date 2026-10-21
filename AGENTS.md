@@ -90,7 +90,9 @@ tdo done <id> --json
 Read [`CLAUDE.md`](CLAUDE.md) first, then [`PLAN.md`](PLAN.md).
 
 The rules that are not negotiable: never write a real credential into any file
-here, write everything in English, keep to the standard library plus the four
-approved dependencies, keep `CGO_ENABLED=0` working, and run `make check`
-(`gofmt`, `go vet`, `go test`, secret scan) before proposing a commit. Do not
+here, write everything in English, keep the direct dependency set empty — it
+is zero runtime dependencies and `typescript` as the only devDependency, and
+adding anything needs the maintainer's agreement — keep `packages/core` free of
+any `node:*` import, because the PWA imports it, and run `make check`
+(type-check, tests, secret scan) before proposing a commit. Do not
 commit, push, tag or open a pull request unless the maintainer asks.

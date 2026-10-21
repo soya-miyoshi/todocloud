@@ -1,25 +1,32 @@
 BINARY := tdo
-PKG    := ./...
 
-.PHONY: build install uninstall test fmt vet lint scan scan-history hooks clean check
+.PHONY: build install uninstall test typecheck scan scan-history \
+        hooks clean check binary emit icons
 
-build: ## Build the CLI into ./bin/tdo
-	CGO_ENABLED=0 go build -o bin/$(BINARY) ./cmd/$(BINARY)
+build: ## Type-check and build the TypeScript workspace
+	npm run build
+
+test: ## Run tests (no network access required)
+	npm test
+
+typecheck: ## Type-check without emitting
+	npx tsc --build --force
+
+emit: ## Emit JavaScript into ./dist (what the npm packages ship)
+	npx tsc -p tsconfig.build.json
+
+binary: ## Build the single executable into ./dist-bin (add ARGS=--all to cross-compile)
+	@# Needs the bun pinned in mise.toml; the script smoke-tests what it built.
+	node scripts/build-binary.mjs $(ARGS)
+
+icons: ## Redraw the viewer's icons into packages/cli/assets (only when the mark changes)
+	node scripts/genicon.mjs
 
 install: ## Build from this tree and install into ~/.local/bin, then create the store
 	./scripts/install-local.sh
 
 uninstall: ## Remove the installed binary (never your tasks)
 	./scripts/install-local.sh --uninstall
-
-test: ## Run tests (no network access required)
-	go test $(PKG)
-
-fmt:
-	gofmt -l -w .
-
-vet:
-	go vet $(PKG)
 
 scan: ## Scan tracked files for credentials
 	./scripts/scan-secrets.sh --tree
@@ -30,7 +37,9 @@ scan-history: ## Scan the full git history for credentials (what CI runs)
 hooks: ## Install the pre-commit hook (run once after cloning)
 	./scripts/install-hooks.sh
 
-check: fmt vet test scan ## Everything that must pass before a commit
+check: typecheck test scan ## Everything that must pass before a commit
 
 clean:
-	rm -rf bin dist coverage.out
+	rm -rf dist dist-bin node_modules/.cache
+	find packages -name dist -type d -prune -exec rm -rf {} + 2>/dev/null || true
+	find packages -name '*.tsbuildinfo' -delete 2>/dev/null || true

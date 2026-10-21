@@ -1,0 +1,20 @@
+{
+  "name": "todocloud",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "echo 'no build step: Node 24 runs TypeScript directly (MIGRATION.md)' && npm run typecheck",
+    "test": "node --test --experimental-strip-types \"packages/*/src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "24.9.1",
+    "typescript": "5.9.2"
+  }
+}

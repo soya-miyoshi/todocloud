@@ -9,7 +9,9 @@ database endpoint you configured.
 
 - Repository: `github.com/soya-miyoshi/todocloud`
 - Binary / command: `tdo`
-- Language: Go (single static binary, no runtime dependency for users)
+- Language: TypeScript on Node 24+ (zero runtime dependencies)
+- Distribution: one executable compiled with `bun build --compile`, which
+  needs no runtime installed; or an npm package for the Node you already have
 - License: MIT
 - Status: v0.1 is being implemented. Nothing is tagged yet.
 
@@ -22,40 +24,70 @@ the user and buys nothing. If per-user sharing or narrower tokens are ever
 needed, a Worker can be added later as an *optional* provider, not as a
 requirement.
 
-**Go, not Rust/TypeScript.** Every command is one HTTPS round trip (50–300 ms);
+**TypeScript, not Go.** Every command is one HTTPS round trip (50–300 ms);
 parsing a few KB of JSON is noise, so language performance is not a selection
-criterion. Go was chosen for three practical reasons:
+criterion. This project was written in Go first, for three reasons recorded
+here: cross-compilation with `CGO_ENABLED=0`, a standard library that covered
+everything including the Firestore signing work, and no runtime for the user to
+install.
 
-1. Cross-compilation for darwin/linux/windows × amd64/arm64 needs no
-   configuration (`CGO_ENABLED=0`).
-2. The standard library covers everything: `net/http`, `encoding/json`, and
-   `crypto` where a provider needs to sign or verify something. This held up
-   in practice — even the Firestore work (§2), the one place a Google auth
-   library looked unavoidable, needed nothing beyond `crypto/rsa`.
+It was rewritten in TypeScript for one reason those three could not answer: a
+standalone PWA that queries the user's database directly from the browser, with
+no relay. That is possible — `libsql-server` wraps its user HTTP API, the one
+serving `/v2/pipeline`, in a permissive CORS layer (`allow_origin(Any)`,
+`allow_headers(Any)`), and authentication is a Bearer header rather than a
+cookie, so the wildcard origin applies. What Go could not answer is sharing one
+implementation with it. Compiling the core to WebAssembly was considered: the
+HTTP providers would have worked, but the local SQLite provider could not
+(there is no filesystem in a browser), the boundary to the UI is untyped
+`js.Value`, and the wasm payload is megabytes. The alternative was implementing
+availability and repeat completion twice, in two languages, which is exactly
+the drift `internal/web` was built to avoid.
 
-The direct dependency set is exactly four: `github.com/urfave/cli/v3` (the CLI
-framework), `modernc.org/sqlite` (pure Go, so `CGO_ENABLED=0` keeps working),
-`github.com/oklog/ulid/v2`, and `github.com/mattn/go-isatty`. isatty is there
-because `tdo rm --purge` must refuse rather than prompt when stdin is not a
-terminal, and `os.ModeCharDevice` is not sufficient for that — `/dev/null` is a
-character device too. It was already in the module graph as a dependency of
-`urfave/cli`, so it adds no new supply-chain surface.
+The cost is paid honestly, and part of it has since been paid back. The ~5 ms
+start is gone for good: `MIGRATION.md` records the measurements, and the
+shipped executable starts in 32 ms against a 7 ms floor for the engine it
+carries. Cross-compilation came back, though — `bun build --compile
+--target=...` produces all five supported targets from one machine, which is
+what `CGO_ENABLED=0` used to do — and so did the property that the user needs
+no runtime: the executable carries its own. What it costs instead is size,
+71 MB to 95 MB depending on the target against Go's 8–15 MB, and a second
+toolchain for whoever builds a release. Against all of that, one
+implementation of availability, repeat completion and the task shape now
+serves the CLI, the local viewer and the PWA.
 
-TypeScript was only attractive while a Worker backend existed (shared types);
-with the backend gone that reason disappeared, and Go avoids requiring Node on
-the user's machine.
+Node remains the development runtime and the npm install's runtime; Bun builds
+the executable and nothing else. Both are pinned in `mise.toml` and the test
+suite runs under both in CI.
 
-A dynamic language would make the open JSON field map of §3 slightly easier to
-write. That is a one-off cost inside a single package, while distribution and
-startup are paid by every user and every agent invocation: Go ships an 8–15 MB
-static binary with no runtime to install, cross-compiled for six targets with
-`CGO_ENABLED=0`, and starts in roughly 5 ms against tens of ms for a Node or
-Python equivalent — which matters because the agent usage in §8 spends one
-process per command.
+Cloudflare D1 does not get the direct-from-browser treatment. Its REST API
+does not send configurable CORS headers and is not meant to be called from a
+browser, so D1 stays CLI-only unless an *optional* Worker relay is added later.
 
-The toolchain is pinned for this repository in `mise.toml` (`go = "1.27.2"`).
-Go 1.27 or newer is required to build; CI builds with `go-version: stable`
-rather than the pinned version.
+**The direct dependency set is empty.** Node 24+ covers what the Go standard
+library and the four Go dependencies covered:
+
+- `node:sqlite` replaces `modernc.org/sqlite`, with no native build step.
+- `node:util` `parseArgs`, under a hand-written subcommand dispatcher, replaces
+  `urfave/cli/v3`. A framework is not used because exit code `2` for usage
+  errors and the `--json` shapes in `docs/agents.md` are contracts, and a
+  framework owns both.
+- ULID generation is hand-written over `crypto.getRandomValues`, which exists
+  in both runtimes, replacing `oklog/ulid/v2`.
+- `node:tty` `isatty` replaces `mattn/go-isatty`.
+- `tsc --strict` replaces `gofmt` and `go vet`; `node --test` replaces
+  `go test`.
+
+`typescript` is the only devDependency. There is still no TOML library: the
+config parser remains a hand-written subset, deliberately. Anything beyond this
+needs the user's agreement, with the reason recorded in the PR.
+
+A dynamic language also makes the open JSON field map of §3 easier to write,
+which was noted here as a minor advantage of TypeScript even while Go was the
+choice.
+
+The toolchain is pinned for this repository in `mise.toml`. Node 24 or newer is
+required, because `node:sqlite` is stable there.
 
 ## 2. Provider roadmap
 
@@ -85,8 +117,9 @@ One useful result survives it: the Firestore REST value converter and both
 auth flows (service-account RS256 JWT, and ADC refresh-token) were written
 with **no dependency beyond the standard library**, so the
 `golang.org/x/oauth2/google` question recorded here earlier is answered — it
-was never needed. If a document-store provider is ever revisited, that is the
-precedent.
+was never needed. The same holds after the TypeScript rewrite: `node:crypto`
+signs an RS256 JWT, so no auth library is needed there either. If a
+document-store provider is ever revisited, that is the precedent.
 
 ### Credential-scope warning (must appear in README and SECURITY.md)
 
@@ -297,7 +330,9 @@ ends the series while leaving its history.
 `review_interval` is `{"every": "1w"}` on folders and projects.
 `next_review_at` is derived from `last_reviewed_at + every`, so it cannot drift
 out of sync, and `tdo review` lists what is due and `tdo review <ref>` marks
-one reviewed.
+one reviewed. A container that has never been reviewed is due now, and
+`tdo project ls --needs-review` shares the review window with `tdo review`
+so the two cannot answer differently.
 
 ### 3.6 Perspectives
 
@@ -693,7 +728,7 @@ This is a hard requirement, not a best effort. Four independent layers, so that
 no single mistake — mine or a contributor's — is enough:
 
 1. **Nothing in the repo ever needs a real credential.** Tests run against
-   local SQLite and against `httptest` fake servers for Turso and D1.
+   local SQLite and against a `node:http` fake server for Turso and D1.
    There is no fixture, no example and no CI job that requires a real token.
    Example files use obvious placeholders (`libsql://example.turso.io`,
    `TOKEN_GOES_HERE`).
@@ -761,7 +796,8 @@ rules that keep it from turning the project into the service §1 dropped:
   network takes `--addr`, and saying so earns a warning naming what was
   exposed.
 - **A front end, not a second implementation.** Every read and write goes
-  through `internal/taskops`, the layer the command bodies go through, and a
+  through `packages/core/src/taskops`, the layer the command bodies go
+  through, and a
   task is serialized as `output.TaskView` — the documented `--json` shape.
   Completing a repeating item in the browser is the same call `tdo done`
   makes, so §3.4 cannot have two answers.
@@ -772,19 +808,25 @@ rules that keep it from turning the project into the service §1 dropped:
 - **No purge, and no credential.** The irreversible path (§4.2) stays where it
   can prompt, and the viewer never shows or accepts a token: it talks to the
   store the process already opened.
-- **One request at a time.** A `Store` is safe for one goroutine; the server
-  holds a mutex rather than inventing a pool.
+- **One request at a time.** A `Store` expects one caller at a time; the
+  server holds a mutex rather than inventing a pool.
 
-The assets are a handful of files under `internal/web/assets`, embedded with
-`go:embed` and written by hand: no bundler, no framework, no dependency, and
-`CGO_ENABLED=0` untouched.
+The assets are a handful of files under `packages/cli/assets`, read from disk
+relative to the module and written by hand: no bundler, no framework, no
+dependency. The PWA of §8.2 shares them.
 
 ### 8.2 Installing the viewer on a phone
 
 The page is a progressive web app, so a phone on the same tailnet can add it
-to its home screen and get a full-screen viewer with an icon — which is as
-close to an iOS client as this project intends to come for now. `docs/ios.md`
-records what a native app would cost and why this is the cheaper answer.
+to its home screen and get a full-screen viewer with an icon. `packages/pwa`
+is the other half of that answer: the same viewer, pointed straight at a Turso
+database rather than at a local `tdo serve`, so it needs no machine at home to
+be awake.
+
+A native iOS client remains undecided and unbuilt. A design note for one was
+kept here while the implementation was Go, built on a `gomobile` binding; the
+TypeScript migration removed its premise along with the Go tree, and the note
+was deleted rather than left to describe a mechanism that no longer exists.
 
 It is deliberately a thin one: a manifest, icons, and a service worker that
 **caches nothing**. There is no offline mode and there is not going to be one
@@ -811,7 +853,8 @@ Two things follow:
   how that install gets its `https://`, and it is documented rather than
   required.
 
-The icons are generated by `scripts/genicon`, standard library only, so the
+The icons are generated by `scripts/genicon.mjs` (`make icons`), with no
+dependency, so the
 committed PNGs can be rebuilt rather than merely replaced.
 
 ## 9. Milestones
@@ -822,22 +865,23 @@ surface are still free to change, and the work below is sequenced by
 dependency rather than by version number.
 
 **Shipped — the SQLite CLI.** `Store` interface, SQLite implementation
-(`modernc.org/sqlite`, pure Go, so `CGO_ENABLED=0` still holds), the open
+(`node:sqlite`, built in, so there is no native build step), the open
 `fields` column and `--set`/`--where`, `--json` everywhere, config loading and
 the credential precedence of §5, `tdo login` (§5.1), `Secret` redaction type,
 full repo-safety tooling (§6), README, MIT license.
 
 **Shipped — Turso.** `Store` over the libSQL `/v2/pipeline` HTTP API, tested
-against an `httptest` fake backed by a real in-memory SQLite engine, so the
-LIKE-escaping and constraint behaviour asserted is the engine's. No new
-dependency: `net/http` and the standard library.
+against a `node:http` fake (`packages/store-turso/src/fakeserver.test.ts`)
+backed by a real in-memory `node:sqlite` engine, so the LIKE-escaping and
+constraint behaviour asserted is the engine's. No new dependency: `fetch` and
+`node:http`.
 
 **In progress — the GTD model (§3) and its command surface (§4).** Folders,
 projects and the inbox as one tree; `status` in place of the `done` boolean;
 availability; repetition and series; review; perspectives. Because this
 reshapes the core, it lands as one piece across the domain types, the store
 interface, both providers and the command layer, with a shared provider
-conformance suite (`internal/store/storetest`) as the specification both
+conformance suite (`packages/store-testkit`) as the specification both
 providers are held to.
 
 **In progress — tags as first-class, schema version 2.** A `tags` table, a

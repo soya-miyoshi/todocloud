@@ -300,6 +300,9 @@ every status and tombstones included.
 is present on every task object (null when there is no interval). A container
 with an interval that has never been reviewed is due now. `tdo review` lists
 what is due and writes nothing; `tdo review <ref>` marks one reviewed.
+`tdo project ls --needs-review` asks the same question of projects alone, and
+answers it identically — including the never-reviewed case, which it used to
+leave out.
 
 ### Perspectives
 
@@ -390,7 +393,7 @@ envelope and no `null` task.
 | `login` | see below |
 | `export` | `{"version":1,"exported_at":"…","store":"sqlite: /path/to/tasks.db","tasks":[…],"count":n,"perspectives":[…],"perspective_count":n}` |
 | `import` | `{"imported":n,"skipped":n,"perspectives_imported":n,"perspectives_skipped":n}` |
-| `version` | `{"version":"…","commit":"…","go":"…"}` |
+| `version` | `{"version":"…","commit":"…","runtime":"…"}` |
 | `config` | the resolved configuration, with every secret redacted |
 | `config set` | `{"config_file":"/home/you/.config/todocloud/config.toml","created":false,"wrote":true,"changes":[{"key":"turso.url","value":"libsql://example.turso.io","previous":"","added":true,"changed":true}]}` |
 | any failure | `{"error":{"code":"…","message":"…"}}` |
@@ -803,7 +806,7 @@ drive it.
   — browsers connect to localhost from anywhere — but it cannot read the page,
   cannot read a response (no CORS header is ever sent), and so cannot write.
   The token is a header and not a cookie for exactly that reason.
-- **One request at a time.** A store is safe for one goroutine, so the server
+- **One request at a time.** A store expects one caller at a time, so the server
   serializes requests. A local viewer has one user.
 - **No purge.** `DELETE` writes a tombstone and takes the subtree with it,
   like `tdo rm`. The irreversible path stays at a terminal, where it can ask

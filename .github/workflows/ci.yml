@@ -35,33 +35,110 @@ jobs:
         run: ./scripts/scan-secrets.sh --history
 
   test:
+    # The development runtime, and the one the published npm package runs on.
+    # Three OSes because the paths, the line endings and `node:sqlite`'s file
+    # locking are where a platform difference actually shows up.
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-node@v4
         with:
-          go-version: stable
-      - run: go vet ./...
-      - run: go test ./...
-      - name: Check formatting
-        if: runner.os != 'Windows'
-        run: test -z "$(gofmt -l .)"
+          # 26, to match the version pinned in mise.toml, rather than the 24
+          # floor `engines` names. It used to have to be 25.5+ because Node's
+          # own single-executable build looked for a sentinel string that only
+          # the official node binaries carry; the shipped executable is built
+          # by Bun now, so this is a plain pin.
+          node-version: "26"
+      - run: npm ci
+      - name: Type-check
+        run: npm run typecheck
+      - name: Test
+        # Must pass with no network access (CLAUDE.md §3).
+        run: npm test
 
-  build:
-    # Proves the cross-compilation promise in PLAN.md §1 keeps holding.
+  test-bun:
+    # The suite is run a second time under Bun, because Bun is what compiles
+    # the shipped executable: shipping a binary built on an engine the tests
+    # never ran on is the thing to avoid. The two runners disagree about how
+    # many tests there are — `npm test` counts subtests that `bun test` folds
+    # into their parent — so the pass counts differ while the set does not.
+    #
+    # A separate job rather than a `runtime: [node, bun]` dimension on the job
+    # above. The OS axis is the same, but nothing else is: a different setup
+    # action, a different test command, and the type-check belongs to Node
+    # only and would otherwise run twice per platform for one answer. Folding
+    # the two together would mean an `if: matrix.runtime == ...` on nearly
+    # every step, which is a matrix in name and a branch in fact.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      # Node is still needed here: `npm ci` is what links the workspace, and
+      # the cross-package bare specifiers (`@todocloud/core`) resolve through
+      # the node_modules it writes under either runtime.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # The version mise.toml pins, so CI runs the engine that gets
+          # embedded in the released executable and not whatever is newest.
+          bun-version: "1.4.3"
+      - run: npm ci
+      - name: Test
+        # Must pass with no network access (CLAUDE.md §3).
+        run: bun test
+
+  binary:
+    # The single executable is what most users install, so every target that
+    # ships is built on every push. One job, not a matrix: `bun build
+    # --compile --target=...` cross-compiles all five from one machine, which
+    # is the property Node's SEA did not have — a SEA is the target
+    # platform's own node binary with code injected into it, so each one had
+    # to be built on its own runner.
+    #
+    # What one job cannot do is *run* the four cross-built binaries. So the
+    # host's binary is executed and the others are only built: a compile that
+    # succeeds is a weak check, but a `--target` that stopped producing a
+    # working file would still be caught by the release, which runs the host
+    # binary again, and by the first person to download it. A matrix that ran
+    # each platform's own binary was considered and not kept: it would hold
+    # four runners to re-prove what one build already proves about four of the
+    # five artifacts, and the failure it would catch — a Bun target broken for
+    # one platform only — is upstream's, not this tree's.
+    needs: [test, test-bun]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-node@v4
         with:
-          go-version: stable
-      - name: Cross-compile
-        env:
-          CGO_ENABLED: "0"
-        run: |
-          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
-            GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null ./cmd/tdo
-          done
+          node-version: "26"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.3"
+      - run: npm ci
+      - name: Build every target
+        # --no-smoke because the step below runs the smoke test, rather than
+        # the build script running it and this file not saying so.
+        run: node scripts/build-binary.mjs --all --no-smoke
+      - name: Run the host binary
+        # A build that produces an unusable binary is not a passing build, and
+        # this is the shape of failure the asset layout actually has: the
+        # viewer's files and packages/cli/package.json are embedded with
+        # `--asset` and read back from /$bunfs/root, so a missing `--asset`
+        # compiles cleanly and then fails when `tdo serve` starts or
+        # `tdo version` runs. Both are exercised here.
+        #
+        # scripts/smoke.sh rather than an inline block, because it redirects
+        # HOME and the XDG paths as well as TODOCLOUD_*, so the run cannot
+        # reach a real store even if a variable fails to be set. Two runs
+        # during the migration reached the maintainer's own data that way.
+        #
+        # dist-bin/tdo is the symlink the build leaves pointing at the host
+        # target's directory.
+        run: ./scripts/smoke.sh ./dist-bin/tdo

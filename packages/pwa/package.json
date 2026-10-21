@@ -1,0 +1,22 @@
+{
+  "name": "@todocloud/pwa",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@todocloud/core": "*",
+    "@todocloud/store-turso": "*"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "//build": "Three steps, in order. (1) tsc emits the modules (see tsconfig.build.json). (2) public/ is this app's own shell: index.html, sw.js, manifest.webmanifest and connect.css, all of which differ from the local viewer's on purpose. (3) the viewer's assets are copied out of packages/cli/assets, which is the ONE copy of them: app.js, app.css and the three icons are byte-identical in both front ends, packages/cli/src/web/web.ts reads that directory from disk and scripts/build-sea.mjs stages it into the executable, so it stays where those two expect it and this build copies from it rather than holding a fork. The list is spelled out rather than globbed because cli/assets also holds an index.html, an sw.js and a manifest.webmanifest, and copying those over step 2 is exactly the mistake to make impossible.",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && cp -R public/. dist/ && cp ../cli/assets/app.js ../cli/assets/app.css ../cli/assets/icon-192.png ../cli/assets/icon-512.png ../cli/assets/apple-touch-icon.png dist/",
+    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\""
+  },
+  "files": [
+    "src",
+    "public"
+  ]
+}

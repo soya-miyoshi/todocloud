@@ -10,7 +10,7 @@ useDefault = true
 id = "cloudflare-api-token"
 description = "Cloudflare API token"
 regex = '''(?i)\b[A-Za-z0-9_-]{40}\b'''
-path = '''(?i)(\.md|\.toml|\.ya?ml|\.go|\.sh|\.json)$'''
+path = '''(?i)(\.md|\.toml|\.ya?ml|\.ts|\.tsx|\.js|\.mjs|\.sh|\.json)$'''
 entropy = 3.5
 [[rules.allowlists]]
 regexTarget = "match"
@@ -22,8 +22,12 @@ regexes = [
   '''(?i)redacted''',
 ]
 
-# This project writes test names as sentences, so a Go identifier here is
-# routinely exactly forty characters and trips the rule above:
+# The rule above fires on any forty-character run with no spaces. The Go tree
+# that needed the exemption below is gone, but the exemption is kept: it keys
+# on the matched text, and nothing in the repository legitimately matches it.
+#
+# For the record, the Go case was that this project writes test names as
+# sentences, so a Go identifier here was routinely exactly forty characters:
 # `TestConcurrentAddsNeverLoseATaskSilently` has the same shape as a
 # Cloudflare API token, and appears again in the doc comment above it.
 #
@@ -34,6 +38,12 @@ regexes = [
 # test identifiers begin with Test, Fuzz, Benchmark or Example; a credential
 # that happens to be exactly forty characters AND to begin with one of those
 # words is not a thing to design around.
+#
+# The TypeScript tree writes test names as quoted sentences rather than
+# identifiers, and a sentence contains spaces, which the rule's \b[...]{40}\b
+# cannot match. So the port needs no equivalent exemption, and none is added:
+# a forty-character run with no spaces in a .ts file is exactly what should
+# trip this.
 [[rules.allowlists]]
 regexTarget = "match"
 regexes = [
@@ -54,6 +64,10 @@ regex = '''(?i)"private_key"\s*:\s*"-----BEGIN'''
 description = "Fixtures and placeholders that are intentionally fake"
 paths = [
   '''(?i)/testdata/''',
+  # Filesystem scans (`gitleaks detect --no-git`) would otherwise walk
+  # installed packages, which are not ours and are not tracked.
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
   '''\.gitleaks\.toml$''',
   '''scripts/scan-secrets\.sh$''',
 ]

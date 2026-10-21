@@ -59,13 +59,25 @@ command -v go >/dev/null 2>&1 || {
 # does not correspond to any commit.
 version="$(git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || echo "dev")"
 commit="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || echo "")"
-pkg="github.com/soya-miyoshi/todocloud/internal/cli"
+
+# The build script runs on node and compiles with bun. Say which one is
+# missing here rather than let the build fail further in.
+if ! command -v node >/dev/null 2>&1; then
+  printf 'node is not on your PATH. Install it with: mise install node\n' >&2
+  exit 1
+fi
+if ! command -v bun >/dev/null 2>&1; then
+  printf 'bun is not on your PATH. Install it with: mise install bun\n' >&2
+  exit 1
+fi
 
 printf 'Building %s %s\n' "$binary" "$version"
 mkdir -p "$prefix"
-CGO_ENABLED=0 go build -C "$repo_root" -trimpath \
-  -ldflags "-X ${pkg}.version=${version} -X ${pkg}.commit=${commit}" \
-  -o "$prefix/$binary" ./cmd/tdo
+# --no-smoke: the smoke test runs the binary against a throwaway store, which
+# is worth it in a build but is not what the user asked this script for.
+TODOCLOUD_VERSION="$version" TODOCLOUD_COMMIT="$commit" \
+  node "$repo_root/scripts/build-binary.mjs" --no-smoke
+install -m 0755 "$repo_root/dist-bin/$binary" "$prefix/$binary"
 
 printf 'Installed %s\n' "$prefix/$binary"
 

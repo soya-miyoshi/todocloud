@@ -1,0 +1,46 @@
+{
+  "name": "todocloud",
+  "version": "0.0.0",
+  "//private": "The published package is staged by scripts/pack-npm.mjs, never published from this directory: this manifest points at .ts for development. `private` is kept so that an `npm publish` run here refuses outright rather than pushing the TypeScript sources and the tests to the registry; the staged copy drops it.",
+  "private": true,
+  "description": "Todo list CLI that stores your tasks in a database you own",
+  "license": "MIT",
+  "homepage": "https://github.com/soya-miyoshi/todocloud#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soya-miyoshi/todocloud.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/soya-miyoshi/todocloud/issues"
+  },
+  "keywords": [
+    "todo",
+    "gtd",
+    "cli",
+    "tdo",
+    "todocloud",
+    "sqlite",
+    "turso"
+  ],
+  "type": "module",
+  "bin": {
+    "tdo": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@todocloud/core": "*",
+    "@todocloud/store-sqlite": "*",
+    "@todocloud/store-turso": "*"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "//files": "assets is a runtime dependency, not a nicety. src/web/web.ts resolves ../../assets relative to the module and reads it when `tdo serve` starts, where Go had go:embed (MIGRATION.md, \"the viewer's assets are a runtime dependency now\"). A tarball without that directory installs cleanly and then fails at the first `tdo serve`.",
+  "files": [
+    "src",
+    "assets"
+  ]
+}

@@ -1,2 +1,18 @@
 [tools]
-go = "1.27.2"
+# The runtime for `npm test`, for `node packages/cli/src/main.ts` and for the
+# published npm package. `engines` names >=24 as the floor a consumer has to
+# meet; this is the one version the tree is developed and tested against, and
+# it stays above that floor rather than at it. It used to have to be 25.5+,
+# because `node --build-sea` needed the NODE_SEA_FUSE sentinel that only the
+# official builds carry; the shipped executable is built by Bun now, so that
+# constraint is gone and this is a plain pin.
+node = "26.12.0"
+
+# The shipped executable is built with `bun build --compile`
+# (scripts/build-binary.mjs). Pinned, rather than left to whatever `bun` is on
+# PATH, for the same reason node is: the compiled binary embeds this exact
+# Bun runtime, so the version here is the one every user ends up running, and
+# `--bytecode` and `--asset` are young enough that a drifting local Bun would
+# produce a differently behaving `tdo` from the same source. Node is still the
+# runtime for `npm test`, for the published npm package and for development.
+bun = "1.4.3"

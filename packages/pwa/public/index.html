@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover lets the layout reach under the notch and the home
+     indicator; app.css pays the safe-area insets back. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>tdo</title>
+
+<!-- This page talks to one host and runs no code it was not served with,
+     and the policy says so rather than relying on it being true.
+     `script-src` is the line that matters most: the credential in this
+     browser's storage is readable by any script on this origin, so the
+     answer is that there are no scripts on this origin but the two files
+     below, and no way to inject a third.
+     `connect-src` is deliberately broad — `https:` — because the database
+     URL is the user's and is unknown when this file is written; the two
+     loopback entries are for a self-hosted sqld reached over plain http.
+     The `sha256-…` is the hash of the import map below, which an import map
+     needs because it has to be inline and `'unsafe-inline'` would undo the
+     whole paragraph above. **Edit the map and this hash must be recomputed**
+     (`openssl dgst -sha256 -binary | base64` over the element's exact
+     contents); a browser refuses the map and names the expected hash in the
+     console, so the failure is loud, but it is a manual step and there is no
+     tooling here to do it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-aR1yFRhexpUnYUTtNZ6PIuInXsFKSWEr/AYKvbgZkjM='; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src https: http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'">
+
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="tdo">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#f2f1f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/connect.css">
+
+<!-- The import map is what stands in for a bundler. A browser has no
+     `exports` map, so every bare specifier the emitted modules still carry
+     is resolved here, by hand, against the layout `tsc` produces (see
+     `tsconfig.build.json`). One line per entry in core's own `exports` that
+     this app actually reaches: a specifier missing from this map fails
+     loudly at load, which is the failure mode to want. It is shorter than
+     core's `exports`, and deliberately: a module core reaches from inside
+     itself does so by relative path, which needs no entry here. Only the
+     specifiers *this app's own* modules — and `store-turso`'s — write out
+     are listed, which is what `shell.test.ts` checks in both directions. -->
+<script type="importmap">
+{
+  "imports": {
+    "@todocloud/core/exit": "/core/src/exit.js",
+    "@todocloud/core/id": "/core/src/id.js",
+    "@todocloud/core/providercli": "/core/src/providercli.js",
+    "@todocloud/core/secret": "/core/src/secret.js",
+    "@todocloud/core/store": "/core/src/store/store.js",
+    "@todocloud/core/store/availability": "/core/src/store/availability.js",
+    "@todocloud/core/store/completion": "/core/src/store/completion.js",
+    "@todocloud/core/store/filter": "/core/src/store/filter.js",
+    "@todocloud/core/store/schema": "/core/src/store/schema.js",
+    "@todocloud/core/store/version": "/core/src/store/version.js",
+    "@todocloud/core/task": "/core/src/task.js",
+    "@todocloud/core/webapi": "/core/src/webapi/api.js",
+    "@todocloud/core/webapi/http": "/core/src/webapi/http.js",
+    "@todocloud/store-turso": "/store-turso/src/turso.js"
+  }
+}
+</script>
+</head>
+
+<!-- data-pane is which of the three panes a narrow screen is showing. On a
+     wide one all three are on screen and the attribute is ignored, which is
+     how OmniFocus 3 behaves across its size classes: one pane when compact,
+     up to three when wide.
+
+     There is no data-token here, and that is the one structural difference
+     from the page `tdo serve` renders. That token authorizes a write to a
+     local listener another origin's script could otherwise reach. There is
+     no listener in this app: the API is in the tab. -->
+<body data-pane="home">
+
+<!-- The connect screen. Everything on it is here because of one fact: this
+     app has no server, so the token is in this browser, and the person
+     pasting it is entitled to know what that means before they do. -->
+<main id="connect">
+  <h1>tdo</h1>
+  <p class="lede">
+    This app talks to <strong>your own Turso database, directly from this
+    browser</strong>. There is no todocloud server, no account, and nothing
+    in the middle: your tasks go from this tab to your database and nowhere
+    else.
+  </p>
+
+  <section class="warning" aria-labelledby="risk">
+    <h2 id="risk">What you are accepting</h2>
+    <ul>
+      <li>
+        <strong>The token is stored in this browser.</strong> Any script that
+        runs on this site can read it, and so can anyone who opens devtools
+        on this device. The protection here is that this site serves a
+        handful of hand-written files and no third-party code — not that the
+        value is hidden from anything.
+      </li>
+      <li>
+        <strong>Use a token that is as narrow and as short-lived as you can
+        make it.</strong> Turso issues tokens per database, which is why it
+        is the provider this app supports: a token minted for your todo
+        database cannot touch anything else you own. Give it an expiry —
+        <code>turso db tokens create &lt;database&gt; --expiration 7d</code>
+        — and mint a read-only one if you only want to look
+        (<code>--read-only</code>).
+      </li>
+      <li>
+        <strong>Anyone who unlocks this device can see your tasks.</strong>
+        Leave the box below unchecked on a shared or borrowed machine: the
+        token is then kept for this tab only and goes when you close it.
+      </li>
+      <li>
+        <strong>Revoking is done at Turso, not here.</strong> Disconnecting
+        removes this browser's copy of the token. It does not end the
+        token's life — <code>turso db tokens invalidate &lt;database&gt;</code>
+        does.
+      </li>
+    </ul>
+  </section>
+
+  <form id="connect-form" autocomplete="off">
+    <label for="turso-url">Database URL</label>
+    <input id="turso-url" name="url" type="url" inputmode="url"
+           autocomplete="off" autocapitalize="off" spellcheck="false"
+           placeholder="libsql://example.turso.io" required>
+    <p class="hint">
+      From <code>turso db show &lt;database&gt; --url</code>. The URL is
+      remembered on this device; it is not a credential. A token is never put
+      in it — a URL is logged by every proxy it passes, so this app refuses a
+      URL that carries one.
+    </p>
+
+    <label for="turso-token">Database token</label>
+    <!-- type=password so the value is not on screen, and autocomplete off
+         so no password manager is invited to keep a copy of a database
+         credential. The field is cleared the moment the value is read. -->
+    <input id="turso-token" name="token" type="password"
+           autocomplete="off" autocapitalize="off" spellcheck="false"
+           placeholder="TOKEN_GOES_HERE" required>
+    <p class="hint">
+      From <code>turso db tokens create &lt;database&gt;</code>. It is sent
+      as an <code>Authorization</code> header to your database and to nowhere
+      else.
+    </p>
+
+    <label class="check" for="remember">
+      <input id="remember" type="checkbox">
+      Remember this token on this device
+    </label>
+    <p class="hint">
+      Unchecked — the default — keeps it for this tab only, so closing the
+      tab forgets it. Checked, it survives until you disconnect or the token
+      expires.
+    </p>
+
+    <button type="submit">Connect</button>
+    <p id="connect-status" class="status" role="status" aria-live="polite"></p>
+  </form>
+
+  <p class="hint">
+    The database must already have a tdo schema in it: run
+    <code>tdo init</code> once against it from the CLI. This app creates
+    nothing.
+  </p>
+  <p class="hint">
+    Offline, this is a shell with nothing behind it. Reads and writes need
+    your database, and a write that cannot reach it fails and says so rather
+    than being queued — your list is in one place, and a copy in here that
+    disagreed with it would be worse than an error.
+  </p>
+</main>
+
+<!-- Everything below is `packages/cli/assets/index.html`, the viewer the
+     project already has, with two changes: the store-description template
+     action is an empty span that `main.ts` fills in, and a Disconnect button sits beside
+     it, because a page holding a credential needs a way to let go of it. -->
+<div id="app" hidden>
+
+  <!-- Home: the perspectives, the projects, the tags. -->
+  <nav id="sidebar" aria-label="Perspectives">
+    <header class="navbar">
+      <h1>tdo</h1>
+      <button type="button" id="reload" class="icon" aria-label="Reload">&#x21bb;</button>
+    </header>
+
+    <div class="pane-body">
+      <ul id="tiles" class="tiles"></ul>
+
+      <section class="group">
+        <h2>Projects</h2>
+        <ul id="projects" class="rows"></ul>
+      </section>
+
+      <section class="group">
+        <h2>Tags</h2>
+        <ul id="tags" class="rows"></ul>
+      </section>
+
+      <section class="group">
+        <h2>Other Perspectives
+          <button type="button" id="show-other" class="disclose" aria-expanded="false">Show</button>
+        </h2>
+        <ul id="others" class="rows" hidden></ul>
+      </section>
+    </div>
+
+    <footer class="toolbar">
+      <button type="button" id="capture" class="icon" aria-label="New inbox item">&#x2295;</button>
+      <span id="store" title="where these tasks live"></span>
+      <span id="token-hint" title="which token this browser is using; a fingerprint, never the value"></span>
+      <button type="button" id="disconnect" class="disclose">Disconnect</button>
+    </footer>
+  </nav>
+
+  <!-- The outline: the one pane that is always on screen. -->
+  <section id="list" aria-label="Items">
+    <header class="navbar">
+      <button type="button" id="back" class="back"><span class="chevron">&#x2039;</span><span id="back-label">Home</span></button>
+      <h2 id="list-title">Inbox</h2>
+      <button type="button" id="to-inspector" class="icon" aria-label="Inspector"><em>i</em></button>
+    </header>
+
+    <div class="pane-body">
+      <form id="quick" autocomplete="off">
+        <input id="quick-title" type="text" placeholder="Add to the inbox&#8230;" aria-label="New item title">
+        <button type="submit">Add</button>
+      </form>
+      <ol id="items" class="rows"></ol>
+      <p id="empty" hidden>Nothing here.</p>
+    </div>
+
+    <footer class="toolbar">
+      <span class="status" role="status" aria-live="polite"></span>
+      <span id="keys">
+        <span><kbd>j</kbd><kbd>k</kbd> move</span>
+        <span><kbd>space</kbd> complete</span>
+        <span><kbd>f</kbd> flag</span>
+        <span><kbd>n</kbd> capture</span>
+      </span>
+    </footer>
+  </section>
+
+  <!-- The inspector: one item in full. -->
+  <aside id="inspector" aria-label="Inspector">
+    <header class="navbar">
+      <button type="button" id="inspector-back" class="back"><span class="chevron">&#x2039;</span><span>Back</span></button>
+      <h2>Inspector</h2>
+      <!-- There is no Save button, so this is where an edit says it landed.
+           It is repeated here because on a phone the outline's toolbar —
+           the other place it appears — is a pane away. -->
+      <span class="status" role="status" aria-live="polite"></span>
+    </header>
+
+    <div class="pane-body">
+      <p id="no-selection">Select an item to see it here.</p>
+      <form id="detail" hidden>
+        <label>Title <input name="title" type="text"></label>
+        <label>Note <textarea name="note" rows="3"></textarea></label>
+        <label>Tags <input name="tags" type="text" placeholder="comma,separated"></label>
+        <div class="pair">
+          <label>Defer <input name="defer_at" type="date"></label>
+          <label>Due <input name="due_at" type="date"></label>
+        </div>
+        <div class="pair">
+          <label>Estimate <input name="estimate" type="text" placeholder="25m"></label>
+          <label>Priority
+            <select name="priority">
+              <option value="0">none</option>
+              <option value="1">low</option>
+              <option value="2">medium</option>
+              <option value="3">high</option>
+            </select>
+          </label>
+        </div>
+        <div class="pair">
+          <label>Status
+            <select name="status">
+              <option value="active">active</option>
+              <option value="on_hold">on hold</option>
+              <option value="dropped">dropped</option>
+            </select>
+          </label>
+          <label>Parent
+            <select name="parent_id"></select>
+          </label>
+        </div>
+        <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
+        <dl id="facts"></dl>
+        <div class="actions">
+          <button type="button" id="complete">Complete</button>
+          <button type="button" id="remove" class="danger">Remove</button>
+        </div>
+      </form>
+    </div>
+  </aside>
+
+</div>
+
+<!-- Order is the contract here. `main.ts` is a module, so it is deferred;
+     `app.js` carries `defer` so that it runs after it, in document order.
+     That is what puts the `/api` shim in place before the viewer's first
+     request, which would otherwise go to this static host and come back
+     404. `app.js` also registers the service worker, which is why nothing
+     in `main.ts` does. -->
+<script type="module" src="/pwa/src/main.js"></script>
+<script src="/app.js" defer></script>
+</body>
+</html>
