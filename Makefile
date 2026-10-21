@@ -1,7 +1,7 @@
 BINARY := tdo
 
 .PHONY: build install uninstall test typecheck scan scan-history \
-        hooks clean check binary emit icons
+        hooks clean check binary icons
 
 build: ## Type-check and build the TypeScript workspace
 	npm run build
@@ -11,9 +11,6 @@ test: ## Run tests (no network access required)
 
 typecheck: ## Type-check without emitting
 	npx tsc --build --force
-
-emit: ## Emit JavaScript into ./dist (what the npm packages ship)
-	npx tsc -p tsconfig.build.json
 
 binary: ## Build the single executable into ./dist-bin (add ARGS=--all to cross-compile)
 	@# Needs the bun pinned in mise.toml; the script smoke-tests what it built.

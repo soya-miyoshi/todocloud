@@ -8,16 +8,16 @@
 // an Intel Mac had no archive, while `bun build --compile` cross-compiles
 // every supported target from this one machine.
 //
-// Node has not gone anywhere. It is still the runtime for `npm test`, for the
-// published npm package, and for development; only the shipped binary is
-// built by Bun.
+// Node has not gone anywhere. It is still the runtime for `npm test` and for
+// development; only the shipped binary is built by Bun.
 //
 // Four things make this more than a one-liner.
 //
 // **No emit step.** Bun bundles and transpiles TypeScript itself, so there is
-// no `tsc -p tsconfig.build.json` ahead of it and no emitted `dist/` to
-// stage. (`scripts/pack-npm.mjs` still emits, because a consumer's Node may
-// not strip types.)
+// no `tsc` run ahead of it and no emitted `dist/` to stage. The root
+// `tsconfig.build.json` that used to produce one existed for the npm
+// packages, whose consumers' Node might not strip types, and went with them
+// (MIGRATION.md, "The npm channel, and why it closed").
 //
 // **The assets have to be embedded.** Go embedded `internal/web/assets` with
 // `go:embed`, so a missing asset was a build failure. `packages/cli/src/web/

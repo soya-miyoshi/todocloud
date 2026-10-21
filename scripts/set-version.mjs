@@ -4,13 +4,10 @@
 // reads it back out of the manifests:
 //
 //   - `packages/cli/src/admin.ts` reads its own manifest, so `tdo version`
-//     reports it in all three layouts (source, npm install, single
-//     executable).
+//     reports it both from source and from the single executable.
 //   - `scripts/build-binary.mjs` embeds `packages/cli/package.json` into the
 //     compiled executable with `--asset`, and names each output after the
 //     version it reads from there.
-//   - `scripts/pack-npm.mjs` carries it into each staged manifest and pins
-//     the inter-package `@todocloud/*` dependencies to it.
 //
 // What this replaced is worth recording, because both halves were clever and
 // neither should have had to exist. The release used to bake the version in
@@ -19,10 +16,10 @@
 // `process.env.TODOCLOUD_VERSION` — converting its static import to a dynamic
 // one, because ESM evaluates imports before the importing module's body, so
 // the assignment would otherwise have run after `admin.js` had already read
-// the environment — and `pack-npm.mjs` regex-patched the emitted `admin.js`
-// to replace the hardcoded fallback, a tarball having no shim to edit. Two
-// mechanisms for one fact, one of them editing compiled output, and each
-// could drift from the other. A Node package's version belongs in its
+// the environment — and the npm publish path regex-patched the emitted
+// `admin.js` to replace the hardcoded fallback, a tarball having no shim to
+// edit. Two mechanisms for one fact, one of them editing compiled output, and
+// each could drift from the other. A Node package's version belongs in its
 // manifest; putting it there before anything is built makes both unnecessary.
 //
 // The `version` value is replaced textually rather than by round-tripping the
@@ -38,12 +35,16 @@ import { fileURLToPath } from 'node:url';
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * The packages that ship. Same four as `shipped` in scripts/pack-npm.mjs;
- * `store-testkit` and `pwa` are not published.
+ * The packages a release stamps: the CLI and the three libraries it is built
+ * out of. `store-testkit` and `pwa` are not part of what ships, so neither
+ * carries a release version. Only `cli`'s copy is read back — by
+ * `packages/cli/src/admin.ts` and by `scripts/build-binary.mjs` — but all
+ * four are written, because a manifest left at 0.0.0 beside three stamped
+ * ones is a trap rather than a saving.
  */
 export const shipped = ['core', 'store-sqlite', 'store-turso', 'cli'];
 
-/** What npm will accept and what the release tag is validated against. */
+/** What a manifest's `version` will accept, and what the tag is validated against. */
 export const versionPattern = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
 /** assertVersion throws unless v is MAJOR.MINOR.PATCH[-prerelease]. */

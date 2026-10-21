@@ -62,6 +62,4 @@ dist/
 # The compiled executables (scripts/build-binary.mjs), one directory per
 # target, each named like the release archive it becomes.
 dist-bin/
-# The staged npm packages (scripts/pack-npm.mjs). Generated per release.
-dist-npm/
 *.tsbuildinfo

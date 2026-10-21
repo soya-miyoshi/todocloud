@@ -50,10 +50,10 @@ function manifestPath(): string {
  * the generated boot shim to assign `process.env.TODOCLOUD_VERSION` (and had
  * to convert the shim's static import to a dynamic one, because ESM
  * evaluates imports before the importing body, so the assignment would
- * otherwise have run too late), while scripts/pack-npm.mjs regex-patched the
+ * otherwise have run too late), while the npm publish path regex-patched the
  * emitted `admin.js` to replace this function's default, a tarball having no
  * shim to edit. Two mechanisms for one fact, one of them editing compiled
- * output.
+ * output. Both channels are gone now; `MIGRATION.md` records them.
  *
  * Both are gone. A Node package's version lives in its manifest, so that is
  * where this reads it from, and the release writes the tag into the shipped

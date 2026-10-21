@@ -26,9 +26,6 @@ and answering it needs projects, deferral and sequencing.
 ```sh
 brew install soya-miyoshi/tap/tdo
 
-# or, with Node 24 or newer already installed:
-npm install -g todocloud
-
 # or, from a clone, with Node and Bun (see mise.toml):
 make install
 ```
@@ -37,51 +34,43 @@ make install
 `bun build --compile`, so it carries its own JavaScript engine. Node and Bun
 are needed to *build* it, not to run it.
 
-Archives are published for Linux, macOS and Windows, on both Intel and Apple
-Silicon / arm64 — Homebrew covers macOS and Linux, and the releases page has
-the rest.
+Archives are published for Linux and macOS on both Intel and Apple Silicon /
+arm64, and for Windows on amd64. Homebrew covers macOS and Linux; everything
+else downloads an archive.
 
-### From npm
+### From an archive
 
-The npm package is called `todocloud` and the command it installs is `tdo`
-(`tdo` on npm is somebody else's package):
+Download the one for your platform from the
+[releases page](https://github.com/soya-miyoshi/todocloud/releases) —
+`tdo_<version>_<os>_<arch>.tar.gz`, or `.zip` for Windows — and check it
+against the `SHA256SUMS` file published beside it before unpacking:
 
 ```sh
-npm install -g todocloud      # installs the `tdo` command
-npx todocloud ls              # or try it without installing anything
+sha256sum --check --ignore-missing SHA256SUMS   # shasum -a 256 -c on macOS
+tar -xzf tdo_<version>_<os>_<arch>.tar.gz
+mv tdo ~/.local/bin/                            # anywhere on your PATH
 ```
 
-This route needs Node 24 or newer — `node:sqlite` is stable there — and it
-runs the same code the executable carries, as ordinary JavaScript on your own
-Node rather than bundled with an engine of its own. It is also smaller by two
-orders of magnitude, since nothing about a runtime ships with it.
+Each archive holds one static binary with nothing to install alongside it, so
+installing is moving that file somewhere on your `PATH`, and uninstalling is
+deleting it.
 
-**One thing worth knowing before you choose it.** A global npm install belongs
-to the Node version that installed it, so if you manage Node with nvm, fnm or
-mise, `tdo` disappears the moment you switch versions and comes back when you
-switch back. `npx todocloud` has the same property, one invocation at a time.
-If that is annoying rather than acceptable, use Homebrew or the archive — those
-install a binary that does not care which Node is on your `PATH`.
+**On Windows** there is no package manager route: Homebrew does not cover
+Windows, so download `tdo_<version>_windows_amd64.zip` from the releases page,
+check it against `SHA256SUMS` the same way, and put `tdo.exe` wherever your
+`PATH` can find it. Windows on arm64 has no archive yet.
 
 The tap carries the latest `vX.Y.Z` tag. A prerelease (`-rc.1` and the like)
 is on the releases page only, deliberately: `brew upgrade` should not move
 anyone onto one.
 
-Or download an archive for your platform from the
-[releases page](https://github.com/soya-miyoshi/todocloud/releases) —
-`tdo_<version>_<os>_<arch>.tar.gz`, or `.zip` for Windows — and check it
-against the `SHA256SUMS` file published beside it before unpacking. Each
-archive holds one static binary with nothing to install alongside it.
-
 Releases are cut by pushing a `vX.Y.Z` tag: the workflow runs the tests on both
 runtimes, cross-compiles linux amd64 and arm64, darwin amd64 and arm64 and
-windows amd64 from one machine, publishes the GitHub release,
-and pushes the formula to the `soya-miyoshi/homebrew-tap` repository. The tap
-update needs a `HOMEBREW_TAP_TOKEN` secret and is skipped when it is absent —
-a missing token costs a `brew upgrade`, not a release — and a prerelease tag
-(one containing a `-`) never touches the tap. The npm publish works the same
-way: it needs an `NPM_TOKEN` secret, is skipped without it, and skips a
-prerelease so that `npm install -g todocloud` never resolves to one. See
+windows amd64 from one machine, publishes the GitHub release with its
+checksums, and pushes the formula to the `soya-miyoshi/homebrew-tap`
+repository. The tap update needs a `HOMEBREW_TAP_TOKEN` secret and is skipped
+when it is absent — a missing token costs a `brew upgrade`, not a release —
+and a prerelease tag (one containing a `-`) never touches the tap. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the full procedure.
 
 ## First run

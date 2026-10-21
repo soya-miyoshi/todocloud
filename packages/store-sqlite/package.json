@@ -1,24 +1,14 @@
 {
   "name": "@todocloud/store-sqlite",
   "version": "0.0.0",
-  "//private": "The published package is staged by scripts/pack-npm.mjs, never published from this directory: this manifest points at .ts for development. `private` is kept so that an `npm publish` run here refuses outright rather than pushing the TypeScript sources and the tests to the registry; the staged copy drops it.",
+  "//private": "Nothing in this repository is published to a registry: `tdo` ships as the compiled executable (scripts/build-binary.mjs) through Homebrew and the GitHub release archives. `private` is what keeps it that way — an `npm publish` run here refuses outright rather than pushing the TypeScript sources and the tests to a registry — and the manifests point at `.ts` because the workspace runs its sources directly.",
   "private": true,
-  "description": "Local SQLite store for todocloud, over node:sqlite",
   "license": "MIT",
-  "homepage": "https://github.com/soya-miyoshi/todocloud#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/soya-miyoshi/todocloud.git",
     "directory": "packages/store-sqlite"
   },
-  "bugs": {
-    "url": "https://github.com/soya-miyoshi/todocloud/issues"
-  },
-  "keywords": [
-    "todocloud",
-    "sqlite",
-    "store"
-  ],
   "type": "module",
   "exports": {
     ".": "./src/sqlite.ts"
@@ -29,9 +19,6 @@
   "engines": {
     "node": ">=24"
   },
-  "files": [
-    "src"
-  ],
   "scripts": {
     "test": "node --test --experimental-strip-types \"src/**/*.test.ts\""
   }

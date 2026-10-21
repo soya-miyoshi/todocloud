@@ -39,8 +39,8 @@ const packagesDir = path.join(pwaDir, '..');
 /**
  * assetsDir is the one copy of the viewer's assets. `packages/cli/assets` is
  * where it is because `packages/cli/src/web/web.ts` reads it from disk
- * relative to itself and `scripts/build-sea.mjs` stages it into the single
- * executable; this app's build copies out of it.
+ * relative to itself and `scripts/build-binary.mjs` embeds it into the single
+ * executable with `--asset`; this app's build copies out of it.
  */
 const assetsDir = path.join(packagesDir, 'cli', 'assets');
 

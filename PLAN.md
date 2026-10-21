@@ -11,7 +11,8 @@ database endpoint you configured.
 - Binary / command: `tdo`
 - Language: TypeScript on Node 24+ (zero runtime dependencies)
 - Distribution: one executable compiled with `bun build --compile`, which
-  needs no runtime installed; or an npm package for the Node you already have
+  needs no runtime installed — through Homebrew and the GitHub release
+  archives
 - License: MIT
 - Status: v0.1 is being implemented. Nothing is tagged yet.
 
@@ -56,8 +57,8 @@ toolchain for whoever builds a release. Against all of that, one
 implementation of availability, repeat completion and the task shape now
 serves the CLI, the local viewer and the PWA.
 
-Node remains the development runtime and the npm install's runtime; Bun builds
-the executable and nothing else. Both are pinned in `mise.toml` and the test
+Node remains the development runtime; Bun builds the executable and nothing
+else. Both are pinned in `mise.toml` and the test
 suite runs under both in CI.
 
 Cloudflare D1 does not get the direct-from-browser treatment. Its REST API

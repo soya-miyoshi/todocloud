@@ -5,8 +5,9 @@
 Two runtimes, both pinned in `mise.toml`, so `mise install` gets you both.
 
 **Node** (26.12.0 there) is the development runtime: it runs the `.ts` sources
-directly, it runs `npm test`, and it is what the published npm package
-executes on a consumer's machine. Any Node 24 or newer will do — that is what
+directly and it runs `npm test`. Nothing is shipped to a registry, so no
+user's Node ever runs this code — what ships is the compiled executable. Any
+Node 24 or newer will do — that is what
 `engines` names, because that is where `node:sqlite` became stable — and the
 pin is simply the one version the tree is developed and tested against. There
 used to be a 25.5-and-official-build-only requirement here; it was Node's own
@@ -259,10 +260,11 @@ git push origin v0.1.0
 What then happens, in order:
 
 1. **verify** — `npm ci`, the type-check, and the tests under **both**
-   runtimes against the tree being tagged: `npm test` because that is what an
-   npm install runs, `bun test` because that is the engine the archives
-   carry. A release that cannot be unpublished from the machines that already
-   downloaded it is not cut from an unchecked tree.
+   runtimes against the tree being tagged: `npm test` because that is the
+   suite as it is developed and as CI reports it, `bun test` because that is
+   the engine the archives carry. A release that cannot be unpublished from
+   the machines that already downloaded it is not cut from an unchecked
+   tree.
 2. **meta** — the version is parsed out of the tag once, in one place, rather
    than in each build job.
 3. **build** — **one job** that compiles every executable: linux amd64 and
@@ -271,8 +273,10 @@ What then happens, in order:
    the property `CGO_ENABLED=0` gave Go and the Node SEA took away — a SEA is
    the *target platform's own* node binary with code injected into it, so it
    needed a runner per platform. **darwin amd64 is back** with the change:
-   Node could not build a macOS x64 executable at all, and an Intel Mac had to
-   install from npm. It no longer does. **windows arm64** is still absent, and
+   Node could not build a macOS x64 executable at all, and an Intel Mac had
+   nothing to download. It has an archive and a bottle again — which is also
+   what ended the npm channel; `MIGRATION.md` records that. **windows arm64**
+   is still absent, and
    that was never a build-host question — it is not in the target list in
    `scripts/build-binary.mjs`, and adding it is a change to that list.
 
@@ -283,11 +287,12 @@ What then happens, in order:
    `scripts/build-binary.mjs` embeds that same file into the executable with
    `--asset` and names each output directory after the version it read from
    it, so the number arrives by the route a Node package's version always
-   travels. That one step is also what the npm job runs, so there is exactly
-   one place a version enters the build; `TODOCLOUD_VERSION` stays a developer
+   travels. It is the one place a version enters the build;
+   `TODOCLOUD_VERSION` stays a developer
    override and the release never sets it. It replaced two separate hacks — a
    rewrite of the Node SEA's boot shim and a regex patch of the emitted
-   `admin.js` — which `scripts/set-version.mjs` records in full.
+   `admin.js` on the way into an npm tarball — which
+   `scripts/set-version.mjs` records in full.
    `TODOCLOUD_COMMIT` is still an environment variable, because a git SHA has
    no home in a manifest, and nothing bakes it in, so a released binary
    reports an empty commit. Then the job asks the **host** executable for
@@ -313,6 +318,13 @@ What then happens, in order:
    skips and the release still happens — a missing token costs a
    `brew upgrade`, not a release. A prerelease tag never touches the tap, and a
    formula that already matches is not re-pushed.
+
+Those five are the whole graph: `verify` and `meta` are independent,
+`build` needs both, `publish` needs `meta` and `build`, and `homebrew` needs
+`meta` and `publish`. There is no sixth job — the `npm-publish` that used to
+hang off `[verify, meta]` is gone along with the channel it fed, and with it
+its publish token secret and the publish-time staging step. The only secret
+the release reads now is `HOMEBREW_TAP_TOKEN`.
 
 The token reaches git through a credential helper reading stdin, not through
 the remote URL: a URL ends up in `.git/config`, in the process list and in any

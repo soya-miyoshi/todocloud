@@ -3,28 +3,28 @@
 //
 // Go had `go:embed`, so there was nothing to find. A TypeScript build reads
 // both from the filesystem, and the path they sit at depends on how `tdo` was
-// installed. Four layouts are in use, and the first three agree while the
-// fourth does not:
+// started. Two layouts are in use:
 //
 //   1. from source, in this repository:
 //        packages/cli/src/web/web.ts -> ../../assets
 //        packages/cli/src/admin.ts   -> ../package.json
-//   2. from an npm install: scripts/pack-npm.mjs stages the emitted `src/`
-//      beside the manifest and the asset directory, so `src/web/web.js` and
-//      `src/admin.js` reach them by exactly the same relative paths.
-//   3. inside the Node single executable: the VFS mounts the tree read-only
-//      as `node_modules/@todocloud/cli/`, mirroring the on-disk layout, so
-//      again the same relative paths resolve.
-//   4. inside a `bun build --compile` executable: every module reports
+//   2. inside a `bun build --compile` executable: every module reports
 //      `import.meta.dirname` as `/$bunfs/root` — there is no directory tree
 //      to walk up, because the bundle is one file. `--asset <dir>` embeds a
 //      directory under its basename beside the entry, so `packages/cli/assets`
 //      arrives as `/$bunfs/root/assets` and the embedded manifest as
 //      `/$bunfs/root/package.json`. The repository path they had is gone.
 //
-// So each resource has two candidate paths — the layout-relative one that
-// 1-3 share, and the entry-adjacent one Bun produces — and this module tries
-// them in order and returns the first that exists.
+// So each resource has two candidate paths, and this module tries them in
+// order and returns the first that exists.
+//
+// Two other layouts used to share path 1, and are recorded here because the
+// code reads as though it carries more cases than it needs: an npm install
+// staged the emitted `src/` beside the manifest and the assets, and the Node
+// single executable mounted the tree as `node_modules/@todocloud/cli/`. Both
+// channels are gone — `MIGRATION.md` says why — and neither left a branch
+// behind, because both resolved by the same relative path the repository
+// does.
 //
 // It is a probe rather than a test for Bun (no `globalThis.Bun`, no version
 // sniff) on purpose. A probe states what the code actually needs, which is a

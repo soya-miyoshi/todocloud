@@ -17,11 +17,11 @@ env:
 
 jobs:
   # The release is not cut unless the tree that is being tagged passes the
-  # same checks main does — on both runtimes, because Node is what the npm
-  # package runs on and Bun is what compiles the executable below. A release
-  # must not be the first time the shipped engine sees the test suite. The
-  # two runners report different totals (`npm test` counts subtests that
-  # `bun test` folds into their parent); the set of tests is the same.
+  # same checks main does — on both runtimes, because Node is the development
+  # runtime and Bun is what compiles the executable below. A release must not
+  # be the first time the shipped engine sees the test suite. The two runners
+  # report different totals (`npm test` counts subtests that `bun test` folds
+  # into their parent); the set of tests is the same.
   #
   # A broken release cannot be unpublished from the machines that already
   # downloaded it.
@@ -54,9 +54,9 @@ jobs:
         # The runtime the shipped binary carries.
         run: bun test
   # The tag is parsed once, in one place. It mattered more when four build
-  # jobs each had to agree about the version, and it stays: the build, the
-  # tap and the npm publish all read `needs.meta.outputs.version`, so there
-  # is one answer rather than three parsers that could drift.
+  # jobs each had to agree about the version, and it stays: the build and the
+  # tap both read `needs.meta.outputs.version`, so there is one answer rather
+  # than two parsers that could drift.
   meta:
     runs-on: ubuntu-latest
     outputs:
@@ -108,21 +108,20 @@ jobs:
       # packages/cli/src/admin.ts reads its own package.json, and
       # scripts/build-binary.mjs embeds that same file into the executable
       # with `--asset` and names each output directory after the version it
-      # read from it. One step, one place, and the npm job below writes the
-      # same number the same way.
+      # read from it. One step, one place, and the only place a version
+      # enters the build.
       #
       # This replaced a rewrite of the Node SEA's generated boot shim that
       # ran *after* the build, injected `process.env.TODOCLOUD_VERSION` and
       # had to turn the shim's static import into a dynamic one to beat ESM's
       # evaluation order, then built the executable a second time.
-      # scripts/set-version.mjs records why that and its counterpart in
-      # scripts/pack-npm.mjs are gone.
+      # scripts/set-version.mjs records why that hack is gone.
       #
       # TODOCLOUD_COMMIT stays an environment variable, because a git SHA is
       # not a package's business and no manifest has a home for it. Nothing
       # bakes it in any more, so a released executable reports an empty
-      # commit, exactly as an npm install always did. That is the price of
-      # dropping the shim rewrite, and it is a fair one: the tag is the
+      # commit. That is the price of dropping the shim rewrite, and it is a
+      # fair one: the tag is the
       # identifier the release promises and the GitHub release records which
       # commit it was cut from. A reader who wants it in the binary should get
       # it from a generated source file written by this step, not from an edit
@@ -366,146 +365,3 @@ jobs:
           git add Formula/tdo.rb
           git commit -m "tdo ${VERSION}"
           git push origin HEAD
-
-  # npm is the other half of the distribution story. It is no longer the only
-  # half for anybody — the SEA's missing macOS x64 target is what used to make
-  # it that, and `bun build --compile` produces darwin_amd64, so every
-  # supported platform has an archive and Homebrew covers the three it covers.
-  # npm remains the route for anyone who wants `tdo` on the Node they already
-  # have, on a platform with no archive, or without seventy-odd megabytes of
-  # embedded runtime, and it is the only thing the four `@todocloud/*`
-  # libraries ship through at all.
-  #
-  # It needs [verify, meta] rather than [meta, publish] deliberately. The
-  # archives are not an input here — npm ships the emitted JavaScript, not the
-  # executable — so a failed binary build should not withhold a tarball that
-  # was never built from it.
-  #
-  # A prerelease is skipped, by the same hyphen test as the tap. npm's `latest`
-  # tag is what `npm install -g todocloud` resolves to, and a prerelease must
-  # not become that. Publishing one under `--tag next` was the alternative; it
-  # is not done because README.md already states the policy that a prerelease
-  # lives on the releases page only, and a second channel nobody documented is
-  # a channel nobody tests. The day a prerelease channel is wanted, `--tag
-  # next` here is the whole change.
-  #
-  # Like the tap, a missing secret costs an update and never a release.
-  npm-publish:
-    needs: [verify, meta]
-    runs-on: ubuntu-latest
-    if: ${{ !contains(github.ref_name, '-') }}
-    permissions:
-      contents: read
-      # Required by `npm publish --provenance`: npm exchanges this for a signed
-      # attestation tying the tarball to this workflow, this commit and this
-      # runner. Nothing else in the job uses it.
-      id-token: write
-    steps:
-      - name: Check for the npm token
-        id: token
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NPM_TOKEN}" ]; then
-            echo "NPM_TOKEN is not set; skipping the npm publish." >&2
-            echo "present=false" >> "${GITHUB_OUTPUT}"
-          else
-            echo "present=true" >> "${GITHUB_OUTPUT}"
-          fi
-
-      - uses: actions/checkout@v4
-        if: steps.token.outputs.present == 'true'
-      - uses: actions/setup-node@v4
-        if: steps.token.outputs.present == 'true'
-        with:
-          node-version: "26"
-          # registry-url is what makes setup-node write the .npmrc, and the
-          # line it writes is a *reference* to NODE_AUTH_TOKEN rather than its
-          # value — the substitution happens inside npm, so the token is never
-          # on a command line and never in a file. Writing an .npmrc by hand
-          # here would put it on disk in cleartext.
-          registry-url: "https://registry.npmjs.org"
-      - run: npm ci
-        if: steps.token.outputs.present == 'true'
-
-      # The same step the build job runs, and the same script: the version
-      # enters the build in exactly one place. pack-npm.mjs then carries it
-      # into every staged manifest and into the pinned @todocloud/* ranges, so
-      # it is never passed twice and the two halves of the release cannot
-      # disagree about what the tag was.
-      - name: Write the tagged version into the manifests
-        if: steps.token.outputs.present == 'true'
-        env:
-          VERSION: ${{ needs.meta.outputs.version }}
-        run: |
-          set -euo pipefail
-          node scripts/set-version.mjs "${VERSION}"
-          git diff --stat
-
-      # The staged packages. The manifests in packages/ point at .ts because
-      # the repository runs the sources directly (MIGRATION.md, "No build
-      # step"); the staged copies point at the emitted .js, which is what a
-      # consumer's Node needs and what `bin` has to be. `tdo version` needs no
-      # staging-time surgery any more — it reads the manifest it is installed
-      # beside, which is the one written above.
-      - name: Stage the packages
-        if: steps.token.outputs.present == 'true'
-        run: |
-          set -euo pipefail
-          node scripts/pack-npm.mjs
-          for pkg in core store-sqlite store-turso cli; do
-            echo "::group::${pkg}"
-            (cd "dist-npm/${pkg}" && npm pack --dry-run)
-            echo "::endgroup::"
-          done
-
-      # The same check the build job makes of the executable, made of the
-      # tarballs: install the four of them into a scratch directory and ask the
-      # installed command what version it is. It proves three things at once —
-      # that `bin` resolves to something runnable, that a bare
-      # `@todocloud/core` specifier resolves from a real node_modules rather
-      # than from this workspace's symlinks, and that `tdo version` reports the
-      # tag. The tarballs are installed rather than the directories so npm
-      # resolves the pinned exact versions out of what is in hand; nothing is
-      # fetched from the registry, which is also why this can run before the
-      # publish rather than after it.
-      - name: Check the tarballs install and report the tagged version
-        if: steps.token.outputs.present == 'true'
-        env:
-          VERSION: ${{ needs.meta.outputs.version }}
-        run: |
-          set -euo pipefail
-          work="${RUNNER_TEMP}/npm-verify"
-          mkdir -p "${work}/tgz" "${work}/app"
-          for pkg in core store-sqlite store-turso cli; do
-            (cd "dist-npm/${pkg}" && npm pack --silent --pack-destination "${work}/tgz")
-          done
-          cd "${work}/app"
-          npm init -y >/dev/null
-          npm install --no-audit --no-fund "${work}"/tgz/*.tgz
-          reported=$(./node_modules/.bin/tdo version --json | node -e '
-            let s = "";
-            process.stdin.on("data", (c) => { s += c; });
-            process.stdin.on("end", () => { process.stdout.write(JSON.parse(s).version); });
-          ')
-          if [ "${reported}" != "${VERSION}" ]; then
-            echo "the npm package reports ${reported}, the tag says ${VERSION}"
-            exit 1
-          fi
-          test -f node_modules/todocloud/assets/app.js # `tdo serve` reads this at startup
-
-      # Order matters: `todocloud` pins an exact version of each scoped
-      # package, so those have to exist on the registry first or the first
-      # `npm install -g todocloud` cannot resolve. --access public because a
-      # scoped package is private by default and would publish to a 402 on a
-      # free account. --provenance needs id-token: write above and a public
-      # repository; both hold here.
-      - name: Publish to npm
-        if: steps.token.outputs.present == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          for pkg in core store-sqlite store-turso cli; do
-            npm publish "dist-npm/${pkg}" --access public --provenance
-          done

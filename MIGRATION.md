@@ -203,12 +203,13 @@ screen, which the local viewer has no need of.
 module and reads it at startup, so a `tdo` shipped without that directory
 beside the module fails when the server starts instead. The failure names the
 file and the directory it looked in, and `packages/cli/package.json` lists
-`assets` in `files`. Every packaging route therefore has to carry the
-directory, and each carries it its own way: the npm tarballs get a copy staged
-beside the emitted modules by `scripts/pack-npm.mjs`, and the compiled
-executable gets it embedded with `--asset`, which
-`packages/cli/src/respath.ts` finds at `/$bunfs/root/assets`. See
-"Distribution: a single executable" below.
+`assets` in `files`. Whatever ships has to carry the directory. There
+is one route now — the compiled executable, which embeds it with `--asset`,
+where `packages/cli/src/respath.ts` finds it at `/$bunfs/root/assets`. There
+were two while the npm packages existed, and the staged tarballs carried a
+copy beside the emitted modules; see "Distribution: a single executable"
+below. `packages/cli/package.json` still lists `assets` in `files`, as the
+declaration that it is not build output.
 
 ## Two Go bugs the port does not carry over
 
@@ -238,9 +239,8 @@ produced changed once, and the reversal is worth recording in full, because
 the first answer was not wrong and the second one won on measurement.
 
 **Node is not leaving.** It is still the development runtime, still what
-`npm test` runs, still what the published npm package executes on a consumer's
-machine, and still pinned in `mise.toml`. Only the shipped executable changed
-hands.
+`npm test` runs, and still pinned in `mise.toml`. Only the shipped executable
+changed hands.
 
 ### First answer: a Node single executable application
 
@@ -250,9 +250,10 @@ looks the way it does even now.
 
 **The embedded code had to be JavaScript.** A SEA does not strip types: an
 embedded `.ts` failed at import with a syntax error on the first type
-annotation. `tsconfig.build.json` emits JS for that, and it still exists —
-`scripts/pack-npm.mjs` needs it, because a consumer's Node may not strip types
-either.
+annotation. The root `tsconfig.build.json` emitted JS for that. It outlived
+the SEA, because the npm packages needed the same emit for a consumer's Node;
+it went with them. The only `tsconfig.build.json` left is
+`packages/pwa`'s, which emits for the browser.
 
 **Building required an official Node 25.5 or newer.** `--build-sea` searched
 the node binary for a fuse sentinel, and Homebrew's node does not carry it;
@@ -292,8 +293,8 @@ executable with Bun instead. Measured on this machine, twenty runs of
 Two readings of that table matter more than the headline.
 
 **The win is mostly the floor, not the bundle.** Node cannot start in less
-than 43 ms on this machine, so 86 ms was close to as good as the npm install
-was ever going to get, and the SEA was slower still. Bun's floor is 7 ms, and
+than 43 ms on this machine, so 86 ms was close to as good as a Node-hosted
+`tdo` was ever going to get, and the SEA was slower still. Bun's floor is 7 ms, and
 a bundled, bytecode-cached `tdo` lands 25 ms above it. Nothing in the old
 arrangement had that lever: `MIGRATION.md` used to name bundling the 66 modules
 as the remaining one and reject it for costing a bundler, and Bun is a bundler
@@ -311,8 +312,9 @@ darwin arm64, producing `linux_amd64` 90 MB, `linux_arm64` 90 MB,
 release collapsed from a four-runner native matrix to one job, and
 **macOS x64 ships again**. Under the SEA an Intel Mac had no archive and no
 Homebrew bottle, and `README.md`, the formula and this document all sent that
-user to npm instead. Those sentences are gone and the formula's
-`on_intel` branch is back. A performance number can be argued about; a
+user to npm instead. Those sentences are gone, the formula's `on_intel` branch
+is back, and the npm channel they pointed at is gone too — see "The npm
+channel, and why it closed" below. A performance number can be argued about; a
 platform with nothing to download cannot.
 
 **`--asset` is the new `go:embed`.** Go embedded `internal/web/assets` with
@@ -323,8 +325,9 @@ arrives as `/$bunfs/root/assets` and `packages/cli/package.json` — read by
 `tdo version` — as `/$bunfs/root/package.json`. There is no directory tree to
 walk up inside a compiled binary: every module reports `import.meta.dirname`
 as `/$bunfs/root`. `packages/cli/src/respath.ts` is what squares that with the
-three layouts that do have a tree (source, npm install, and the SEA while it
-lasted), by probing both candidate paths rather than sniffing for a runtime.
+layouts that do have a tree — the source checkout, and, while they lasted, an
+npm install and the SEA — by probing both candidate paths rather than sniffing
+for a runtime.
 The build smoke-tests `tdo version` and `tdo serve` for exactly this reason: a
 missing `--asset` compiles cleanly and fails at first run.
 
@@ -350,13 +353,57 @@ because of this: the binary embeds that runtime, so a drifting local Bun would
 produce a differently behaving `tdo` from the same source.
 
 **What would make this worth reconsidering.** If Node's own startup floor came
-down far enough that an npm install were competitive with 32 ms, the engine
-argument would mostly evaporate, and a single toolchain would be worth
-something. If Node's SEA grew macOS x64 support and cross-building, the
+down far enough that running on the user's Node were competitive with 32 ms,
+the engine argument would mostly evaporate, and a single toolchain would be
+worth something. If Node's SEA grew macOS x64 support and cross-building, the
 platform argument — the one that actually decided this — would go with it. And
 if `--asset` or `--bytecode` broke in a way that could not be pinned around,
 the fallback is not the SEA but `bun build` without `--compile` plus a runtime,
 which is a different trade again.
+
+### The npm channel, and why it closed
+
+For a while `tdo` was also an npm package — `todocloud`, plus the three
+`@todocloud/*` libraries it depends on — and the decision to add it was a
+sound one at the time, so it is recorded rather than quietly removed.
+
+**Why it existed.** One reason, and not a hedge: the Node SEA could not
+produce a macOS x64 executable at all. An Intel Mac therefore had no archive
+and no Homebrew bottle, and `npm install -g todocloud` was the only way for
+that user to get the tool. Everything else npm offered — `tdo` on the Node you
+already have, a platform with no archive, a few hundred kilobytes instead of
+seventy-odd megabytes — was real but secondary. A platform with nothing to
+download is not a preference.
+
+**What closed the gap.** `bun build --compile` cross-compiles every supported
+target from one machine, `darwin_amd64` (79 MB) with the rest. The Intel Mac
+has an archive and a bottle again, and the reason npm existed went with it.
+The performance comparison then went the other way too: the compiled binary
+starts in **32 ms** against **84 ms** for the same code on a user's Node, so
+what was left was the slower of the two routes as well as the narrower one.
+
+**What keeping it cost.** An npm scope to own and a package name to keep
+holding. A publish token in the repository's secrets, which is one more place
+a credential can leak from (`CLAUDE.md` §1). A publish-time staging
+transformation — `scripts/pack-npm.mjs` — because the manifests in
+`packages/` point at `.ts` for development and a consumer's Node needs
+emitted `.js`, so the shipped manifests were never the ones in the tree, and
+with it a second `tsc` emit configuration that nothing else needed. And four
+packages that had to be published in dependency order, because `todocloud`
+pins exact versions of the three libraries and a wrong order leaves the first
+`npm install -g todocloud` unresolvable.
+
+That is permanent maintenance for a channel nothing needs any more, so it is
+gone: the `npm-publish` job, its token, the staging script and the root
+`tsconfig.build.json`. `scripts/set-version.mjs` stays, because the version
+still enters the build by being written into `packages/cli/package.json` and
+read back out of the embedded copy.
+
+**What the removal does not undo.** `@todocloud/*` is still how the workspace
+packages name each other, and every such import in the source is correct —
+those specifiers resolve through the `exports` maps to `src/*.ts`, which is
+what "no build step" rests on. The names were never the registry; publishing
+them was.
 
 ## Where the migration ended
 
