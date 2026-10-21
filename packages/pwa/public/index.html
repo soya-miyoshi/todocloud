@@ -24,7 +24,7 @@
      contents); a browser refuses the map and names the expected hash in the
      console, so the failure is loud, but it is a manual step and there is no
      tooling here to do it. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-aR1yFRhexpUnYUTtNZ6PIuInXsFKSWEr/AYKvbgZkjM='; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src https: http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-Urt6v3kQmdbAPoyZhQyAdqULgrpdetDNUHopnNLq4/4='; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src https: http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'">
 
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="mobile-web-app-capable" content="yes">
@@ -52,6 +52,7 @@
 {
   "imports": {
     "@todocloud/core/exit": "/core/src/exit.js",
+    "@todocloud/core/forecast": "/core/src/forecast.js",
     "@todocloud/core/id": "/core/src/id.js",
     "@todocloud/core/providercli": "/core/src/providercli.js",
     "@todocloud/core/secret": "/core/src/secret.js",

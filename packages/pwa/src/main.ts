@@ -28,6 +28,7 @@
 
 import { Secret } from '@todocloud/core/secret';
 import * as turso from '@todocloud/store-turso';
+import { Filter } from '@todocloud/core/store/filter';
 import type { Store } from '@todocloud/core/store';
 
 import {
@@ -51,6 +52,7 @@ import {
   reloader,
   workers,
 } from './dom.ts';
+import { arrived, badge, showBadge } from './badge.ts';
 import { Router } from './router.ts';
 import { reloadOnUpdate } from './update.ts';
 import { type Shim, install } from './shim.ts';
@@ -174,6 +176,7 @@ async function connect(cred: Credential, stored: boolean): Promise<void> {
   showConnect(false);
   note('');
   refresh();
+  void updateBadge();
   if (!stored) {
     // Said after the store opened, so a token that does not work is never
     // reported as remembered.
@@ -184,11 +187,51 @@ async function connect(cred: Credential, stored: boolean): Promise<void> {
   }
 }
 
+/**
+ * updateBadge counts the tasks whose due or defer day has arrived and puts
+ * the number on the app icon. It reads the store directly rather than the
+ * viewer's list, so the count does not depend on which pane is open. A failed
+ * read leaves the badge as it was: a number from a minute ago is better than
+ * a cleared badge that says nothing is due.
+ */
+async function updateBadge(): Promise<void> {
+  const open = connected;
+  const api = badge();
+  if (open === undefined || api === undefined) {
+    return;
+  }
+  try {
+    await showBadge(api, arrived(await open.st.list(new Filter()), new Date()));
+  } catch {
+    // See above.
+  }
+}
+
+/**
+ * askForBadge requests notification permission on the first tap, which is
+ * what iOS needs before it draws a badge, and which it only grants from a
+ * user gesture. Nothing is ever sent as a notification; the permission is
+ * only the key to the badge.
+ */
+function askForBadge(): void {
+  const n = (globalThis as unknown as { Notification?: { permission: string; requestPermission(): Promise<string> } })
+    .Notification;
+  if (n === undefined || n.permission !== 'default' || badge() === undefined) {
+    return;
+  }
+  page?.body.addEventListener('click', () => {
+    if (n.permission === 'default') {
+      void n.requestPermission().then(() => updateBadge());
+    }
+  });
+}
+
 /** disconnectStore closes the open store, if there is one. */
 async function disconnectStore(): Promise<void> {
   const open = connected;
   connected = undefined;
   shim.disconnect();
+  void badge()?.clearAppBadge().catch(() => undefined);
   if (open === undefined) {
     return;
   }
@@ -288,5 +331,14 @@ async function start(): Promise<void> {
 // could ever load to find out why.
 if (page !== undefined) {
   reloadOnUpdate(workers(), reloader());
+  askForBadge();
+  // Coming back to the app is when the day may have turned, or a task been
+  // changed from another device.
+  (globalThis as unknown as { document: { addEventListener(t: string, l: () => void): void; visibilityState: string } })
+    .document.addEventListener('visibilitychange', () => {
+      if ((globalThis as unknown as { document: { visibilityState: string } }).document.visibilityState === 'visible') {
+        void updateBadge();
+      }
+    });
   void start();
 }
