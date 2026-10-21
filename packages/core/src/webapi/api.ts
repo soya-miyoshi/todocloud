@@ -50,7 +50,7 @@
 
 import type { Perspective, Store, Tag } from '../store/store.ts';
 import { Availability, OrderPosition } from '../store/store.ts';
-import { Filter } from '../store/filter.ts';
+import { Filter, filterFromJSON } from '../store/filter.ts';
 import * as id from '../id.ts';
 import { NewTaskView, Views } from '../output/view.ts';
 import * as taskops from '../taskops/taskops.ts';
@@ -530,6 +530,40 @@ export class API {
   };
 
   /**
+   * handleReorder takes the JSON of `POST /api/tasks/{id}/reorder`:
+   * `{"anchor": "<id>", "where": "before"|"after"}`. It is `tdo mv --before`
+   * and `--after`.
+   *
+   * A separate endpoint from `/move` rather than two more keys on it. The
+   * two are different operations in the shared layer — `moveTo` changes a
+   * parent and leaves the order alone, `reorder` rewrites a sibling group's
+   * positions — and `/move`'s body is a contract the page is already written
+   * against, where `parent_id` is required.
+   *
+   * Placing an item next to an anchor in another container moves it into
+   * that container too, which is what "put it after this one" means and what
+   * `tdo mv --after` already does. The viewer's drop zones rely on it: a drop
+   * on the edge of a row in another project is both a move and a placement.
+   */
+  handleReorder: Handler = async (r) => {
+    const t = await this.task(r);
+    const o = body(r, ['anchor', 'where']);
+    const anchor = await this.st.get(reqString(o, 'anchor').trim());
+    const given = reqString(o, 'where').trim();
+    if (given !== 'before' && given !== 'after') {
+      throw usagef(`where must be before or after, got ${quote(given)}`);
+    }
+    const res = await taskops.reorder(
+      this.st,
+      [t],
+      anchor,
+      given === 'before' ? taskops.Before : taskops.After,
+      this.now(),
+    );
+    return this.resultPayload(res);
+  };
+
+  /**
    * handleRemove is the ordinary removal: a tombstone, taking the subtree
    * with it. There is no purge here. It is the one irreversible path in the
    * CLI and the one that asks for confirmation at a terminal (§4.2); a button
@@ -539,6 +573,88 @@ export class API {
     const t = await this.task(r);
     const res = await taskops.tombstone(this.st, [t], this.now());
     return this.resultPayload(res);
+  };
+
+  /**
+   * handleRunPerspective answers `GET /api/perspectives/{name}`: the saved
+   * filter, run.
+   *
+   * The store runs it, which is the whole reason this endpoint exists. A
+   * perspective is stored as the JSON of a `Filter`, and a `Filter` is what
+   * the providers translate into their own query language; re-reading it in
+   * the page would mean a second implementation of the same query, and the
+   * two would answer differently the first time either changed. That is the
+   * drift this project was rewritten to be rid of, so the page asks for the
+   * answer instead of working it out.
+   *
+   * The reply carries the filter as well as the tasks, so the editor can
+   * open a perspective without a second request, and so a viewer can show
+   * what a saved query actually says.
+   */
+  handleRunPerspective: Handler = async (r) => {
+    const p = await this.st.perspective(perspectiveName(r));
+    const now = this.now();
+    // A fresh Filter from the stored JSON rather than the one the store
+    // handed over: `now` is a clock reading written onto the filter before
+    // it runs, and writing it onto something the store may be holding is
+    // how a cache ends up with a timestamp baked into it.
+    const filter = filterFromJSON(p.filter.toJSON());
+    filter.now = now;
+    const tasks = await runSelection(this.st, new Selection({ filter }));
+    const av = await taskops.availabilityOf(this.st, tasks, now);
+    return {
+      name: p.name,
+      filter: p.filter.toJSON() as JSONValue,
+      tasks: Views(tasks, av),
+      count: tasks.length,
+    };
+  };
+
+  /**
+   * handleSavePerspective takes the JSON of `POST /api/perspectives`:
+   * `{"name": "...", "filter": {...}}`, where the filter is the same object
+   * the perspective is stored as and `tdo export` writes into a backup.
+   *
+   * The filter is read by `filterFromJSON`, which refuses a key it does not
+   * know rather than dropping it — every field in a Filter narrows a
+   * listing, so an ignored key produces a *wider* query than the one that
+   * was asked for, and the caller would never be told. Saving replaces a
+   * perspective of the same name, which is what the CLI's `perspective save`
+   * does, and the timestamps are set the same way it sets them.
+   */
+  handleSavePerspective: Handler = async (r) => {
+    const o = body(r, ['name', 'filter']);
+    const name = reqString(o, 'name').trim();
+    if (name === '') {
+      throw usagef('a perspective needs a name');
+    }
+    const raw = o['filter'];
+    if (raw !== undefined && (typeof raw !== 'object' || raw === null || Array.isArray(raw))) {
+      throw usagef('filter must be an object');
+    }
+    let filter: Filter;
+    try {
+      filter = filterFromJSON(raw ?? {});
+    } catch (err) {
+      // A filter this binary cannot read is a bad request, not a crash:
+      // it came off a form in a browser.
+      throw usagef(err instanceof Error ? err.message : String(err));
+    }
+    const invalid = filter.validate();
+    if (invalid !== undefined) {
+      throw usagef(invalid.message);
+    }
+    const now = this.now();
+    const p: Perspective = { name, filter, createdAt: now, updatedAt: now };
+    await this.st.savePerspective(p);
+    return { perspectives: [perspectiveJSON(p)], count: 1 };
+  };
+
+  /** handleRemovePerspective answers `DELETE /api/perspectives/{name}`. */
+  handleRemovePerspective: Handler = async (r) => {
+    const name = perspectiveName(r);
+    await this.st.deletePerspective(name);
+    return { removed: name };
   };
 
   /**
@@ -647,6 +763,20 @@ function tagJSON(g: Tag): JSONObject {
     out['note'] = g.note;
   }
   return out;
+}
+
+/**
+ * perspectiveName reads the {name} of the route. An empty one cannot reach a
+ * handler — `perspectivePath` refuses that path — but a name of nothing but
+ * spaces can, and `savePerspective` would have stored it under a name
+ * nothing could ask for again.
+ */
+function perspectiveName(r: Req): string {
+  const name = (r.params['name'] ?? '').trim();
+  if (name === '') {
+    throw usagef('a perspective needs a name');
+  }
+  return name;
 }
 
 /**

@@ -41,6 +41,7 @@ import {
   exact,
   messageOf,
   statusOf,
+  perspectivePath,
   taskPath,
 } from '@todocloud/core/webapi/http';
 
@@ -87,6 +88,14 @@ export class Router {
       { method: 'POST', match: taskPath('flag'), handler: this.api.handleFlag },
       { method: 'POST', match: taskPath('date'), handler: this.api.handleDate },
       { method: 'POST', match: taskPath('move'), handler: this.api.handleMove },
+      { method: 'POST', match: taskPath('reorder'), handler: this.api.handleReorder },
+      // The same three the local viewer serves. The store runs the saved
+      // filter here too — in this front end that is Turso answering over
+      // `fetch` rather than SQLite, which is exactly why the page must not
+      // try to evaluate it itself.
+      { method: 'GET', match: perspectivePath(), handler: this.api.handleRunPerspective },
+      { method: 'POST', match: exact('/api/perspectives'), handler: this.api.handleSavePerspective },
+      { method: 'DELETE', match: perspectivePath(), handler: this.api.handleRemovePerspective },
     ];
   }
 

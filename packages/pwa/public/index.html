@@ -184,7 +184,11 @@
      it, because a page holding a credential needs a way to let go of it. -->
 <div id="app" hidden>
 
-  <!-- Home: the perspectives, the projects, the tags. -->
+  <!-- Home: the perspectives, and nothing else. The projects and the tags
+       used to be lists of their own below the tiles; both are perspectives
+       now, so both open in the outline the way every other one does. This
+       shell and the local viewer's must keep the same ids, because one
+       `app.js` drives both. -->
   <nav id="sidebar" aria-label="Perspectives">
     <header class="navbar">
       <h1>tdo</h1>
@@ -195,17 +199,8 @@
       <ul id="tiles" class="tiles"></ul>
 
       <section class="group">
-        <h2>Projects</h2>
-        <ul id="projects" class="rows"></ul>
-      </section>
-
-      <section class="group">
-        <h2>Tags</h2>
-        <ul id="tags" class="rows"></ul>
-      </section>
-
-      <section class="group">
         <h2>Other Perspectives
+          <button type="button" id="new-perspective" class="disclose">New</button>
           <button type="button" id="show-other" class="disclose" aria-expanded="false">Show</button>
         </h2>
         <ul id="others" class="rows" hidden></ul>
@@ -303,6 +298,134 @@
   </aside>
 
 </div>
+
+<!-- The perspective editor. A perspective is a stored `Filter`, and this is
+     one control per field of it: what the store can evaluate and nothing
+     else, which is also exactly what `tdo ls` can express. The flags that
+     are applied in the client after the query runs — --where, --priority,
+     --untagged, --estimate-under — are deliberately absent, because saving
+     one would produce a perspective that does not mean what it says.
+
+     A <dialog> rather than a fourth pane: it is a thing you finish and
+     leave, the layout has three panes by design, and `showModal` brings the
+     focus trap and the Escape key with it. -->
+<dialog id="perspective-editor" aria-label="Perspective">
+  <form id="perspective-form" method="dialog">
+    <header class="dialog-head">
+      <h2 id="perspective-heading">New perspective</h2>
+      <button type="button" class="icon" id="perspective-close" aria-label="Close">&#x2715;</button>
+    </header>
+
+    <div class="dialog-body">
+      <label>Name <input name="name" type="text" required autocomplete="off"></label>
+
+      <fieldset>
+        <legend>Kind</legend>
+        <label class="check"><input type="checkbox" name="kind" value="folder"> Folder</label>
+        <label class="check"><input type="checkbox" name="kind" value="project"> Project</label>
+        <label class="check"><input type="checkbox" name="kind" value="task"> Task</label>
+        <p class="hint">Nothing ticked means every kind.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Status</legend>
+        <label class="check"><input type="checkbox" name="status" value="active"> Active</label>
+        <label class="check"><input type="checkbox" name="status" value="on_hold"> On hold</label>
+        <label class="check"><input type="checkbox" name="status" value="done"> Done</label>
+        <label class="check"><input type="checkbox" name="status" value="dropped"> Dropped</label>
+        <p class="hint">Nothing ticked means every status.</p>
+      </fieldset>
+
+      <div class="pair">
+        <label>Availability
+          <select name="availability">
+            <option value="">Any</option>
+            <option value="available">Available now</option>
+            <option value="blocked">Blocked</option>
+            <option value="deferred">Deferred</option>
+          </select>
+        </label>
+        <label>Flagged
+          <select name="flagged">
+            <option value="">Any</option>
+            <option value="yes">Flagged</option>
+            <option value="no">Not flagged</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="pair">
+        <label>Tags <input name="tags" type="text" autocomplete="off" placeholder="home, errand"></label>
+        <label>Match
+          <select name="tags_any">
+            <option value="">All of them</option>
+            <option value="any">Any of them</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="pair">
+        <label>Where
+          <select name="scope_kind">
+            <option value="">Anywhere</option>
+            <option value="inbox">The inbox</option>
+            <option value="subtree">Inside…</option>
+            <option value="children">Directly inside…</option>
+          </select>
+        </label>
+        <label>Container <select name="scope_id"></select></label>
+      </div>
+
+      <div class="pair">
+        <label>Has a due date
+          <select name="has_due">
+            <option value="">Any</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+        <label>Deleted
+          <select name="deleted">
+            <option value="">Live items only</option>
+            <option value="include">Include deleted</option>
+            <option value="only">Deleted only</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="pair">
+        <label>Due after <input name="due_after" type="date"></label>
+        <label>Due before <input name="due_before" type="date"></label>
+      </div>
+      <div class="pair">
+        <label>Deferred after <input name="defer_after" type="date"></label>
+        <label>Deferred before <input name="defer_before" type="date"></label>
+      </div>
+      <label>Due for review before <input name="review_due_before" type="date"></label>
+
+      <div class="pair">
+        <label>Sort by
+          <select name="order">
+            <option value="">Position in the tree</option>
+            <option value="position">Position</option>
+            <option value="created">Created</option>
+            <option value="updated">Updated</option>
+            <option value="due">Due</option>
+            <option value="defer">Defer</option>
+          </select>
+        </label>
+        <label>Limit <input name="limit" type="number" min="0" step="1" placeholder="no limit"></label>
+      </div>
+
+      <p class="hint" id="perspective-note"></p>
+    </div>
+
+    <div class="actions">
+      <button type="submit" id="perspective-save">Save</button>
+      <button type="button" id="perspective-delete" class="danger" hidden>Delete</button>
+    </div>
+  </form>
+</dialog>
 
 <!-- Order is the contract here. `main.ts` is a module, so it is deferred;
      `app.js` carries `defer` so that it runs after it, in document order.

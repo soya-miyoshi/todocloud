@@ -135,6 +135,36 @@ export function exact(want: string): PathMatch {
 }
 
 /**
+ * perspectivePath matches `/api/perspectives/{name}`, capturing the name with
+ * its percent-encoding undone.
+ *
+ * A perspective is named by whoever saved it, so the name may hold a space,
+ * a `#` or a `/`; the caller encodes it and this decodes it. An encoded
+ * slash stays inside one path segment, which is why the decode happens after
+ * the split and not before. A name that is not valid percent-encoding is not
+ * this route's path at all rather than a 400, because a 404 is the honest
+ * answer to a URL no caller of ours would ever have written.
+ */
+export function perspectivePath(): PathMatch {
+  return (pathname) => {
+    const parts = pathname.split('/');
+    // '', 'api', 'perspectives', name
+    if (parts.length !== 4 || parts[1] !== 'api' || parts[2] !== 'perspectives') {
+      return undefined;
+    }
+    const raw = parts[3] ?? '';
+    if (raw === '') {
+      return undefined;
+    }
+    try {
+      return { name: decodeURIComponent(raw) };
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+/**
  * taskPath matches `/api/tasks/{id}` and `/api/tasks/{id}/<tail>`, capturing
  * the id. It does not validate the id: an id the store does not know and an
  * id that is not an id are different answers, and the handler gives both.

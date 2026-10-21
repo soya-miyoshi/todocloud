@@ -458,3 +458,160 @@ test("an oversized body is refused", async (t) => {
   assert.equal(res.status, 400, res.text);
   assert.equal((await h.find(taskID))["note"], null);
 });
+
+// --- saved perspectives --------------------------------------------------
+
+// The point of the endpoint: the store runs the stored filter. If the page
+// could be trusted to evaluate a Filter in JavaScript there would be no
+// reason for this route to exist, and two implementations of one query to
+// keep in step — which is the drift this project was rewritten to be rid of.
+test("running a saved perspective answers with what the store matched", async (t) => {
+  const h = await Harness.start(t);
+  const wanted = await h.add({ title: "call the plumber", flagged: true });
+  await h.add({ title: "not flagged" });
+  const saved = await h.do("POST", "/api/perspectives", {
+    name: "Flagged",
+    filter: { flagged: true },
+  });
+  assert.equal(saved.status, 200, saved.text);
+
+  const { status, payload } = await h.send("GET", "/api/perspectives/Flagged", undefined, h.srv.token, "");
+  assert.equal(status, 200, JSON.stringify(payload));
+  assert.equal(payload?.["name"], "Flagged");
+  assert.equal(payload?.["count"], 1);
+  const tasks = list(payload, "tasks") as Record<string, unknown>[];
+  assert.equal(tasks[0]?.["id"], wanted);
+  // The filter comes back too, so the editor can open one without a second
+  // request.
+  assert.deepEqual(payload?.["filter"], { flagged: true });
+});
+
+// A name is typed by a person, so it may hold a space or a `#`; the route
+// decodes it rather than refusing it.
+test("a perspective name survives the round trip through the URL", async (t) => {
+  const h = await Harness.start(t);
+  await h.do("POST", "/api/perspectives", { name: "at work #now", filter: {} });
+  const path = `/api/perspectives/${encodeURIComponent("at work #now")}`;
+  const { status, payload } = await h.send("GET", path, undefined, h.srv.token, "");
+  assert.equal(status, 200, JSON.stringify(payload));
+  assert.equal(payload?.["name"], "at work #now");
+});
+
+// Dropping an unknown key would widen the saved query instead of narrowing
+// it, and nothing would say so. The refusal is the behaviour.
+test("a filter carrying an unknown field is refused", async (t) => {
+  const h = await Harness.start(t);
+  const res = await h.do("POST", "/api/perspectives", {
+    name: "newer",
+    filter: { flagged: true, invented_by_a_newer_tdo: true },
+  });
+  assert.equal(res.status, 400, res.text);
+  assert.equal(errorCode(res), "usage");
+  assert.match(res.text, /unknown field/);
+  const after = await h.send("GET", "/api/state", undefined, h.srv.token, "");
+  assert.equal(list(after.payload, "perspectives").length, 0, "nothing is stored by a refused save");
+});
+
+// A filter the providers could not honour is refused at the door rather
+// than stored and failed on every later run.
+test("a filter that would not validate is refused", async (t) => {
+  const h = await Harness.start(t);
+  const res = await h.do("POST", "/api/perspectives", {
+    name: "bad order",
+    filter: { order: "sideways" },
+  });
+  assert.equal(res.status, 400, res.text);
+  assert.equal(errorCode(res), "usage");
+});
+
+test("a perspective needs a name", async (t) => {
+  const h = await Harness.start(t);
+  const res = await h.do("POST", "/api/perspectives", { name: "   ", filter: {} });
+  assert.equal(res.status, 400, res.text);
+  assert.equal(errorCode(res), "usage");
+});
+
+test("saving replaces a perspective of the same name", async (t) => {
+  const h = await Harness.start(t);
+  await h.do("POST", "/api/perspectives", { name: "Today", filter: { flagged: true } });
+  await h.do("POST", "/api/perspectives", { name: "Today", filter: { flagged: false } });
+  const { payload } = await h.send("GET", "/api/state", undefined, h.srv.token, "");
+  const saved = list(payload, "perspectives") as Record<string, unknown>[];
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0]?.["filter"], { flagged: false });
+});
+
+test("removing a perspective leaves nothing to run", async (t) => {
+  const h = await Harness.start(t);
+  await h.do("POST", "/api/perspectives", { name: "Today", filter: {} });
+  const gone = await h.do("DELETE", "/api/perspectives/Today");
+  assert.equal(gone.status, 200, gone.text);
+  const { status } = await h.send("GET", "/api/perspectives/Today", undefined, h.srv.token, "");
+  assert.equal(status, 404);
+});
+
+// Saving and removing change the store, so they are writes and carry the
+// token; running one does not.
+test("saving a perspective without the write token is refused", async (t) => {
+  const h = await Harness.start(t);
+  const res = await h.send("POST", "/api/perspectives", { name: "Today", filter: {} }, "", "application/json");
+  assert.equal(res.status, 403, res.text);
+  const after = await h.send("GET", "/api/state", undefined, h.srv.token, "");
+  assert.equal(list(after.payload, "perspectives").length, 0);
+});
+
+// --- placing one item beside another -------------------------------------
+
+// Order is not decoration in a sequential project: a child's position is the
+// order its actions become available (§3.3), which is why the viewer can
+// change it at all.
+test("a reorder puts an item before its anchor", async (t) => {
+  const h = await Harness.start(t);
+  const project = await h.add({ kind: "project", title: "Ship it" });
+  const first = await h.add({ title: "one", parent_id: project });
+  const second = await h.add({ title: "two", parent_id: project });
+
+  const res = await h.do("POST", `/api/tasks/${second}/reorder`, { anchor: first, where: "before" });
+  assert.equal(res.status, 200, res.text);
+
+  const order = (await h.tasks())
+    .filter((x) => x["parent_id"] === project)
+    .map((x) => x["title"]);
+  assert.deepEqual(order, ["two", "one"]);
+});
+
+// `tdo mv --after` moves an item into the anchor's container when the anchor
+// lives somewhere else, and the endpoint is that command: a drop on the edge
+// of a row in another project is both a move and a placement.
+test("placing an item beside an anchor elsewhere moves it there", async (t) => {
+  const h = await Harness.start(t);
+  const home = await h.add({ kind: "project", title: "Home" });
+  const work = await h.add({ kind: "project", title: "Work" });
+  const anchor = await h.add({ title: "anchor", parent_id: work });
+  const moving = await h.add({ title: "moving", parent_id: home });
+
+  const res = await h.do("POST", `/api/tasks/${moving}/reorder`, { anchor, where: "after" });
+  assert.equal(res.status, 200, res.text);
+  assert.equal((await h.find(moving))["parent_id"], work);
+});
+
+test("a reorder needs a known placement and a real anchor", async (t) => {
+  const h = await Harness.start(t);
+  const one = await h.add({ title: "one" });
+  const two = await h.add({ title: "two" });
+
+  const sideways = await h.do("POST", `/api/tasks/${two}/reorder`, { anchor: one, where: "sideways" });
+  assert.equal(sideways.status, 400, sideways.text);
+  assert.equal(errorCode(sideways), "usage");
+
+  const itself = await h.do("POST", `/api/tasks/${two}/reorder`, { anchor: two, where: "after" });
+  assert.equal(itself.status, 400, itself.text);
+});
+
+test("a reorder without the write token is refused", async (t) => {
+  const h = await Harness.start(t);
+  const one = await h.add({ title: "one" });
+  const two = await h.add({ title: "two" });
+  const res = await h.send("POST", `/api/tasks/${two}/reorder`, { anchor: one, where: "before" }, "", "application/json");
+  assert.equal(res.status, 403, res.text);
+});

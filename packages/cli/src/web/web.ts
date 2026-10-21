@@ -82,6 +82,7 @@ import {
   exact,
   messageOf,
   statusOf,
+  perspectivePath,
   taskPath,
 } from '@todocloud/core/webapi/http';
 
@@ -290,6 +291,13 @@ export class Server {
       this.write('POST', taskPath('flag'), this.api.handleFlag),
       this.write('POST', taskPath('date'), this.api.handleDate),
       this.write('POST', taskPath('move'), this.api.handleMove),
+      this.write('POST', taskPath('reorder'), this.api.handleReorder),
+      // A saved perspective is run by the store, not by the page: see
+      // `handleRunPerspective`. Reading one is a read; saving and removing
+      // one are writes and carry the token like every other write.
+      this.read('GET', perspectivePath(), this.api.handleRunPerspective),
+      this.write('POST', exact('/api/perspectives'), this.api.handleSavePerspective),
+      this.write('DELETE', perspectivePath(), this.api.handleRemovePerspective),
     ];
   }
 

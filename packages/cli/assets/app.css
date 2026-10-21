@@ -178,64 +178,131 @@ input, textarea, select {
   padding: 7px 9px;
 }
 
-/* --- Home: the perspective tiles ----------------------------------- */
+/* --- Home: the perspectives ----------------------------------------
 
-/* Two columns of rounded tiles, each with its tint on the glyph and a count
-   where OmniFocus puts its badge. Below 380px they become one column rather
-   than two unreadable ones. */
+   OmniFocus 3's Home, which is what this copies: no cards and no borders,
+   just hairlines between cells on the pane's own background. Each cell is a
+   rounded square in the perspective's colour with the name beside it in the
+   same colour, large enough to be the only thing on the row worth reading.
+   Forecast and Inbox take a row each; the rest sit two to a row. */
+
 .tiles {
   list-style: none;
   margin: 0 0 6px;
   padding: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 0;
+  border-top: 1px solid var(--hair);
 }
 
-@media (max-width: 380px) { .tiles { grid-template-columns: 1fr; } }
+.tiles > li { border-bottom: 1px solid var(--hair); min-width: 0; }
+.tiles > li.wide { grid-column: 1 / -1; }
+/* The line between the two columns stops at the column, not at the pane
+   edge, so a right-hand cell draws none. */
+.tiles > li.col1 { border-right: 1px solid var(--hair); }
 
+@media (max-width: 380px) {
+  .tiles { grid-template-columns: 1fr; }
+  .tiles > li.col1 { border-right: 0; }
+}
 
 .tile {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 11px;
   width: 100%;
-  min-height: 56px;
-  padding: 8px 10px;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius);
-  background: var(--raised);
+  min-height: 60px;
+  padding: 10px 12px;
+  border: 0;
+  background: none;
   cursor: pointer;
   text-align: left;
 }
-.tile:hover { border-color: var(--accent); }
-.tile[aria-current="true"] { background: var(--select); border-color: var(--accent); }
+.tile:hover .name { text-decoration: underline; }
+.tile[aria-current="true"] { background: var(--select); }
 
+/* The square holds the count for a perspective that is a queue and the
+   perspective's glyph for one that is a way in. Both are white on the tint,
+   so the two kinds read as the same control. */
 .tile .glyph {
   flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
   display: grid;
   place-items: center;
   color: #fff;
-  font-size: 14px;
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   background: var(--tint, var(--slate));
 }
 
-.tile .name { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tile .badge { color: var(--tint, var(--dim)); font-weight: 600; font-variant-numeric: tabular-nums; }
-.tile .badge:empty { display: none; }
+/* The name carries the colour, which is what makes the screen read as a
+   palette rather than as a list of grey rows. */
+.tile .name {
+  flex: 1;
+  min-width: 0;
+  color: var(--tint, var(--ink));
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The week under Due. Seven equal columns, the day above its count, and
+   only two of them ever coloured: today, and the past when it is not
+   empty. A day with nothing due fades rather than disappearing, because
+   the shape of the week is the information. */
+.forecast {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  padding: 0 12px 12px;
+}
+/* Each day is a button that opens that day in the outline, so it gets a
+   target the width of its column rather than the width of its digit. */
+.forecast .day {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+}
+.forecast .day:hover { background: var(--select); }
+.forecast .day[aria-current="true"] { background: var(--select); }
+.forecast .when { font-size: 11px; color: var(--dim); }
+.forecast .n { font-size: 17px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.forecast .day.none .when,
+.forecast .day.none .n { color: var(--faint); }
+.forecast .day.today .when,
+.forecast .day.today .n { color: var(--soon); font-weight: 600; }
+.forecast .day.late .n { color: var(--over); font-weight: 600; }
+/* What becomes available that day, kept visibly apart from what is due:
+   a deadline and a release are not the same news. */
+.forecast .starting { font-size: 10px; color: var(--sky); font-variant-numeric: tabular-nums; }
+.forecast .day.none .starting { color: var(--faint); }
+
 /* In a wide window the sidebar is a column, not a phone's Home screen, and
-   OmniFocus lists its perspectives there rather than tiling them. One column
-   of shorter tiles is that list, with the tint kept so the two layouts are
-   recognisably the same thing. */
+   OmniFocus lists its perspectives there rather than tiling them. One
+   column of short rows is that list, with the tint kept so the two layouts
+   are recognisably the same thing, and the week folded away — a sidebar is
+   too narrow for seven columns of anything. */
 @media (min-width: 860px) {
-  .tiles { grid-template-columns: 1fr; gap: 2px; }
-  .tile { min-height: 36px; border: 0; background: none; border-radius: 8px; padding: 4px 8px; }
-  .tile:hover { background: var(--select); border: 0; }
-  .tile .glyph { width: 22px; height: 22px; font-size: 12px; }
-  .tile .badge { font-weight: 500; font-size: 12px; }
+  .tiles { grid-template-columns: 1fr; border-top: 0; }
+  .tiles > li { border-bottom: 0; }
+  .tiles > li.col1 { border-right: 0; }
+  .tile { min-height: 36px; padding: 4px 8px; border-radius: 8px; gap: 9px; }
+  .tile:hover { background: var(--select); }
+  .tile:hover .name { text-decoration: none; }
+  .tile .glyph { width: 22px; height: 22px; border-radius: 6px; font-size: 12px; }
+  .tile .name { font-size: 14px; font-weight: 500; }
+  .forecast { display: none; }
 }
 
 /* --- Home: the lists under it -------------------------------------- */
@@ -291,7 +358,75 @@ input, textarea, select {
 .nav-row.depth2 { padding-left: 40px; }
 .nav-row.held .name { color: var(--dim); text-decoration: line-through; }
 
+/* A folder in the sidebar can be shut, and the triangle that shuts it is a
+   button beside the row rather than inside it — a button within a button is
+   not a thing HTML has. A folder holding nothing gets a spacer of the same
+   width, so every name in the list still starts at the same place. */
+.nav-branch { display: flex; align-items: center; gap: 0; }
+.nav-branch > .nav-row { flex: 1; min-width: 0; }
+.twisty,
+.twisty-space { flex: none; width: 20px; }
+.twisty {
+  height: 20px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+.twisty:hover { background: var(--select); color: var(--ink); }
+
+/* Editing a name where it stands. The field takes the row's own type and
+   sits in the row's own box, so the text does not move when it becomes
+   editable — the thing being corrected must not jump out from under the
+   cursor that asked to correct it. */
+.inline {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1.5px solid var(--accent);
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+.inline:focus { outline: none; }
+
 /* --- the outline --------------------------------------------------- */
+
+/* Dragging a row files it somewhere else. The row being carried fades; the
+   thing it would land in is outlined, and so is the list itself when the
+   drop would take the item out of whatever it is in. An outline rather than
+   a fill, because the row underneath still has to be readable — what it is
+   is how you know whether to let go. */
+.dragging { opacity: 0.45; }
+.item.drop-into,
+.nav-row.drop-into {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+/* Reordering: a line where the row would land. The row keeps its own
+   outline for "inside", so the three possible outcomes of one drag look
+   like three different things before the mouse is released. */
+.item.drop-before,
+.nav-row.drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
+.item.drop-after,
+.nav-row.drop-after { box-shadow: inset 0 -2px 0 0 var(--accent); }
+
+#items.drop-into {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  border-radius: 10px;
+}
 
 #quick { display: flex; gap: 6px; margin: 2px 0 10px; }
 #quick input { flex: 1; }
@@ -319,6 +454,21 @@ input, textarea, select {
   cursor: pointer;
 }
 .item:last-child { border-bottom: 0; }
+/* Nesting inside a project. The indent is on the row rather than on the
+   title, so the status circle moves with it — the circle is what you aim
+   at, and a column of circles under a title that has stepped right reads as
+   two lists rather than one tree. The hairline marks the step. */
+.item.nested { position: relative; padding-left: calc(6px + var(--nest, 0) * 20px); }
+/* A guide line at the step, so a long list of siblings stays one group
+   rather than a ragged left edge. */
+.item.nested::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--nest, 0) * 20px - 8px);
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--hair);
+}
 .item[aria-selected="true"] { background: var(--select); border-radius: 8px; }
 
 .circle {
@@ -465,6 +615,12 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
      zooms back, so every control is full size here — which also makes them
      big enough to hit. */
   input, textarea, select, #quick button { font-size: 16px; padding: 9px 11px; }
+  /* An inline field keeps its row's own box rather than the padding above,
+     but it still has to be 16px or iOS zooms into the row and never zooms
+     back out. The row's text is a point smaller, so a name grows slightly
+     while it is being edited; that is the cost of not stranding the user
+     at 1.4x zoom. */
+  .inline { padding: 0 2px; }
   .item { padding: 9px 4px; }
   .tile { min-height: 62px; }
 }
@@ -474,3 +630,75 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 @media (display-mode: standalone) {
   .navbar { padding-top: 2px; }
 }
+
+/* --- the perspective editor ----------------------------------------
+
+   A dialog rather than a fourth pane: it is a thing you finish and leave,
+   and `showModal` brings the focus trap and the Escape key with it. On a
+   phone it fills the screen, because a 3-inch wide modal with eighteen
+   controls in it is a scroll bar with a form inside. */
+
+#perspective-editor {
+  width: min(560px, calc(100vw - 24px));
+  max-height: min(86vh, 760px);
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--ink);
+  overflow: hidden;
+}
+#perspective-editor::backdrop { background: rgba(0, 0, 0, 0.42); }
+#perspective-form { display: flex; flex-direction: column; max-height: inherit; }
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hair);
+}
+.dialog-head h2 { flex: 1; margin: 0; font-size: 15px; }
+
+.dialog-body {
+  padding: 12px 14px;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+}
+.dialog-body label { display: grid; gap: 4px; font-size: 12px; color: var(--dim); }
+.dialog-body label.check { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; }
+.dialog-body input, .dialog-body select { color: var(--ink); }
+.dialog-body .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 460px) { .dialog-body .pair { grid-template-columns: 1fr; } }
+
+.dialog-body fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 8px 10px 6px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+}
+.dialog-body legend { padding: 0 4px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.dialog-body .hint { flex-basis: 100%; margin: 2px 0 0; font-size: 11px; color: var(--faint); }
+.dialog-body select:disabled { opacity: 0.45; }
+
+#perspective-form .actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--hair);
+}
+#perspective-form .actions button {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--raised);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+#perspective-form .actions #perspective-save { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Delete sits at the far end, away from Save: the two are one tap apart and
+   only one of them can be undone by typing it again. */
+#perspective-form .actions #perspective-delete { margin-left: auto; }
