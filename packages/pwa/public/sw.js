@@ -80,6 +80,7 @@ const SHELL = [
   '/pwa/src/dom.js',
   '/pwa/src/router.js',
   '/pwa/src/shim.js',
+  '/pwa/src/update.js',
 
   '/store-turso/src/turso.js',
   '/store-turso/src/client.js',

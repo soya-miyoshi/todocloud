@@ -830,30 +830,51 @@ kept here while the implementation was Go, built on a `gomobile` binding; the
 TypeScript migration removed its premise along with the Go tree, and the note
 was deleted rather than left to describe a mechanism that no longer exists.
 
-It is deliberately a thin one: a manifest, icons, and a service worker that
-**caches nothing**. There is no offline mode and there is not going to be one
-in this tier. The tasks live in the database the server talks to, and a phone
-holding a second opinion about them is the sync problem §10 has not taken on;
-a cache would also be a screen that looks live and is not, in a project whose
-whole point is that the CLI, the browser and the phone cannot disagree about
-what is available.
+There are two front ends and two service workers, and they have **opposite
+cache policies** on purpose. The distinction is worth stating precisely,
+because it is the only place in the tree where the same file name means two
+different designs.
 
-Two things follow:
+- **`packages/cli/assets/sw.js` caches nothing** — no `caches`, no
+  `respondWith`, and a test says so. It is registered because a page with a
+  manifest and a worker is installable, and for no other reason. This page in
+  particular could never be cached: it carries the per-process write token, so
+  a stale copy would hold a token a restarted server no longer honours, and
+  the first edit would fail with a 403 for no visible reason on the one device
+  with no devtools window to find out why. Out of range, the browser says it
+  cannot reach the server, which is the truth — the server really is the thing
+  that went away.
+- **`packages/pwa/public/sw.js` caches the shell, and only the shell.** This
+  app has no server and no per-process token; it is a static site whose whole
+  reason to exist is to be installed on a phone, where a cold start with no
+  shell is a blank screen. So the page, the stylesheets, the modules, the
+  manifest and the icons are precached from a literal allow-list, served
+  cache-first, and revalidated behind the answer.
 
-- **The worker intercepts nothing** — no `caches`, no `respondWith`, and a
-  test says so. It is registered because a page with a manifest and a worker
-  is installable, and for no other reason. The page in particular could never
-  be cached: it carries the per-process write token, so a stale copy would
-  hold a token a restarted server no longer honours and the first edit would
-  fail with a 403 for no visible reason, on the one device with no devtools
-  window to find out why. Out of range the browser says it cannot reach the
-  server, which is the truth.
-- **A worker is registered only in a secure context**, which is what a
-  browser requires: loopback, or TLS. Reached as plain `http://` across a
-  tailnet there is no worker and the viewer is unchanged, so the feature
-  degrades rather than breaking. `tailscale serve` in front of `tdo serve` is
-  how that install gets its `https://`, and it is documented rather than
-  required.
+The consequence is the one that matters in use: **the only host this app needs
+to reach is the user's own database.** Once it is installed, whether
+`soya-miyoshi.github.io` is reachable is irrelevant — the shell comes off the
+device, and the first request that leaves the tab goes to Turso. A phone on a
+network that cannot see GitHub, or a GitHub outage, costs nothing.
+
+What is still deliberately absent is an offline *data* mode, and that has not
+changed. No API response can enter a cache, and there is no code path here
+that could put one there: `shim.ts` answers `/api/*` inside the page, so a
+request that never leaves the tab never passes a service worker at all, and
+the worker does not call `respondWith` for a cross-origin URL. A phone holding
+a second opinion about the tasks is the sync problem §10 has not taken on, and
+a screen that looks live and is not would break the one property this project
+is for — that the CLI, the browser and the phone cannot disagree about what is
+available. Without the database the app opens, says it cannot reach it, and
+shows nothing it might be wrong about. That also keeps the credential out of
+every cache: the one copy is the one in storage that `credentials.ts` owns.
+
+**A worker is registered only in a secure context**, which is what a browser
+requires: loopback, or TLS. That is why the hosted build is the real answer
+for a phone and `tdo serve` across a tailnet is not: reached as plain `http://`
+there is no worker and no install, and the viewer degrades to an ordinary page
+rather than breaking. `tailscale serve` in front of `tdo serve` is how that
+install gets its `https://`, and it is documented rather than required.
 
 **Where the PWA is hosted, and the one thing that choice costs.**
 `.github/workflows/pwa.yml` publishes the build to `soya-miyoshi.github.io`,

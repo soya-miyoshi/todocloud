@@ -42,8 +42,17 @@ import {
   save,
   validateURL,
 } from './credentials.ts';
-import { type Doc, type Elem, type Ev, document, pageScheme } from './dom.ts';
+import {
+  type Doc,
+  type Elem,
+  type Ev,
+  document,
+  pageScheme,
+  reloader,
+  workers,
+} from './dom.ts';
 import { Router } from './router.ts';
+import { reloadOnUpdate } from './update.ts';
 import { type Shim, install } from './shim.ts';
 
 /**
@@ -278,5 +287,6 @@ async function start(): Promise<void> {
 // module that threw when loaded without a document would be a module nobody
 // could ever load to find out why.
 if (page !== undefined) {
+  reloadOnUpdate(workers(), reloader());
   void start();
 }

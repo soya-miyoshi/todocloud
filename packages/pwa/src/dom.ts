@@ -78,3 +78,44 @@ export function pageScheme(global: typeof globalThis = globalThis): string {
   const scheme = loc?.protocol;
   return typeof scheme === 'string' ? scheme : '';
 }
+
+/**
+ * Workers is the `navigator.serviceWorker` slice this app touches. Nothing
+ * here registers a worker — `app.js` does that, and `main.ts` says why — so
+ * this is only the two members needed to notice that a *different* worker
+ * has taken charge of the page: `controller`, which is null until one has,
+ * and the event that fires when it changes.
+ */
+export interface Workers {
+  readonly controller: unknown;
+  addEventListener(type: string, listener: () => void): void;
+}
+
+/** Reloader is `location`, with the one method used on it. */
+export interface Reloader {
+  reload(): void;
+}
+
+/**
+ * workers returns `navigator.serviceWorker`, or undefined where there is no
+ * navigator (`node --test`) and where the browser has no service worker
+ * support or withholds it outside a secure context. Every caller treats the
+ * absence as "no updates to notice", which is the truthful reading.
+ */
+export function workers(global: typeof globalThis = globalThis): Workers | undefined {
+  const nav = (global as unknown as { navigator?: { serviceWorker?: unknown } }).navigator;
+  const sw = nav?.serviceWorker;
+  if (sw === null || sw === undefined) {
+    return undefined;
+  }
+  return sw as Workers;
+}
+
+/** reloader returns `location`, or undefined where there is none. */
+export function reloader(global: typeof globalThis = globalThis): Reloader | undefined {
+  const loc = (global as unknown as { location?: unknown }).location;
+  if (loc === null || loc === undefined) {
+    return undefined;
+  }
+  return loc as Reloader;
+}
