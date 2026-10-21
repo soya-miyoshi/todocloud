@@ -126,6 +126,7 @@ tdo ls --blocked             # what cannot, and why
 tdo ls --deferred            # what is waiting for a date
 tdo ls --all                 # everything except tombstones
 tdo ls --deleted             # the tombstones
+tdo ls --watch               # the same list, redrawing until Ctrl-C
 tdo show 3                   # one item in full, with the reason it is blocked
 tdo next                     # the single first action
 ```
@@ -146,7 +147,17 @@ tdo forecast                 # everything dated, by defer date
 tdo forecast --sort due      # by deadline instead
 tdo forecast --day today     # today — which carries whatever was due before it
 tdo forecast --week          # the next seven days, under their own headings
+tdo forecast --days 30       # a month of them; --compact skips the empty days
+tdo forecast --overdue       # only what was due on an earlier day
+tdo forecast --week --watch  # the week, on a screen of its own
 ```
+
+`--watch` is on `ls`, `next` and `forecast`. It redraws into the alternate
+screen until Ctrl-C, every two seconds against a local store and every ten
+over the network — `--interval 30s` to pick the pace yourself. It is not
+`watch tdo ls`: each frame rewrites the row numbers, so the `3` on screen is
+still the `3` that `tdo done 3` means in another window. It needs a terminal
+and refuses `--json`, where polling the command is the right answer.
 
 There is no "past" day: an overdue item is today's problem, so it is listed
 under today, and the count on stderr says how many of today's rows arrived

@@ -10,6 +10,7 @@ import {
   type ForecastDay,
   type ForecastOrder,
   ForecastHorizonDays,
+  ForecastMaxDays,
   ForecastWeekDays,
   dueOn,
   forecast,
@@ -26,6 +27,7 @@ import { openStatuses } from '@todocloud/core/taskops/select';
 import { type App, type Command, type Context, usagef } from './app.ts';
 import { saveListing } from './refs.ts';
 import { availabilityOf, countLine, printTable, views } from './view.ts';
+import { watchFlags, watching } from './watch.ts';
 
 /**
  * forecastCommand is `tdo forecast`: a pure read. It lists every open task
@@ -52,6 +54,20 @@ export function forecastCommand(a: App): Command {
         type: 'boolean',
         usage: 'group the next seven days under their own headings',
       },
+      days: {
+        type: 'string',
+        placeholder: 'N',
+        usage: `group the next N days under their own headings, 1 to ${ForecastMaxDays}; --week is N=7`,
+      },
+      compact: {
+        type: 'boolean',
+        usage: 'with --week or --days, leave out the days that have nothing on them',
+      },
+      overdue: {
+        type: 'boolean',
+        usage: 'keep only what was due on an earlier day',
+      },
+      ...watchFlags(),
     },
     async run(ctx: Context): Promise<void> {
       if (ctx.args.length > 0) {
@@ -64,69 +80,116 @@ export function forecastCommand(a: App): Command {
       }
       const asked = ctx.string('day').trim();
       const week = ctx.bool('week');
+      const spanFlag = ctx.string('days').trim();
+      const compact = ctx.bool('compact');
+      const overdue = ctx.bool('overdue');
       if (asked !== '' && week) {
         throw usagef('--day names one day and --week asks for all of them; pass one or the other');
       }
-
-      const st: Store = ctx.store();
-      // Tombstones stay out by default. Availability is not the question: a
-      // deferred task is the point of this view.
-      const open = await st.list(
-        new Filter({
-          kinds: [KindTask],
-          statuses: openStatuses(),
-          availability: AvailabilityAny,
-          order: OrderPosition,
-        }),
-      );
-      const now = new Date();
-      // The week is the viewer's own shape, and both of these are read from
-      // the same `open` listing as the flat list below: one query, three
-      // presentations of it.
-      if (asked !== '') {
-        const day = forecastDay(asked, now);
-        if (day === undefined) {
-          throw usagef(
-            `--day must be today or d1 to d${ForecastWeekDays - 1}, not ${JSON.stringify(asked)}`,
-          );
-        }
-        await printDay(a, st, day, forecastOn(open, day, order, now), now);
-        return;
+      if (asked !== '' && spanFlag !== '') {
+        throw usagef('--day names one day and --days asks for a run of them; pass one or the other');
       }
-      if (week) {
-        await printWeek(a, st, open, order, now);
-        return;
+      if (week && spanFlag !== '') {
+        throw usagef('--week is --days 7; pass one or the other');
       }
-
-      const { near, later } = forecast(open, order, now);
-      const tasks: Task[] = [...near, ...later];
-      const av = await availabilityOf(a, st, tasks);
-
-      if (a.out.json) {
-        // The shape of every listing, plus `later`: how many of the last
-        // `tasks` are deferred past the horizon. Nothing is dropped, so a
-        // caller that wants the viewer's folded view takes the first
-        // `count - later`. Machine output never refreshes the short-number
-        // cache; see saveListing.
-        a.out.emit({ tasks: views(tasks, av), count: tasks.length, later: later.length });
-        return;
+      // --days is the general form of --week, so the run of days is one
+      // number from here on: how many headings to write, or none at all for
+      // the flat list.
+      let span = week ? ForecastWeekDays : 0;
+      if (spanFlag !== '') {
+        span = dayCount(spanFlag);
       }
-      saveListing(a, st, tasks);
-      if (tasks.length === 0) {
-        a.out.hintf('Nothing has a defer or due date. `tdo add <title> --due <date>` adds one.');
-        return;
+      if (compact && span === 0) {
+        throw usagef('--compact leaves out empty days, so it needs --week or --days');
       }
-      printTable(a, tasks, av, false);
-
-      const arrived = tasks.filter((t) => landed(t, now)).length;
-      if (arrived > 0) {
-        a.out.hintf(`${countLine(arrived, 'task is', 'tasks are')} due today or earlier.`);
+      // The week's own JSON says what each day holds, including that it holds
+      // nothing, and dropping those entries would make two different shapes
+      // answer to one flag. --compact is a presentation choice; a machine
+      // caller filters on `count` itself.
+      if (compact && a.out.json) {
+        throw usagef('--compact is for reading; with --json, drop the days whose count is 0');
       }
-      if (later.length > 0) {
-        a.out.hintf(
-          `${countLine(later.length, 'task is', 'tasks are')} deferred more than ${ForecastHorizonDays} days out, listed last.`,
+      if (overdue && (asked !== '' || span > 0)) {
+        throw usagef('--overdue is one flat list of what is late; it takes no --day, --week or --days');
+      }
+      // The key is checked here so that a bad one is a usage error before
+      // anything is read or any screen is taken over. The day itself is
+      // resolved again inside each frame: the keys are stable and the labels
+      // are not, so a view left open across midnight follows the day it
+      // means rather than the name it had.
+      if (asked !== '' && forecastDay(asked, new Date()) === undefined) {
+        throw usagef(
+          `--day must be today or d1 to d${ForecastWeekDays - 1}, not ${JSON.stringify(asked)}`,
         );
       }
+
+      const st: Store = ctx.store();
+      await watching(a, ctx, async () => {
+        // Tombstones stay out by default. Availability is not the question: a
+        // deferred task is the point of this view.
+        const open = await st.list(
+          new Filter({
+            kinds: [KindTask],
+            statuses: openStatuses(),
+            availability: AvailabilityAny,
+            order: OrderPosition,
+          }),
+        );
+        const now = new Date();
+        // The week is the viewer's own shape, and both of these are read from
+        // the same `open` listing as the flat list below: one query, three
+        // presentations of it.
+        if (asked !== '') {
+          const day = forecastDay(asked, now);
+          if (day === undefined) {
+            return;
+          }
+          await printDay(a, st, day, forecastOn(open, day, order, now), now);
+          return;
+        }
+        if (span > 0) {
+          await printWeek(a, st, open, order, now, span, compact);
+          return;
+        }
+
+        // --overdue narrows the input rather than the result: the flat list's
+        // shape, its fold and its summary lines all stay exactly as they are,
+        // and `later` comes out of the same split as ever.
+        const dated = overdue ? open.filter((t) => pastDue(t, now)) : open;
+        const { near, later } = forecast(dated, order, now);
+        const tasks: Task[] = [...near, ...later];
+        const av = await availabilityOf(a, st, tasks);
+
+        if (a.out.json) {
+          // The shape of every listing, plus `later`: how many of the last
+          // `tasks` are deferred past the horizon. Nothing is dropped, so a
+          // caller that wants the viewer's folded view takes the first
+          // `count - later`. Machine output never refreshes the short-number
+          // cache; see saveListing.
+          a.out.emit({ tasks: views(tasks, av), count: tasks.length, later: later.length });
+          return;
+        }
+        saveListing(a, st, tasks);
+        if (tasks.length === 0) {
+          a.out.hintf(
+            overdue
+              ? 'Nothing is late.'
+              : 'Nothing has a defer or due date. `tdo add <title> --due <date>` adds one.',
+          );
+          return;
+        }
+        printTable(a, tasks, av, false);
+
+        const arrived = tasks.filter((t) => landed(t, now)).length;
+        if (arrived > 0) {
+          a.out.hintf(`${countLine(arrived, 'task is', 'tasks are')} due today or earlier.`);
+        }
+        if (later.length > 0) {
+          a.out.hintf(
+            `${countLine(later.length, 'task is', 'tasks are')} deferred more than ${ForecastHorizonDays} days out, listed last.`,
+          );
+        }
+      });
     },
   };
 }
@@ -171,10 +234,30 @@ async function printDay(
 }
 
 /**
- * printWeek writes the seven days under their own headings — the viewer's
- * week, in a terminal. A day with nothing on it still gets its heading: the
- * shape of the week is the information, which is the same reason an empty
- * column does not disappear on screen.
+ * dayCount reads --days. There is no numeric flag type (see the command
+ * contract in app.ts), so the parse and its usage error live here. Only a
+ * plain decimal count is accepted: `--days 7.5` and `--days 1e2` are
+ * mistakes worth naming rather than rounding.
+ */
+function dayCount(value: string): number {
+  if (!/^[0-9]+$/.test(value)) {
+    throw usagef(`--days takes a whole number of days, not ${JSON.stringify(value)}`);
+  }
+  const n = Number(value);
+  if (n < 1 || n > ForecastMaxDays) {
+    throw usagef(`--days must be between 1 and ${ForecastMaxDays}, not ${n}`);
+  }
+  return n;
+}
+
+/**
+ * printWeek writes `span` days under their own headings — the viewer's week,
+ * in a terminal, and as much of the month after it as was asked for. A day
+ * with nothing on it still gets its heading: the shape of the week is the
+ * information, which is the same reason an empty column does not disappear on
+ * screen. `compact` is the reader saying otherwise, which a long --days makes
+ * worth having: thirty headings to find four dated tasks is a worse answer
+ * than four.
  */
 async function printWeek(
   a: App,
@@ -182,8 +265,10 @@ async function printWeek(
   open: readonly Task[],
   order: ForecastOrder,
   now: Date,
+  span: number,
+  compact: boolean,
 ): Promise<void> {
-  const days = forecastDays(now);
+  const days = forecastDays(now, span);
   const listed: Task[] = [];
   const sections = days.map((day) => {
     const tasks = forecastOn(open, day, order, now);
@@ -217,6 +302,9 @@ async function printWeek(
   saveListing(a, st, listed);
   let start = 0;
   for (const { day, tasks } of sections) {
+    if (tasks.length === 0 && compact) {
+      continue;
+    }
     a.out.hintf(`${day.label} — ${day.date.toISOString().slice(0, 10)}`);
     if (tasks.length === 0) {
       continue;
@@ -227,5 +315,11 @@ async function printWeek(
   const arrived = listed.filter((t) => landed(t, now)).length;
   if (arrived > 0) {
     a.out.hintf(`${countLine(arrived, 'task is', 'tasks are')} due today or earlier.`);
+  }
+  if (compact) {
+    const empty = sections.filter(({ tasks }) => tasks.length === 0).length;
+    if (empty > 0) {
+      a.out.hintf(`${countLine(empty, 'empty day', 'empty days')} left out.`);
+    }
   }
 }

@@ -40,6 +40,7 @@ import { intFlag, parseTags } from './add.ts';
 import { type App, asError, type Command, type Context, type Flags, usagef } from './app.ts';
 import { resolveContainer, resolveRef, saveListing } from './refs.ts';
 import { availabilityOf, countLine, printTable, renderTask, treeError, views } from './view.ts';
+import { watchFlags, watching } from './watch.ts';
 
 /**
  * filterFlags are the selection flags of `tdo ls`. They are a function rather
@@ -373,6 +374,7 @@ export function listCommand(a: App): Command {
       ...filterFlags(),
       perspective: { type: 'string', placeholder: 'NAME', usage: 'run the saved query NAME instead of these flags' },
       tree: { type: 'boolean', usage: 'show the nesting by indenting each item under its parent' },
+      ...watchFlags(),
     },
     async run(ctx: Context): Promise<void> {
       if (ctx.args.length > 0) {
@@ -380,25 +382,30 @@ export function listCommand(a: App): Command {
       }
       const st: Store = ctx.store();
 
+      // The selection is read once: it is what was typed, and under
+      // --perspective it is a stored query that a redraw has no reason to
+      // fetch again. Only the listing itself is the news.
       const s = await selectionOrPerspective(a, ctx, st);
-      const tasks = await runSelection(a, st, s);
-      const av = await availabilityOf(a, st, tasks);
+      await watching(a, ctx, async () => {
+        const tasks = await runSelection(a, st, s);
+        const av = await availabilityOf(a, st, tasks);
 
-      if (a.out.json) {
-        // Machine output never refreshes the short-number cache; see
-        // saveListing.
-        a.out.emit({ tasks: views(tasks, av), count: tasks.length });
-        return;
-      }
-      // The numbers printed below are only usable because the ids are
-      // cached here, in the same order.
-      saveListing(a, st, tasks);
-      if (tasks.length === 0) {
-        // An empty list is not an error, and stdout stays empty.
-        a.out.hintf('Nothing to do here. `tdo ls --all` shows everything, `tdo add <title>` adds one.');
-        return;
-      }
-      printTable(a, tasks, av, s.tree);
+        if (a.out.json) {
+          // Machine output never refreshes the short-number cache; see
+          // saveListing.
+          a.out.emit({ tasks: views(tasks, av), count: tasks.length });
+          return;
+        }
+        // The numbers printed below are only usable because the ids are
+        // cached here, in the same order.
+        saveListing(a, st, tasks);
+        if (tasks.length === 0) {
+          // An empty list is not an error, and stdout stays empty.
+          a.out.hintf('Nothing to do here. `tdo ls --all` shows everything, `tdo add <title>` adds one.');
+          return;
+        }
+        printTable(a, tasks, av, s.tree);
+      });
     },
   };
 }
@@ -463,6 +470,7 @@ export function nextCommand(a: App): Command {
     store: 'read',
     flags: {
       project: { type: 'string', placeholder: 'P', usage: 'look only inside project P' },
+      ...watchFlags(),
     },
     async run(ctx: Context): Promise<void> {
       if (ctx.args.length > 0) {
@@ -478,22 +486,26 @@ export function nextCommand(a: App): Command {
       });
       const ref = ctx.string('project').trim();
       if (ref !== '') {
+        // The project is resolved once: --watch follows the container the
+        // reader named, not whatever that reference would match later.
         const p = await resolveContainer(a, st, ref, KindProject);
         f.scope.subtree = p.id;
       }
-      const tasks = await st.list(f);
-      if (tasks.length === 0) {
-        if (a.out.json) {
-          // The same shape as a listing that found something, so a caller
-          // reads `.tasks[0]` either way rather than having to tell null
-          // from an object.
-          a.out.emit({ tasks: [], count: 0 });
+      await watching(a, ctx, async () => {
+        const tasks = await st.list(f);
+        if (tasks.length === 0) {
+          if (a.out.json) {
+            // The same shape as a listing that found something, so a caller
+            // reads `.tasks[0]` either way rather than having to tell null
+            // from an object.
+            a.out.emit({ tasks: [], count: 0 });
+            return;
+          }
+          a.out.hintf('Nothing is available. `tdo ls --blocked` says what is in the way.');
           return;
         }
-        a.out.hintf('Nothing is available. `tdo ls --blocked` says what is in the way.');
-        return;
-      }
-      await renderTask(a, st, tasks[0] as Task);
+        await renderTask(a, st, tasks[0] as Task);
+      });
     },
   };
 }

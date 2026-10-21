@@ -110,9 +110,11 @@ tdo ls [--available|--blocked|--deferred|--all] [--deleted] [--inbox] [--flagged
        [--due-before D] [--defer-before D] [--estimate-under 30m] [--priority N]
        [--where k=v]... [--perspective NAME] [--limit n]
        [--sort position|created|updated|due|defer|title] [--tree]
+       [--watch [--interval 10s]]
 tdo show <ref>
-tdo next [--project P]
-tdo forecast [--sort defer|due] [--day today|d1..d6 | --week]
+tdo next [--project P] [--watch [--interval 10s]]
+tdo forecast [--sort defer|due] [--day today|d1..d6 | --week | --days N]
+             [--compact] [--overdue] [--watch [--interval 10s]]
 tdo serve [--port N] [--addr ADDR]
 
 # Changing things
@@ -378,8 +380,10 @@ envelope and no `null` task.
 | `next` with nothing available | `{"tasks":[],"count":0}` |
 | `ls`, `inbox`, `project ls`, `folder ls`, `review` | `{"tasks":[…],"count":n}` |
 | `forecast` | `{"tasks":[…],"count":n,"later":m}` — `later` is how many of the last `tasks` are deferred more than seven days out, which the viewer folds; nothing is dropped, so the folded view is the first `count - later` |
+| `forecast --overdue` | the same shape, narrowed to what was due on an earlier day; `later` is then 0 |
+| anything `--watch` | **nothing**: `--watch` with `--json` is a usage error (exit 2). It redraws a terminal screen, and a stream of objects is not any of the shapes here. Poll the command instead — it is one process per answer, and the exit code already says what happened |
 | `forecast --day` | `{"day":"today","label":"Today","date":"YYYY-MM-DD","tasks":[…],"count":n,"past_due":m}` — `past_due` is how many of them were due on an earlier day |
-| `forecast --week` | `{"days":[{"day":…,"label":…,"date":…,"tasks":[…],"count":n,"due":n,"starting":n,"past_due":n}],"count":n}` — seven days from today; `count` at the top is every task listed across them |
+| `forecast --week`, `forecast --days N` | `{"days":[{"day":…,"label":…,"date":…,"tasks":[…],"count":n,"due":n,"starting":n,"past_due":n}],"count":n}` — seven days from today, or `N` of them (1 to 60); `count` at the top is every task listed across them. The days are always all of them, empty ones included: `--compact` drops those for a reader and is refused with `--json`, where the filter is `count > 0` |
 | `undone`, `drop`, `hold`, `unhold`, `flag`, `unflag`, `defer`, `due`, `mv`, `rm` | `{"tasks":[…],"count":n}` |
 | `tag ls` | `{"tags":[{"name":"errand","status":"on_hold","count":3}],"count":n}` |
 | `tag hold`, `tag unhold`, `tag drop`, `tag rename` | `{"tags":[…],"count":n}` — the tags as they now stand |
@@ -816,7 +820,9 @@ the build cannot place lands on the Forecast with the address corrected.
 `tdo forecast` prints the viewer's `All` list from the terminal; `--week`
 prints its week and `--day today` the screen it opens on. A day past the
 seventh is in neither and is in the flat list, which is the same difference
-the viewer's fold makes. **There is no Past day**: today carries every
+the viewer's fold makes. `--days N` asks for a longer run of the same
+headings — the horizon folds the flat list, it does not shorten a run of days
+asked for by name — and `--overdue` is the flat list narrowed to what is late. **There is no Past day**: today carries every
 deadline that has already passed, because an overdue item is today's problem
 and filing it under a day that has gone is how it stops being looked at. What
 separates the two inside today is `pastDue` — a red edge on a row in the

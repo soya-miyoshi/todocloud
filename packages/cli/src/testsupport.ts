@@ -25,7 +25,7 @@ import { type Task, newTask } from '@todocloud/core/task';
 import * as id from '@todocloud/core/id';
 import { open as openSQLite } from '@todocloud/store-sqlite';
 
-import { type CommandFactory, type Env, RunWith } from './app.ts';
+import { type CommandFactory, type Env, RunWith, type Ticker } from './app.ts';
 
 /** buffer is a Writer that keeps everything written to it. */
 export class buffer implements Writer {
@@ -56,6 +56,14 @@ export class Harness {
   readonly env: Record<string, string>;
   /** factories is the command table under test. */
   factories: readonly CommandFactory[] | undefined;
+  /**
+   * stdoutIsTTY is what the injected environment claims about stdout. It is
+   * false by default, which is the honest answer for a captured buffer and
+   * the one `--watch` refuses.
+   */
+  stdoutIsTTY = false;
+  /** ticker paces a `--watch` loop; see FrameTicker. */
+  ticker: Ticker | undefined;
 
   constructor(dir: string, db: string, env: Record<string, string>) {
     this.dir = dir;
@@ -71,6 +79,8 @@ export class Harness {
       stdin: { read: (): Promise<string> => Promise.resolve('') },
       getenv: (name: string): string => this.env[name] ?? '',
       stdinIsTTY: (): boolean => false,
+      stdoutIsTTY: (): boolean => this.stdoutIsTTY,
+      ticker: this.ticker,
       // No test may query the developer's real keychain (CLAUDE.md §1.5).
       keyring: () => ({ value: new Secret(''), present: false }),
     };
@@ -148,6 +158,40 @@ export class Harness {
     }
     return tasks[0] as Record<string, unknown>;
   }
+}
+
+/**
+ * FrameTicker drives a `--watch` loop for exactly `frames` draws and records
+ * the interval it was asked to wait each time. It is how the loop is tested
+ * without waiting for a timer or sending a signal; see the note on Ticker in
+ * app.ts.
+ */
+export class FrameTicker implements Ticker {
+  /** waits holds the interval of every wait, in the order they happened. */
+  readonly waits: number[] = [];
+
+  private readonly frames: number;
+
+  constructor(frames: number) {
+    this.frames = frames;
+  }
+
+  wait(ms: number): Promise<boolean> {
+    this.waits.push(ms);
+    return Promise.resolve(this.waits.length < this.frames);
+  }
+}
+
+/**
+ * watchFor makes the harness watchable: stdout claims a terminal and the loop
+ * runs for `frames` draws. The ticker is returned so a test can read the pace
+ * the command chose.
+ */
+export function watchFor(h: Harness, frames: number): FrameTicker {
+  const ticker = new FrameTicker(frames);
+  h.stdoutIsTTY = true;
+  h.ticker = ticker;
+  return ticker;
 }
 
 /** withStore opens a SQLite store at path, runs fn and closes it. */

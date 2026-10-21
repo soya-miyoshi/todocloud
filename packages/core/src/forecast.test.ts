@@ -179,6 +179,20 @@ test('the week is seven days from today, with stable keys and no Past cell', () 
   assert.equal(forecastDay('past', now), undefined);
 });
 
+test('a run of days is the same week, cut short or carried on', () => {
+  assert.deepEqual(forecastDays(now, 1).map((d) => d.key), ['today']);
+  const month = forecastDays(now, 30);
+  assert.equal(month.length, 30);
+  // The keys keep counting and the labels keep cycling; only today is Today.
+  assert.equal(month[29]?.key, 'd29');
+  assert.equal(month[29]?.label, 'Fri');
+  assert.equal(month[29]?.date.toISOString(), '2026-11-20T00:00:00.000Z');
+  assert.equal(month.filter((d) => d.today).length, 1);
+  // A key is found only inside the run it is looked for in.
+  assert.equal(forecastDay('d20', now), undefined);
+  assert.equal(forecastDay('d20', now, 30)?.date.toISOString(), '2026-11-11T00:00:00.000Z');
+});
+
 test('today carries every deadline already due; no other day looks backwards', () => {
   const tasks = [
     make('Last week', { due: '2026-10-15T00:00:00Z' }),

@@ -148,6 +148,21 @@ export interface Reader {
 }
 
 /**
+ * Ticker is how a redrawing command waits between frames: one call that
+ * resolves true to draw again and false to stop. `--watch` is the only user
+ * of it (see watch.ts).
+ *
+ * It is a seam for the same reason `stdinIsTTY` is one. A loop that waits on
+ * a real timer and stops on a real SIGINT cannot be driven from a test: the
+ * test would have to wait out the interval it is trying to check, and it has
+ * no signal to send. A test supplies a ticker that counts frames instead, and
+ * what it exercises is the loop itself rather than an imitation of it.
+ */
+export interface Ticker {
+  wait(ms: number): Promise<boolean>;
+}
+
+/**
  * Env is everything the command layer reads from outside the process
  * arguments. Every field is optional and defaults to the real process, which
  * is what the Go zero value meant.
@@ -170,6 +185,17 @@ export interface Env {
    */
   stdinIsTTY?: (() => boolean) | undefined;
   /**
+   * stdoutIsTTY reports whether stdout is a terminal. `--watch` takes the
+   * screen over, so it needs one, and a redirected stdout is a mistake worth
+   * naming rather than a stream of escape sequences in a file.
+   */
+  stdoutIsTTY?: (() => boolean) | undefined;
+  /**
+   * ticker paces a redrawing command. Left unset, watch.ts builds the one
+   * over `setTimeout` and SIGINT.
+   */
+  ticker?: Ticker | undefined;
+  /**
    * keyring is the seam through which configuration resolves a token from the
    * OS keychain. Go had it as a package variable (`configKeyringLookup`);
    * here it is injected, for the same reason: without it, a test that runs
@@ -187,6 +213,8 @@ interface ResolvedEnv {
   stdin: Reader;
   getenv: (name: string) => string;
   stdinIsTTY: () => boolean;
+  stdoutIsTTY: () => boolean;
+  ticker: Ticker | undefined;
   keyring: config.KeyringLookup | undefined;
 }
 
@@ -213,6 +241,8 @@ function normalizeEnv(env: Env): ResolvedEnv {
     stdin: env.stdin ?? processStdin,
     getenv: env.getenv ?? ((name: string): string => process.env[name] ?? ''),
     stdinIsTTY: env.stdinIsTTY ?? ((): boolean => isatty(0)),
+    stdoutIsTTY: env.stdoutIsTTY ?? ((): boolean => isatty(1)),
+    ticker: env.ticker,
     keyring: env.keyring,
   };
 }

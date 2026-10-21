@@ -169,3 +169,84 @@ test('a day beyond the week is in neither --week nor --day, but is still in the 
   // difference between folding a tail and dropping it.
   assert.equal(h.tasksOf(await h.mustRun('forecast', '--json')).length, 1);
 });
+
+test('forecast --days is --week generalised, and reaches past the fold', async (t: TestContext) => {
+  const h = await newHarness(t, commands);
+  await h.mustRun('add', 'Today', '--due', day(0), '--json');
+  await h.mustRun('add', 'Far off', '--due', day(20), '--json');
+
+  const res = await h.mustRun('forecast', '--days', '30', '--json');
+  const payload = JSON.parse(res.stdout) as Record<string, unknown>;
+  const days = payload['days'] as Record<string, unknown>[];
+  assert.equal(days.length, 30);
+  assert.equal(days[0]?.['day'], 'today');
+  assert.equal(days[20]?.['day'], 'd20');
+  assert.equal(days[20]?.['count'], 1);
+  // The horizon folds the flat list; it does not shorten a run of days the
+  // reader asked for by name.
+  assert.equal(payload['count'], 2);
+
+  // --days 7 is --week.
+  const week = JSON.parse((await h.mustRun('forecast', '--days', '7', '--json')).stdout);
+  assert.deepEqual(week, JSON.parse((await h.mustRun('forecast', '--week', '--json')).stdout));
+});
+
+test('forecast --days takes a whole number in range, and nothing else', async (t: TestContext) => {
+  const h = await newHarness(t, commands);
+  for (const bad of ['0', '61', '7.5', '1e2', 'seven', '-1']) {
+    const res = await h.run('forecast', '--days', bad);
+    assert.equal(res.code, exit.Usage, `--days ${bad}`);
+  }
+  assert.match((await h.run('forecast', '--days', '61')).stderr, /between 1 and 60/);
+  assert.equal((await h.run('forecast', '--days', '3', '--week')).code, exit.Usage);
+  assert.equal((await h.run('forecast', '--days', '3', '--day', 'today')).code, exit.Usage);
+});
+
+test('forecast --compact leaves the empty days out of the human listing', async (t: TestContext) => {
+  const h = await newHarness(t, commands);
+  await h.mustRun('add', 'Today', '--due', day(0), '--json');
+  await h.mustRun('add', 'Thursday', '--due', day(4), '--json');
+
+  const full = await h.mustRun('forecast', '--week');
+  const compact = await h.mustRun('forecast', '--week', '--compact');
+  const headings = (s: string): number => (s.match(/ — \d{4}-\d{2}-\d{2}/g) ?? []).length;
+  assert.equal(headings(full.stderr), 7);
+  assert.equal(headings(compact.stderr), 2);
+  assert.match(compact.stderr, /5 empty days left out/);
+  // The rows and their numbers are the week's, not the compacted view's.
+  assert.equal(compact.stdout, full.stdout);
+
+  // It is a reading aid, so it needs days to leave out and has no say over a
+  // shape a machine reads.
+  assert.equal((await h.run('forecast', '--compact')).code, exit.Usage);
+  assert.equal((await h.run('forecast', '--week', '--compact', '--json')).code, exit.Usage);
+});
+
+test('forecast --overdue is the flat list narrowed to what is late', async (t: TestContext) => {
+  const h = await newHarness(t, commands);
+  await h.mustRun('add', 'Last week', '--due', day(-5), '--json');
+  await h.mustRun('add', 'Today', '--due', day(0), '--json');
+  await h.mustRun('add', 'Tomorrow', '--due', day(1), '--json');
+  await h.mustRun('add', 'Deferred', '--defer', day(2), '--json');
+
+  const obj = h.decode(await h.mustRun('forecast', '--overdue', '--json'));
+  // Due today is not late: a date written as a day is midnight, so counting
+  // it as overdue by breakfast tells the reader nothing.
+  assert.deepEqual((obj['tasks'] as Record<string, unknown>[]).map((x) => x['title']), [
+    'Last week',
+  ]);
+  assert.equal(obj['count'], 1);
+  assert.equal(obj['later'], 0);
+
+  assert.equal((await h.run('forecast', '--overdue', '--week')).code, exit.Usage);
+  assert.equal((await h.run('forecast', '--overdue', '--day', 'today')).code, exit.Usage);
+});
+
+test('forecast --overdue says so plainly when nothing is late', async (t: TestContext) => {
+  const h = await newHarness(t, commands);
+  await h.mustRun('add', 'Tomorrow', '--due', day(1), '--json');
+
+  const res = await h.mustRun('forecast', '--overdue');
+  assert.equal(res.stdout, '');
+  assert.match(res.stderr, /Nothing is late/);
+});
