@@ -37,14 +37,27 @@
 // `import.meta.dirname` against that layout rather than walking up `../..`
 // as they do from source and from an npm install.
 //
-// **`--bytecode` requires CJS.** It is a real startup win, but Bun emits a
-// bytecode cache only for a CommonJS bundle, and CommonJS has no top-level
-// `await`. So `packages/cli/src/main.ts` must not have one — it wraps its
-// startup in an async function for exactly this reason — and if a top-level
-// `await` comes back, the build stops here with "await can only be used
-// inside an async function" pointing at the line. `--no-bytecode` is the
-// escape hatch for telling that apart from a real bundling failure; a
-// release does not use it.
+// **`--bytecode` is deliberately NOT used, and must not be added back
+// without solving this first.** It is a real startup win, but it changes what
+// `import.meta.dirname` means, and that breaks every embedded file:
+//
+//   without --bytecode:  import.meta.dirname === '/$bunfs/root'
+//                        -> the embedded assets and manifest resolve
+//   with    --bytecode:  import.meta.dirname === the SOURCE DIRECTORY ON THE
+//                        BUILD MACHINE, baked into the binary
+//                        -> the embedded files are unreachable
+//
+// The second form is the dangerous one, because on the machine that built it
+// that path still exists, so `tdo version` and `tdo serve` appear to work —
+// against whatever happens to be on disk there. One build read a stray
+// `package.json` from a temporary directory and reported its version. On a
+// user's machine the path does not exist at all and both fail. It was caught
+// only by installing the binary and running it from somewhere else.
+//
+// `main.ts` still avoids a top-level `await`, which CJS would need, so the
+// flag can be reinstated the day Bun resolves embedded files consistently —
+// but the fix has to be proven by running the binary from a directory that
+// has nothing to do with the build.
 import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -82,14 +95,13 @@ function hostTarget() {
 }
 
 let all = false;
-let bytecode = true;
+
 let smokeTest = true;
 for (const arg of process.argv.slice(2)) {
   if (arg === '--all') all = true;
-  else if (arg === '--no-bytecode') bytecode = false;
   else if (arg === '--no-smoke') smokeTest = false;
   else {
-    console.error(`usage: node scripts/build-binary.mjs [--all] [--no-bytecode] [--no-smoke]`);
+    console.error(`usage: node scripts/build-binary.mjs [--all] [--no-smoke]`);
     process.exit(2);
   }
 }
@@ -125,7 +137,6 @@ function build(target) {
     'build',
     '--compile',
     `--target=${target.bun}`,
-    ...(bytecode ? ['--bytecode'] : []),
     '--asset',
     'packages/cli/assets',
     '--asset',

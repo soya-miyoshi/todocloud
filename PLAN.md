@@ -45,10 +45,11 @@ HTTP providers would have worked, but the local SQLite provider could not
 availability and repeat completion twice, in two languages, which is exactly
 the drift `internal/web` was built to avoid.
 
-The cost is paid honestly, and part of it has since been paid back. The ~5 ms
-start is gone for good: `MIGRATION.md` records the measurements, and the
-shipped executable starts in 32 ms against a 7 ms floor for the engine it
-carries. Cross-compilation came back, though — `bun build --compile
+The cost is paid honestly, and part of it has since been paid back. Startup
+roughly doubled: the Go binary ran `tdo version` in 16 ms on the maintainer's
+machine and the shipped executable takes 33 ms, against a 7 ms floor for the
+engine it carries. (The "roughly 5 ms" this section used to claim was never
+measured; `MIGRATION.md` records what the measurements actually say.) Cross-compilation came back, though — `bun build --compile
 --target=...` produces all five supported targets from one machine, which is
 what `CGO_ENABLED=0` used to do — and so did the property that the user needs
 no runtime: the executable carries its own. What it costs instead is size,

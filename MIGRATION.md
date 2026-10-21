@@ -281,24 +281,48 @@ executable with Bun instead. Measured on this machine, twenty runs of
 
 | | |
 | --- | --- |
-| `bun build --compile`, with `--bytecode` | **32 ms** |
+| `bun build --compile` | **33 ms** |
 | bun running the `.ts` sources | 41 ms |
 | node + emitted JS + the compile cache | 86 ms |
 | the Node SEA it replaced | 110 ms |
 | node running the `.ts` sources | 121 ms |
 | `node -e 0`, Node's floor | 43 ms |
 | Bun's own floor | 7 ms |
-| Go, as `PLAN.md` recorded it | ~5 ms |
+| the Go binary this replaced, measured | 16 ms |
 
 Two readings of that table matter more than the headline.
 
 **The win is mostly the floor, not the bundle.** Node cannot start in less
 than 43 ms on this machine, so 86 ms was close to as good as a Node-hosted
-`tdo` was ever going to get, and the SEA was slower still. Bun's floor is 7 ms, and
-a bundled, bytecode-cached `tdo` lands 25 ms above it. Nothing in the old
-arrangement had that lever: `MIGRATION.md` used to name bundling the 66 modules
-as the remaining one and reject it for costing a bundler, and Bun is a bundler
-that arrived attached to the engine.
+`tdo` was ever going to get, and the SEA was slower still. Bun's floor is 7 ms
+and the bundled `tdo` lands 26 ms above it. Nothing in the old arrangement had
+that lever: bundling the 66 modules was named here as the remaining one and
+rejected for costing a bundler, and Bun is a bundler that arrived attached to
+the engine.
+
+**The Go binary was never 5 ms.** `PLAN.md` said "roughly 5 ms" and this
+document repeated it; the binary that was actually installed on the
+maintainer's machine runs `tdo version` in **16 ms**, measured the same way as
+every other row. So the honest comparison is that the shipped executable
+starts in about twice the time the Go one did — not twenty times, which is
+what the unmeasured figure implied, and not the same, which is what a broken
+measurement briefly suggested (see below).
+
+**`--bytecode` is not used, and the reason is a bug it hides.** Bun emits a
+bytecode cache only for a CommonJS bundle, and `tdo` is structured to allow
+that — `main.ts` has no top-level `await`. The flag does cut startup to about
+15 ms, which is faster than Go. It also changes `import.meta.dirname` from
+`/$bunfs/root` to **the source directory on the build machine**, baked into
+the binary, which makes every `--asset` unreachable. On the machine that built
+it, that path still exists, so `tdo version` and `tdo serve` appear to work
+while reading whatever is on disk there: one build reported the version of a
+stray `package.json` in a temporary directory. On a user's machine the path
+does not exist and both fail. It was caught by installing the binary and
+running it from an unrelated directory, which is now what
+`scripts/install-local.sh` and the smoke test do. `scripts/build-binary.mjs`
+carries the long version of this warning; the flag can come back when Bun
+resolves embedded files consistently, proven by running the result from
+somewhere that has nothing to do with the build.
 
 **Size went down rather than up**: the host binary is **71 MB** with
 `--bytecode`, against the SEA's 140 MB. Still an order of magnitude past the

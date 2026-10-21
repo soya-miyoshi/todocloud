@@ -110,8 +110,23 @@ node "$repo_root/scripts/set-version.mjs" "$stamp" >/dev/null
 
 # --no-smoke: the smoke test runs the binary against a throwaway store, which
 # is worth it in a build but is not what the user asked this script for.
+# dist-bin is cleared first, and the binary is taken from the versioned
+# directory the build just wrote rather than from the `dist-bin/tdo`
+# convenience symlink. The symlink survives across builds, so installing
+# through it once installed a stale binary from an earlier version while the
+# freshly stamped one sat beside it.
+rm -rf "$repo_root/dist-bin"
 node "$repo_root/scripts/build-binary.mjs" --no-smoke
-install -m 0755 "$repo_root/dist-bin/$binary" "$prefix/$binary"
+built="$repo_root/dist-bin/${binary}_${stamp}_$(uname -s | tr 'A-Z' 'a-z' |
+  sed 's/^darwin$/darwin/;s/^linux$/linux/')_$(uname -m |
+  sed 's/^x86_64$/amd64/;s/^aarch64$/arm64/;s/^arm64$/arm64/')/$binary"
+[ -f "$built" ] || {
+  printf 'the build did not produce %s\n' "$built" >&2
+  printf 'what it produced:\n' >&2
+  ls -1 "$repo_root/dist-bin" >&2
+  exit 1
+}
+install -m 0755 "$built" "$prefix/$binary"
 
 printf 'Installed %s\n' "$prefix/$binary"
 
