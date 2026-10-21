@@ -68,10 +68,13 @@ async function api(method, path, body) {
   return payload;
 }
 
+// say reports in every status line there is: the outline's toolbar and the
+// inspector's bar, which on a phone are never on screen together.
 function say(message, isError) {
-  const node = $('#status');
-  node.textContent = message || '';
-  node.classList.toggle('error', Boolean(isError));
+  for (const node of document.querySelectorAll('.status')) {
+    node.textContent = message || '';
+    node.classList.toggle('error', Boolean(isError));
+  }
 }
 
 // A write reports what it changed beyond what was asked: a repeat's
@@ -244,6 +247,9 @@ function select(next) {
 }
 
 function selectItem(id) {
+  // A pending edit belongs to the item that was on screen when it was
+  // typed, so it goes up before the inspector shows another one.
+  if (saveTimer) saveNow();
   selected = id;
   showPane('inspector');
   render();
@@ -481,6 +487,22 @@ function renderInspector() {
   $('#back-label').textContent = 'Home';
   if (!t) return;
 
+  // Every write is followed by a fresh snapshot, and the snapshot arrives
+  // while the cursor is still in the field that caused it. Refilling the
+  // fields then would delete whatever was typed in the meantime, so the
+  // inputs are left alone while this item is being edited; the facts below
+  // them, which nobody types into, are refreshed either way.
+  const sameItem = form.dataset.id === t.id;
+  if (!sameItem || !form.contains(document.activeElement)) {
+    fillInspector(form, t);
+  }
+  form.dataset.id = t.id;
+
+  $('#facts').replaceChildren(...facts(t));
+  $('#complete').textContent = t.status === 'done' ? 'Reopen' : 'Complete';
+}
+
+function fillInspector(form, t) {
   form.elements.title.value = t.title;
   form.elements.note.value = t.note || '';
   form.elements.tags.value = (t.tags || []).join(', ');
@@ -501,9 +523,15 @@ function renderInspector() {
     el('option', { value: '', textContent: t.kind === 'task' ? '(inbox)' : '(top level)' }),
     ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
   form.elements.parent_id.value = t.parent_id || '';
+  grow(form.elements.note);
+}
 
-  $('#facts').replaceChildren(...facts(t));
-  $('#complete').textContent = t.status === 'done' ? 'Reopen' : 'Complete';
+// grow sizes the note to its contents: a note is read far more often than
+// it is written, and a four-line box with twenty lines in it hides what it
+// was written for.
+function grow(area) {
+  area.style.height = 'auto';
+  area.style.height = `${Math.max(area.scrollHeight, 56)}px`;
 }
 
 // canContain mirrors task.Kind.CanContain: a folder holds folders and
@@ -533,11 +561,32 @@ $('#quick').onsubmit = async (event) => {
   await act('POST', '/api/tasks', body, 'captured');
 };
 
-$('#detail').onsubmit = async (event) => {
-  event.preventDefault();
-  const t = byID.get(selected);
+// --- the inspector saves itself ----------------------------------------
+
+// There is no Save button. Typing settles for a moment and the change goes
+// up; a menu, a checkbox or a date goes up at once, because those are
+// finished the instant they change. The status line in the outline's
+// toolbar is where "saved" appears, so an edit is never silent.
+let saveTimer = null;
+let saving = Promise.resolve();
+
+function scheduleSave(delay = 700) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { saveNow(); }, delay);
+}
+
+async function saveNow() {
+  clearTimeout(saveTimer);
+  const form = $('#detail');
+  const t = byID.get(form.dataset.id);
   if (!t) return;
-  const form = event.target;
+  // One save at a time, in order: two overlapping PATCHes of the same item
+  // are a race whose loser silently wins.
+  saving = saving.then(() => writeInspector(form, t)).catch(() => {});
+  return saving;
+}
+
+async function writeInspector(form, t) {
   const edit = {
     title: form.elements.title.value,
     note: form.elements.note.value,
@@ -546,6 +595,7 @@ $('#detail').onsubmit = async (event) => {
     priority: Number(form.elements.priority.value),
     flagged: form.elements.flagged.checked,
   };
+  if (!edit.title.trim()) return;        // an empty title is refused by the store
   try {
     say('saving…');
     await api('PATCH', `/api/tasks/${t.id}`, edit);
@@ -572,6 +622,24 @@ $('#detail').onsubmit = async (event) => {
   } catch (err) {
     say(err.message, true);
   }
+}
+
+$('#detail').oninput = (event) => {
+  if (event.target.name === 'note') grow(event.target);
+  scheduleSave();
+};
+
+// A menu, a checkbox or a date is finished the moment it changes, and a
+// date picker never fires `input` on every platform anyway.
+$('#detail').onchange = () => saveNow();
+
+// Leaving a field commits it rather than waiting out the timer, and so does
+// Enter in a single-line field — which must not submit the form, since the
+// form has no submit left to do.
+$('#detail').addEventListener('focusout', () => saveNow());
+$('#detail').onsubmit = (event) => {
+  event.preventDefault();
+  saveNow();
 };
 
 $('#complete').onclick = () => {
