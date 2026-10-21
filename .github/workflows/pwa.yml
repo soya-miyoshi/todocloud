@@ -141,12 +141,47 @@ jobs:
       # soya-miyoshi/soya-miyoshi.github.io as a deploy key *with write
       # access*, and the private half here as the `PWA_PAGES_DEPLOY_KEY`
       # secret. It grants write to that one repository and nothing else.
-      - name: Check out the site repository
-        uses: actions/checkout@v4
-        with:
-          repository: soya-miyoshi/soya-miyoshi.github.io
-          ssh-key: ${{ secrets.PWA_PAGES_DEPLOY_KEY }}
-          path: site
+      # Cloned by hand rather than with `actions/checkout`, because the
+      # target can be an empty repository and that action cannot read one:
+      # it starts by resolving the default branch with `git ls-remote
+      # --exit-code ... HEAD`, which exits 2 when there are no refs at all,
+      # and retries twice before failing. `git clone` is happy with it —
+      # it just lands on an unborn branch, which `symbolic-ref` below names.
+      # So the first deploy needs no README committed by hand to bootstrap
+      # the repository, and a repository emptied later does not break it.
+      - name: Clone the site repository
+        env:
+          # The deploy key: write access to that one repository and nothing
+          # else, which is why this is not a personal access token. Read from
+          # the environment and written with `printf`, so the value is never
+          # a word in a command line that a trace or an error could echo.
+          DEPLOY_KEY: ${{ secrets.PWA_PAGES_DEPLOY_KEY }}
+        run: |
+          key="$RUNNER_TEMP/pages_deploy_key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$DEPLOY_KEY" > "$key"
+
+          # GitHub's own ed25519 host key, pinned rather than accepted on
+          # first use: this step hands a private key to whatever answers on
+          # port 22, and `accept-new` would hand it to an impostor once.
+          # Verify with `ssh-keygen -lf` against the fingerprint GitHub
+          # publishes — SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU —
+          # and update both if GitHub ever rotates it.
+          known="$RUNNER_TEMP/pages_known_hosts"
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$known"
+
+          # IdentitiesOnly, so the agent's keys cannot be tried instead and
+          # make this succeed for a reason this file did not arrange.
+          echo "GIT_SSH_COMMAND=ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known" >> "$GITHUB_ENV"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known"
+
+          git clone git@github.com:soya-miyoshi/soya-miyoshi.github.io.git site
+          cd site
+          # Point HEAD at main whether or not it exists yet. On a cloned
+          # repository that already has main this is a no-op; on an empty one
+          # it names the unborn branch, so the first commit creates `main`
+          # rather than whatever `init.defaultBranch` happened to be.
+          git symbolic-ref HEAD refs/heads/main
 
       # --delete, because a module removed from the app has to stop being
       # served: a stale .js left behind is one an old cached page can still
@@ -163,7 +198,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          if git diff --cached --quiet; then
+          # `git status --porcelain` rather than `git diff --cached`, which
+          # needs a HEAD to compare against and there is none on the first
+          # deploy into an empty repository.
+          if [ -z "$(git status --porcelain)" ]; then
             echo "The build is identical to what is already published."
             exit 0
           fi
@@ -171,4 +209,6 @@ jobs:
           # the tree it came from — the site repository has no history of its
           # own to read.
           git commit -m "Deploy todocloud@${GITHUB_SHA} to the PWA site"
-          git push
+          # -u origin main, because the first push to an empty repository has
+          # no upstream to infer one from.
+          git push -u origin main
