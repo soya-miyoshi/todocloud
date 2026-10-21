@@ -137,6 +137,21 @@ cannot happen until the car is back are a context, not a date. `--json` output c
 and, when it is false, `blocked_by` naming the rule and the item responsible,
 so nothing has to recompute it.
 
+**`tdo forecast` is the dated work**, which is a different question from what
+is available: a task waiting on its defer date is here although `tdo ls` hides
+it. It is the same view the browser viewer opens on, from the same code.
+
+```sh
+tdo forecast                 # everything dated, by defer date
+tdo forecast --sort due      # by deadline instead
+tdo forecast --day today     # today — which carries whatever was due before it
+tdo forecast --week          # the next seven days, under their own headings
+```
+
+There is no "past" day: an overdue item is today's problem, so it is listed
+under today, and the count on stderr says how many of today's rows arrived
+from an earlier day.
+
 The rest of the model, in the commands that reach it:
 
 ```sh
@@ -187,6 +202,16 @@ knowing:
   not a copy of your list: nothing is cached, so there is no offline mode and
   nothing stale to mistake for the truth. Out of range it is simply a page
   that cannot load.
+- **It is built for the phone it installs on.** It opens on the Forecast — a
+  week of day columns, today first and carrying whatever is already overdue —
+  and shows one pane at a time. The back chevron, your phone's own back
+  gesture and a swipe across the pane all mean the same thing, and the address
+  says where you are (`/forecast/d3`, `/project/<id>`, `…/item/<id>`), so a
+  link opens what it names. Search is the box at the top of the list; capture
+  is the Add button at the bottom, which opens a form with the dates and the
+  project on it. Long titles wrap rather than being cut, and where the browser
+  allows it the icon carries a badge: how many tasks are due today or are
+  already late.
 - It listens on `127.0.0.1`. `tdo serve --addr 0.0.0.0` makes it reachable
   from your network, and says so when you do — anyone who can load the page
   can edit the list.

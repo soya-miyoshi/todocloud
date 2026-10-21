@@ -114,6 +114,7 @@ import * as keyring from './keyring.ts';
 import { addCommand } from './add.ts';
 import { configCommand, doctorCommand, initCommand, migrateCommand, versionCommand } from './admin.ts';
 import { editCommand } from './edit.ts';
+import { forecastCommand } from './forecast.ts';
 import { inboxCommand, listAliasCommand, listCommand, nextCommand } from './list.ts';
 import { loginCommand } from './login.ts';
 import {
@@ -1079,7 +1080,7 @@ function flagLines(flags: Flags): string[] {
 // The Go tree's order, which this list restores as each module lands:
 //
 //   capture and the inbox   add, inbox
-//   looking at things       ls, show, next, serve
+//   looking at things       ls, show, next, forecast, serve
 //   the mark family         done, undone, drop, hold, unhold, flag, unflag,
 //                           defer, due, mv
 //   editing and removal     edit, rm
@@ -1103,6 +1104,7 @@ const registry: readonly CommandFactory[] = [
   listAliasCommand, // hidden: `tdo list`
   showCommand,
   nextCommand,
+  forecastCommand,
   serveCommand,
   // the mark family
   doneCommand,

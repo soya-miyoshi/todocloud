@@ -18,6 +18,7 @@
     "./secret": "./src/secret.ts",
     "./providercli": "./src/providercli.ts",
     "./recur": "./src/recur.ts",
+    "./forecast": "./src/forecast.ts",
     "./store": "./src/store/store.ts",
     "./store/schema": "./src/store/schema.ts",
     "./store/historical": "./src/store/historical.ts",

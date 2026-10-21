@@ -123,15 +123,20 @@ export function Rows(tasks: Task[]): Row[] {
  * the short reference the next command accepts, so it must match the order
  * the ids were cached in.
  *
+ * `start` is how many rows of that cached listing came before these, which is
+ * what `tdo forecast --week` needs: it writes one table per day out of a
+ * single listing, and a second table that began again at 1 would print a
+ * number that means a different task than the one on the row.
+ *
  * Rows are written through a tabwriter and then stripped of trailing spaces:
  * an empty last column would otherwise pad every row to the same width, which
  * shows up as noise when the output is diffed or pasted.
  */
-export function Table(w: Writer, rows: readonly Row[]): void {
+export function Table(w: Writer, rows: readonly Row[], start = 0): void {
   const cells: string[][] = [['#', 'S', 'K', 'DUE', 'TITLE', 'TAGS']];
   rows.forEach((r, i) => {
     cells.push([
-      String(i + 1),
+      String(start + i + 1),
       stateMarker(r),
       kindMarker(r.task),
       dueCell(r.task),

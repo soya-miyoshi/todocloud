@@ -102,12 +102,16 @@ export async function renderTasks(
  * printTable writes the human listing. tree asks for the nesting to be shown
  * by indentation; depth is measured against the tasks actually listed, so a
  * row is never indented under something the filter hid.
+ *
+ * start is how many rows of the saved listing precede these, for a caller
+ * that writes one listing as several tables — see `Table`.
  */
 export function printTable(
   a: App,
   tasks: readonly Task[],
   av: Map<string, Availability>,
   tree: boolean,
+  start = 0,
 ): void {
   const rows: Row[] = [];
   const depth = new Map<string, number>();
@@ -131,7 +135,7 @@ export function printTable(
       }),
     );
   }
-  Table(a.out.out, rows);
+  Table(a.out.out, rows, start);
 }
 
 /**

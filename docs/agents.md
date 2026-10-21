@@ -112,6 +112,7 @@ tdo ls [--available|--blocked|--deferred|--all] [--deleted] [--inbox] [--flagged
        [--sort position|created|updated|due|defer|title] [--tree]
 tdo show <ref>
 tdo next [--project P]
+tdo forecast [--sort defer|due] [--day today|d1..d6 | --week]
 tdo serve [--port N] [--addr ADDR]
 
 # Changing things
@@ -376,6 +377,9 @@ envelope and no `null` task.
 | `add`, `show`, `edit`, `next`, `inbox process`, `repeat`, `review <ref>`, `project add`, `project <ref>`, `folder add` | `{"tasks":[…],"count":1}` |
 | `next` with nothing available | `{"tasks":[],"count":0}` |
 | `ls`, `inbox`, `project ls`, `folder ls`, `review` | `{"tasks":[…],"count":n}` |
+| `forecast` | `{"tasks":[…],"count":n,"later":m}` — `later` is how many of the last `tasks` are deferred more than seven days out, which the viewer folds; nothing is dropped, so the folded view is the first `count - later` |
+| `forecast --day` | `{"day":"today","label":"Today","date":"YYYY-MM-DD","tasks":[…],"count":n,"past_due":m}` — `past_due` is how many of them were due on an earlier day |
+| `forecast --week` | `{"days":[{"day":…,"label":…,"date":…,"tasks":[…],"count":n,"due":n,"starting":n,"past_due":n}],"count":n}` — seven days from today; `count` at the top is every task listed across them |
 | `undone`, `drop`, `hold`, `unhold`, `flag`, `unflag`, `defer`, `due`, `mv`, `rm` | `{"tasks":[…],"count":n}` |
 | `tag ls` | `{"tags":[{"name":"errand","status":"on_hold","count":3}],"count":n}` |
 | `tag hold`, `tag unhold`, `tag drop`, `tag rename` | `{"tags":[…],"count":n}` — the tags as they now stand |
@@ -786,6 +790,58 @@ tdo serve --port 0         # any free port; the chosen one is printed
 tdo serve --addr 0.0.0.0   # reachable from the network, with a warning
 tdo serve --json           # one object naming the url, printed once listening
 ```
+
+The viewer opens on the Forecast. On a phone it shows one pane at a time and
+walks Forecast → Home → list → item; each pane is a history entry under a
+hash, so the back button, the system back gesture and a horizontal swipe
+across the pane all go back one pane. The addresses read as paths:
+
+```
+/                      the Forecast, today — where the app opens
+/home                  the perspectives
+/forecast/d3           one day of the week
+/forecast/all          the whole Forecast as one list
+/inbox /flagged /next /projects /tags /review /blocked /all /done
+/project/<id>
+/tag/<name>
+/perspective/<name>
+…/item/<id>            the inspector, on any of the above
+```
+
+They are after a `#` because `tdo serve` serves the page at `/` and the PWA
+is a static site: a real path neither routes is a 404 on reload. The hash is
+a view and never a write — nothing in it reaches the server — and an address
+the build cannot place lands on the Forecast with the address corrected.
+
+`tdo forecast` prints the viewer's `All` list from the terminal; `--week`
+prints its week and `--day today` the screen it opens on. A day past the
+seventh is in neither and is in the flat list, which is the same difference
+the viewer's fold makes. **There is no Past day**: today carries every
+deadline that has already passed, because an overdue item is today's problem
+and filing it under a day that has gone is how it stops being looked at. What
+separates the two inside today is `pastDue` — a red edge on a row in the
+viewer, `past_due` in `--json`, a line on stderr in the terminal. The
+selection, the order, the fold and the week are defined in
+`packages/core/src/forecast.ts`; the viewer's own copy of those rules in
+`app.js` is meant to give way to it.
+
+Forecast is a week: seven day columns from today, each opening that day, with
+**today carrying everything already due** as well as its own. It lists tasks
+only, sorted by defer date by default and by due date on request, and `All`
+shows the whole thing as one list with anything deferred more than seven days
+out folded into a row at the end. The order and the fold are remembered per
+browser in `localStorage`, as the open folders already were; nothing about
+them is in the store. Where the browser supports it, the app icon carries a
+badge counting the tasks due today or earlier — the same number as the
+Forecast tile.
+
+The box at the top of the list is a search, not a capture: it matches every
+word against titles, notes and tags across the whole store, including
+completed items. Capture is the Add button at the bottom, which opens a form
+over the list — title, note, tags, defer, due, estimate, priority, project,
+flag — and posts it as one `POST /api/tasks`. Opened from a day of the
+Forecast it arrives with that day's due date filled in, and from inside a
+project with that project selected.
 
 It is a front end and not a second implementation. Every read and every write
 goes through the same internal layer `tdo ls` and `tdo done` go through, and a
