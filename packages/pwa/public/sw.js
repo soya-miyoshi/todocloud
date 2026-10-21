@@ -76,7 +76,6 @@ const SHELL = [
   '/apple-touch-icon.png',
 
   '/pwa/src/main.js',
-  '/pwa/src/badge.js',
   '/pwa/src/credentials.js',
   '/pwa/src/dom.js',
   '/pwa/src/router.js',
@@ -90,7 +89,6 @@ const SHELL = [
   '/store-turso/src/schema.js',
 
   '/core/src/exit.js',
-  '/core/src/forecast.js',
   '/core/src/id.js',
   '/core/src/providercli.js',
   '/core/src/recur.js',

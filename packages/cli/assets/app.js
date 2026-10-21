@@ -280,11 +280,20 @@ const dueSoon = (t) => Boolean(t.due_at) && open(t) && !passed(t.due_at) && cale
 // matters here — something due at 18:00 today has landed at breakfast, and a
 // forecast that waits until 18:01 to say so is useless in the morning.
 //
-// It is what both badges count: the number on the Forecast tile and the one
-// on the app icon (see `updateBadge`). Those two said different things once —
-// the tile counted what was already late — and a badge on the icon that does
-// not match the number behind it is a bug report waiting to be filed.
+// It is what the number on the Forecast tile counts. The app icon counts
+// something wider, `arrived` below.
 const landed = (t) => Boolean(t.due_at) && open(t) && calendarDays(t.due_at) <= 0;
+
+// arrived is "either date has come": a task, open, due today or earlier, or
+// deferred until today or earlier. Both, because the two say different things
+// and either is a reason to look — a deadline has come, or work has just
+// become available. It is what the icon counts, and deliberately not what the
+// Forecast tile counts: a task whose defer date has passed but which has no
+// deadline is not late, and the tile's number means late.
+const arrived = (t) =>
+  t.kind === 'task' && open(t)
+  && ((Boolean(t.due_at) && calendarDays(t.due_at) <= 0)
+    || (Boolean(t.defer_at) && calendarDays(t.defer_at) <= 0));
 
 // pastDue is "this is from an earlier day", which is a different question
 // from `overdue` and the one the Forecast needs. A due date with no time on
@@ -925,18 +934,19 @@ document.addEventListener('touchcancel', () => {
 
 // --- the badge on the app icon ------------------------------------------
 
-// What a glance at the home screen should say: how many tasks have a
-// deadline that has arrived. `landed` is the same count as the number on the
-// Forecast tile, on purpose.
+// What a glance at the home screen should say: how many tasks have a due or
+// defer date that has arrived (`arrived`). That is wider than the number on
+// the Forecast tile, which counts only what is late — the icon is "look at
+// the app", the tile is "this is overdue".
 //
 // Both calls are guarded and both are allowed to fail. The API does not
 // exist in every browser, and on iOS it exists but answers only an installed
 // app whose notification permission has been granted — which is what
 // `#badge-ask` is for. A refusal is not an error worth a line on screen:
-// the number is on the tile either way.
+// the list is on screen either way.
 function updateBadge() {
   if (!('setAppBadge' in navigator)) return;
-  const n = state.tasks.filter(landed).length;
+  const n = state.tasks.filter(arrived).length;
   const call = n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge();
   if (call && typeof call.catch === 'function') call.catch(() => {});
 }
