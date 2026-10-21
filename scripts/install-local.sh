@@ -39,44 +39,78 @@ if [ "$do_init" = "-1" ]; then
   exit 0
 fi
 
-# This repository pins its Go version with mise. Prefer a go that is already
-# on PATH — if you have one, it is the one you meant — and fall back to
-# asking mise where its go is. The shim directory is not hardcoded: it moves
-# with XDG_DATA_HOME, so guessing the path is how this breaks on a machine
-# that is not the author's.
-if ! command -v go >/dev/null 2>&1 && command -v mise >/dev/null 2>&1; then
-  if mise_go="$(cd "$repo_root" && mise which go 2>/dev/null)" && [ -x "$mise_go" ]; then
-    PATH="$(dirname "$mise_go"):$PATH"
-    export PATH
+# This repository pins node and bun with mise. Prefer the ones already on
+# PATH — if you have them, they are the ones you meant — and otherwise ask
+# mise. The shim directory is not hardcoded: it moves with XDG_DATA_HOME, so
+# guessing the path is how this breaks on a machine that is not the author's.
+#
+# node runs the build script; bun compiles the executable. Say which one is
+# missing here rather than let the build fail further in.
+for tool in node bun; do
+  if ! command -v "$tool" >/dev/null 2>&1 && command -v mise >/dev/null 2>&1; then
+    if found="$(cd "$repo_root" && mise which "$tool" 2>/dev/null)" && [ -x "$found" ]; then
+      PATH="$(dirname "$found"):$PATH"
+      export PATH
+    fi
   fi
-fi
-command -v go >/dev/null 2>&1 || {
-  printf 'go is not on PATH. Install it, or run `mise install` in %s.\n' "$repo_root" >&2
-  exit 1
-}
+  command -v "$tool" >/dev/null 2>&1 || {
+    printf '%s is not on PATH. Install it, or run `mise install` in %s.\n' \
+      "$tool" "$repo_root" >&2
+    exit 1
+  }
+done
 
 # A dirty tree is worth saying out loud: the binary you are about to install
 # does not correspond to any commit.
 version="$(git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || echo "dev")"
 commit="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || echo "")"
 
-# The build script runs on node and compiles with bun. Say which one is
-# missing here rather than let the build fail further in.
-if ! command -v node >/dev/null 2>&1; then
-  printf 'node is not on your PATH. Install it with: mise install node\n' >&2
-  exit 1
-fi
-if ! command -v bun >/dev/null 2>&1; then
-  printf 'bun is not on your PATH. Install it with: mise install bun\n' >&2
-  exit 1
-fi
-
 printf 'Building %s %s\n' "$binary" "$version"
 mkdir -p "$prefix"
+
+# `tdo version` reads the version out of the manifest embedded in the
+# executable, so the only way to stamp it is to put it there before the build.
+# An earlier version of this script exported TODOCLOUD_VERSION for the build
+# process, which did nothing at all: that variable is read at run time, by
+# whoever runs the installed binary, not at build time.
+#
+# The manifests are tracked files, so they are restored afterwards — through a
+# trap, so an interrupted build does not leave the tree dirty. Copies rather
+# than `git checkout` because the latter would also discard any edit you had
+# in progress there.
+manifests=()
+for pkg in core cli store-sqlite store-turso; do
+  manifests+=("$repo_root/packages/$pkg/package.json")
+done
+backup="$(mktemp -d)"
+restore() {
+  local f
+  for f in "${manifests[@]}"; do
+    [ -f "$backup/$(basename "$(dirname "$f")").json" ] &&
+      cp "$backup/$(basename "$(dirname "$f")").json" "$f"
+  done
+  rm -rf "$backup"
+}
+trap restore EXIT
+for f in "${manifests[@]}"; do
+  cp "$f" "$backup/$(basename "$(dirname "$f")").json"
+done
+
+# `git describe` gives things like 0.1.0-rc.2-2-g5058515, which is a valid
+# semver prerelease, so set-version accepts it as is. With no tags in the
+# repository it gives a bare SHA instead, which is not semver and which
+# set-version rightly refuses — so that case becomes an obviously-not-a-release
+# version that still carries the SHA.
+stamp="${version#v}"
+case "$stamp" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) stamp="0.0.0-$(printf '%s' "$stamp" | tr -c '[:alnum:].-' '-')" ;;
+esac
+node "$repo_root/scripts/set-version.mjs" "$stamp" >/dev/null
+
 # --no-smoke: the smoke test runs the binary against a throwaway store, which
 # is worth it in a build but is not what the user asked this script for.
-TODOCLOUD_VERSION="$version" TODOCLOUD_COMMIT="$commit" \
-  node "$repo_root/scripts/build-binary.mjs" --no-smoke
+node "$repo_root/scripts/build-binary.mjs" --no-smoke
 install -m 0755 "$repo_root/dist-bin/$binary" "$prefix/$binary"
 
 printf 'Installed %s\n' "$prefix/$binary"
