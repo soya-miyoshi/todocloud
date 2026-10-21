@@ -3,6 +3,10 @@
 // on screen is what the store says and never a guess about what the store
 // will say. A todo list is small and the server is on this machine, so the
 // simple thing is also the fast one.
+//
+// The shape of the screen follows OmniFocus 3: three panes, one at a time on
+// a phone and up to three at once on a wide screen, a Home of tinted
+// perspective tiles, and a row whose status circle carries the colour.
 'use strict';
 
 const token = document.body.dataset.token;
@@ -17,6 +21,30 @@ const el = (tag, props = {}, kids = []) => {
   const node = Object.assign(document.createElement(tag), props);
   for (const kid of [].concat(kids)) node.append(kid);
   return node;
+};
+
+// svg draws one of the small type icons. They are inline because they are
+// three shapes, and a sprite sheet for three shapes is a second file to keep
+// in step with this one.
+function svg(paths, size = 15) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  node.setAttribute('viewBox', '0 0 16 16');
+  node.setAttribute('width', String(size));
+  node.setAttribute('height', String(size));
+  node.setAttribute('fill', 'none');
+  node.setAttribute('stroke', 'currentColor');
+  node.setAttribute('stroke-width', '1.4');
+  node.innerHTML = paths;
+  return node;
+}
+
+// A sequential project is three dots joined by a line; a parallel one is two
+// dotted lines side by side; a folder is a folder. The manual describes the
+// first two in exactly those words.
+const TYPE_ICONS = {
+  sequential: '<path d="M3 8h10"/><circle cx="3" cy="8" r="1.4" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none"/><circle cx="13" cy="8" r="1.4" fill="currentColor" stroke="none"/>',
+  parallel: '<path d="M3 4h10" stroke-dasharray="2 2"/><path d="M3 11h10" stroke-dasharray="2 2"/>',
+  folder: '<path d="M2 5.5a1 1 0 0 1 1-1h3l1.2 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/>',
 };
 
 // --- talking to the server ---------------------------------------------
@@ -61,7 +89,7 @@ async function act(method, path, body, done) {
   try {
     say('working…');
     const result = await api(method, path, body);
-    await reload(reportExtras(result) || done || 'done');
+    await reload(reportExtras(result) || done || '');
   } catch (err) {
     say(err.message, true);
   }
@@ -80,6 +108,7 @@ async function reload(message) {
 
 const closed = (t) => t.status === 'done' || t.status === 'dropped';
 const open = (t) => !closed(t);
+const isContainer = (t) => t.kind !== 'task';
 
 function parentsOf(t) {
   const chain = [];
@@ -96,16 +125,74 @@ function inSubtree(t, rootID) {
   return parentsOf(t).some((p) => p.id === rootID);
 }
 
-const VIEWS = [
-  { key: 'inbox', label: 'Inbox', pick: (t) => t.kind === 'task' && !t.parent_id && open(t) },
-  { key: 'next', label: 'Next', pick: (t) => t.kind === 'task' && t.status === 'active' && t.available },
-  { key: 'flagged', label: 'Flagged', pick: (t) => t.flagged && open(t) },
-  { key: 'due', label: 'Due', pick: (t) => t.due_at && open(t), sort: byDue },
+// Both of these answer against the server's own clock rather than the
+// phone's: the two disagree often enough to matter at midnight.
+
+// passed reports whether an instant is behind us. It is the question "is
+// this overdue", which is about the moment and not about the day.
+const passed = (stamp) => Boolean(stamp) && new Date(stamp) <= new Date(state.now);
+
+// calendarDays counts whole days between two dates, not elapsed hours: an
+// item due at midnight this morning is still due *today*, an hour overdue,
+// and calling that "Yesterday" is how a list starts lying to its reader.
+function calendarDays(stamp) {
+  if (!stamp) return null;
+  const a = new Date(stamp);
+  const b = new Date(state.now);
+  const at = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
+  const now = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
+  return Math.round((at - now) / 86400000);
+}
+
+const overdue = (t) => Boolean(t.due_at) && open(t) && passed(t.due_at);
+const dueSoon = (t) => Boolean(t.due_at) && open(t) && !passed(t.due_at) && calendarDays(t.due_at) <= 2;
+
+// The perspectives, in the order the manual lists OmniFocus's own, with the
+// two this tool has no equivalent for (Forecast's calendar, Nearby's
+// location) standing in for what it does have: a plain due list and the next
+// available actions. Each badge counts what OmniFocus counts — Forecast
+// counts what is past due, not what is due today, and Inbox and Flagged
+// count only what is actually available.
+const PERSPECTIVES = [
+  {
+    key: 'due', label: 'Due', tint: 'salmon', glyph: '◷', sort: byDue,
+    pick: (t) => t.due_at && open(t),
+    badge: (items) => items.filter(overdue).length,
+  },
+  {
+    key: 'inbox', label: 'Inbox', tint: 'slate', glyph: '▤',
+    pick: (t) => t.kind === 'task' && !t.parent_id && open(t),
+    badge: (items) => items.filter((t) => t.available).length,
+  },
+  {
+    key: 'flagged', label: 'Flagged', tint: 'creamsicle', glyph: '⚑',
+    pick: (t) => t.flagged && open(t),
+    badge: (items) => items.filter((t) => t.available).length,
+  },
+  {
+    key: 'next', label: 'Next', tint: 'mint', glyph: '➤',
+    pick: (t) => t.kind === 'task' && t.status === 'active' && t.available,
+  },
+  {
+    key: 'projects', label: 'Projects', tint: 'sky', glyph: '▣',
+    pick: (t) => t.kind === 'project' && open(t),
+  },
+  {
+    key: 'review', label: 'Review', tint: 'violet', glyph: '↻',
+    pick: (t) => t.next_review_at && open(t),
+    badge: (items) => items.filter((t) => passed(t.next_review_at)).length,
+  },
+];
+
+// Other Perspectives, which OmniFocus keeps collapsed behind a Show: the
+// views that answer a question about the list rather than offering work.
+const OTHERS = [
   { key: 'blocked', label: 'Blocked', pick: (t) => open(t) && t.available === false },
-  { key: 'review', label: 'Review', pick: (t) => t.next_review_at && open(t) },
   { key: 'all', label: 'All', pick: (t) => open(t) },
   { key: 'done', label: 'Completed', pick: (t) => closed(t), sort: (a, b) => (b.completed_at || '').localeCompare(a.completed_at || '') },
 ];
+
+const specOf = (key) => PERSPECTIVES.find((v) => v.key === key) || OTHERS.find((v) => v.key === key);
 
 function byDue(a, b) {
   if (!a.due_at) return 1;
@@ -115,9 +202,8 @@ function byDue(a, b) {
 
 // A saved perspective is a stored filter the server runs, and running one
 // here would mean reimplementing it in JavaScript — which is exactly the
-// drift this UI is written to avoid. So the sidebar lists them, and
-// selecting one narrows to what it names: the projects and tags a
-// perspective holds are the parts a client can honour faithfully.
+// drift this UI is written to avoid. So Home lists them and says what to
+// type; the projects and tags are the parts a client can honour faithfully.
 function currentItems() {
   if (view.kind === 'project') {
     const root = byID.get(view.key);
@@ -127,7 +213,7 @@ function currentItems() {
   if (view.kind === 'tag') {
     return state.tasks.filter((t) => open(t) && (t.tags || []).some((g) => g.toLowerCase() === view.key.toLowerCase()));
   }
-  const spec = VIEWS.find((v) => v.key === view.kind) || VIEWS[0];
+  const spec = specOf(view.kind) || PERSPECTIVES[1];
   const items = state.tasks.filter(spec.pick);
   return spec.sort ? items.slice().sort(spec.sort) : items;
 }
@@ -137,71 +223,159 @@ function viewTitle() {
     const root = byID.get(view.key);
     return root ? root.title : 'Project';
   }
-  if (view.kind === 'tag') return `#${view.key}`;
-  const spec = VIEWS.find((v) => v.key === view.kind);
+  if (view.kind === 'tag') return view.key;
+  const spec = specOf(view.kind);
   return spec ? spec.label : 'Items';
+}
+
+// --- panes --------------------------------------------------------------
+
+// On a narrow screen one pane is on at a time and the back chevron walks
+// Home ← outline ← item, the way it does in OmniFocus; on a wide one all
+// three are on screen and this attribute is ignored.
+function showPane(name) {
+  document.body.dataset.pane = name;
+}
+
+function select(next) {
+  view = next;
+  showPane('outline');
+  render();
+}
+
+function selectItem(id) {
+  selected = id;
+  showPane('inspector');
+  render();
 }
 
 // --- rendering ---------------------------------------------------------
 
 function render() {
-  renderSidebar();
+  renderHome();
   renderList();
   renderInspector();
 }
 
-function sidebarButton(label, count, isCurrent, onClick, depth) {
-  const button = el('button', { type: 'button', textContent: label, onclick: onClick });
-  if (depth) button.classList.add(`depth${Math.min(depth, 2)}`);
+function navRow(label, count, isCurrent, onClick, options = {}) {
+  const button = el('button', { type: 'button', className: 'nav-row', onclick: onClick });
   button.setAttribute('aria-current', isCurrent ? 'true' : 'false');
-  if (count !== null) button.append(el('span', { className: 'count', textContent: String(count) }));
+  if (options.depth) button.classList.add(`depth${Math.min(options.depth, 2)}`);
+  if (options.held) button.classList.add('held');
+  if (options.mark) button.append(el('span', { className: 'mark' }, options.mark));
+  button.append(el('span', { className: 'name', textContent: label }));
+  if (count !== null && count !== undefined) {
+    button.append(el('span', { className: 'count', textContent: String(count) }));
+  }
   return el('li', {}, button);
 }
 
-function renderSidebar() {
-  const views = $('#views');
-  views.replaceChildren(...VIEWS.map((spec) =>
-    sidebarButton(spec.label, state.tasks.filter(spec.pick).length, view.kind === spec.key,
-      () => select({ kind: spec.key, key: '' }))));
-
-  const containers = state.tasks.filter((t) => t.kind !== 'task' && open(t));
-  const depthOf = (t) => parentsOf(t).length;
-  $('#projects').replaceChildren(...containers.map((t) =>
-    sidebarButton(t.title,
-      state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && open(x) && x.kind === 'task').length,
-      view.kind === 'project' && view.key === t.id,
-      () => select({ kind: 'project', key: t.id }),
-      depthOf(t))));
-
-  $('#saved').replaceChildren(...(state.perspectives || []).map((p) =>
-    el('li', {}, el('button', {
-      type: 'button',
-      textContent: p.name,
-      title: 'a saved query; run it with `tdo ls --perspective ' + p.name + '`',
-      onclick: () => say(`“${p.name}” is a saved query: tdo ls --perspective ${p.name}`),
-    }))));
-
-  $('#tags').replaceChildren(...(state.tags || []).map((g) => {
-    const item = sidebarButton(g.name, g.count, view.kind === 'tag' && view.key === g.name,
-      () => select({ kind: 'tag', key: g.name }));
-    if (g.status && g.status !== 'active') {
-      // A tag that is on hold or dropped holds its items back, so it reads
-      // as inactive here too; `tdo tag unhold <tag>` is how it comes back.
-      item.firstChild.classList.add('held');
-      item.firstChild.title = `${g.name} is ${g.status.replace('_', ' ')}`;
-    }
-    return item;
+function renderHome() {
+  $('#tiles').replaceChildren(...PERSPECTIVES.map((spec) => {
+    const items = state.tasks.filter(spec.pick);
+    const n = spec.badge ? spec.badge(items) : items.length;
+    const tile = el('button', { type: 'button', className: 'tile', onclick: () => select({ kind: spec.key, key: '' }) });
+    tile.style.setProperty('--tint', `var(--${spec.tint})`);
+    tile.setAttribute('aria-current', view.kind === spec.key ? 'true' : 'false');
+    const glyph = el('span', { className: 'glyph', textContent: spec.glyph });
+    // The glyph repeats what the label says, so it is decoration as far as a
+    // screen reader is concerned; the tile's own aria-label carries the count.
+    glyph.setAttribute('aria-hidden', 'true');
+    tile.append(
+      glyph,
+      el('span', { className: 'name', textContent: spec.label }),
+      el('span', { className: 'badge', textContent: n ? String(n) : '' }));
+    tile.setAttribute('aria-label', `${spec.label}, ${n}`);
+    return el('li', {}, tile);
   }));
+
+  const containers = state.tasks.filter((t) => isContainer(t) && open(t));
+  $('#projects').replaceChildren(...containers.map((t) => navRow(
+    t.title,
+    state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && open(x) && x.kind === 'task').length,
+    view.kind === 'project' && view.key === t.id,
+    () => select({ kind: 'project', key: t.id }),
+    { depth: parentsOf(t).length, mark: typeIcon(t) })));
+
+  $('#tags').replaceChildren(...(state.tags || []).map((g) => navRow(
+    g.name, g.count, view.kind === 'tag' && view.key === g.name,
+    () => select({ kind: 'tag', key: g.name }),
+    // A tag that is on hold or dropped holds its items back, so it reads as
+    // inactive here too; `tdo tag unhold <tag>` is how it comes back.
+    { held: g.status && g.status !== 'active', mark: el('span', { textContent: '#' }) })));
+
+  $('#others').replaceChildren(
+    ...OTHERS.map((spec) => navRow(spec.label, state.tasks.filter(spec.pick).length,
+      view.kind === spec.key, () => select({ kind: spec.key, key: '' }))),
+    ...(state.perspectives || []).map((p) => navRow(p.name, null, false,
+      () => say(`“${p.name}” is a saved query: tdo ls --perspective ${p.name}`),
+      { mark: el('span', { textContent: '⌕' }) })));
 }
 
-function select(next) {
-  view = next;
-  render();
+// typeIcon is the small glyph that says what kind of container this is.
+function typeIcon(t) {
+  if (t.kind === 'folder') return svg(TYPE_ICONS.folder, 14);
+  return svg(t.sequential ? TYPE_ICONS.sequential : TYPE_ICONS.parallel, 14);
 }
 
-// tagChip renders one tag on an item, dimmed when the tag itself is not
-// active: a tag on hold is why the items under it are out of play, so the
-// list says so where the tag is rather than only in the block reason.
+// statusCircle is the tappable circle an actionable item carries. Its colour
+// is the item's state — amber due soon, red overdue, orange flagged, and
+// both at once when both are true — because in a list of thirty rows the
+// circle is the only thing that should be shouting.
+function statusCircle(t) {
+  const circle = el('button', { type: 'button', className: 'circle' });
+  circle.setAttribute('aria-label', t.status === 'done' ? `reopen ${t.title}` : `complete ${t.title}`);
+  if (t.status === 'done') circle.classList.add('done');
+  else if (t.status === 'dropped') circle.classList.add('dropped');
+  else {
+    if (overdue(t)) circle.classList.add('over');
+    else if (dueSoon(t)) circle.classList.add('soon');
+    if (t.flagged) circle.classList.add('flagged');
+    if (t.repeat) circle.classList.add('repeating');
+  }
+  circle.onclick = (event) => {
+    event.stopPropagation();
+    complete(t);
+  };
+  return circle;
+}
+
+// A container shows its state only when it is not active: on hold is two
+// blue bars, completed a purple check, dropped a red cross.
+function stateMark(t) {
+  if (t.status === 'on_hold') return el('span', { className: 'state hold', textContent: '❙❙' });
+  if (t.status === 'done') return el('span', { className: 'state done', textContent: '✓' });
+  if (t.status === 'dropped') return el('span', { className: 'state dropped', textContent: '✕' });
+  return null;
+}
+
+function dateCell(t) {
+  const cell = el('span', { className: 'dates' });
+  if (t.due_at) {
+    const due = el('span', { className: 'due', textContent: shortDate(t.due_at) });
+    if (overdue(t)) due.classList.add('over');
+    else if (dueSoon(t)) due.classList.add('soon');
+    cell.append(due);
+  }
+  // A defer date in the past has nothing left to say, so it goes away once
+  // it passes — the manual is explicit about that.
+  if (t.defer_at && !passed(t.defer_at)) {
+    cell.append(el('span', { className: 'defer', textContent: `↓ ${shortDate(t.defer_at)}` }));
+  }
+  return cell.childNodes.length ? cell : null;
+}
+
+function shortDate(stamp) {
+  const days = calendarDays(stamp);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days === -1) return 'Yesterday';
+  return stamp.slice(5, 10).replace('-', '/');
+}
+
+// tagChip renders one tag on an item, struck through when the tag itself is
+// not active: a tag on hold is why the items under it are out of play, so the
+// row says so where the tag is and not only in the block reason.
 function tagChip(name) {
   const node = el('span', { className: 'tag', textContent: name });
   const known = (state.tags || []).find((g) => g.name.toLowerCase() === name.toLowerCase());
@@ -220,59 +394,63 @@ function blockedTitle(blocked) {
   return `blocked: ${blocked.rule}`;
 }
 
-function dueCell(t) {
-  if (!t.due_at) return null;
-  const due = new Date(t.due_at);
-  const now = new Date(state.now);
-  const days = Math.floor((due - now) / 86400000);
-  const node = el('span', { className: 'due', textContent: t.due_at.slice(0, 10) });
-  if (days < 0) node.classList.add('over');
-  else if (days <= 2) node.classList.add('soon');
-  return node;
-}
-
 function renderList() {
   $('#list-title').textContent = viewTitle();
+  $('#back-label').textContent = 'Home';
   const items = currentItems();
   $('#empty').hidden = items.length > 0;
+
+  // Capture goes to the inbox unless a project is on screen, which is the one
+  // place the destination is already unambiguous.
+  $('#quick-title').placeholder = view.kind === 'project'
+    ? `Add to ${viewTitle()}…`
+    : 'Add to the inbox…';
 
   $('#items').replaceChildren(...items.map((t) => {
     const row = el('li', { className: 'item', tabIndex: -1 });
     row.dataset.id = t.id;
     row.setAttribute('aria-selected', selected === t.id ? 'true' : 'false');
     if (closed(t)) row.classList.add('closed');
-    if (t.available === false) row.classList.add('blocked');
+    // Grey for what cannot be worked on — completed, blocked, on hold, a
+    // container — and black again for anything due soon or overdue, which is
+    // the exception the manual makes and the reason the rule is useful.
+    if (closed(t) || isContainer(t) || t.available === false) row.classList.add('quiet');
+    if (overdue(t) || dueSoon(t)) row.classList.add('dated');
 
-    const box = el('input', { type: 'checkbox', className: 'box', checked: t.status === 'done' });
-    box.setAttribute('aria-label', `complete ${t.title}`);
-    box.onclick = (event) => {
-      event.stopPropagation();
-      complete(t);
-    };
-    row.append(box);
+    // Directly actionable items have a status circle; a project or a folder
+    // carries its type icon instead, because it is not something to do.
+    row.append(isContainer(t) ? el('span', { className: 'type' }, typeIcon(t)) : statusCircle(t));
 
-    // Two lines: the title on its own, then where the item lives and what
-    // it carries. On one line the title shared its width with the project
-    // path, the tags and the due date, so the thing being read was the
-    // first thing to be cut — on a phone it was often gone entirely.
     const lines = el('div', { className: 'lines' });
-    const head = el('div', { className: 'line head' });
-    if (t.kind !== 'task') head.append(el('span', { className: 'kind', textContent: t.kind }));
-    head.append(el('span', { className: 'title', textContent: t.title }));
-    if (t.flagged) head.append(el('span', { className: 'flag', textContent: '⚑' }));
-    lines.append(head);
-
-    const meta = el('div', { className: 'line meta' });
+    // The project path goes above the title, not beside it: on one line the
+    // title shared its width with the path, the tags and the date, and the
+    // thing being read was the first to be cut.
     const where = parentsOf(t).map((p) => p.title).join(' › ');
-    if (where && view.kind !== 'project') meta.append(el('span', { className: 'where', textContent: where }));
-    for (const g of t.tags || []) meta.append(tagChip(g));
-    const due = dueCell(t);
-    if (due) meta.append(due);
-    if (meta.childNodes.length) lines.append(meta);
+    if (where && view.kind !== 'project') lines.append(el('div', { className: 'where', textContent: where }));
+    if (!where && view.kind === 'inbox') lines.append(el('div', { className: 'where', textContent: 'No project' }));
+    lines.append(el('div', { className: 'title', textContent: t.title }));
+
+    const under = el('div', { className: 'under' });
+    for (const g of t.tags || []) under.append(tagChip(g));
+    if (t.note) under.append(el('span', { className: 'note', textContent: '✎' }));
+    if (isContainer(t)) {
+      const inside = state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && open(x) && x.kind === 'task');
+      const late = inside.filter(overdue).length;
+      under.append(el('span', {
+        className: 'count',
+        textContent: late ? `${inside.length} items · ${late} overdue` : `${inside.length} items`,
+      }));
+    }
+    if (under.childNodes.length) lines.append(under);
     row.append(lines);
+
+    const mark = stateMark(t);
+    if (mark && isContainer(t)) row.append(mark);
+    const dates = dateCell(t);
+    if (dates) row.append(dates);
     if (t.blocked_by) row.title = blockedTitle(t.blocked_by);
 
-    row.onclick = () => { selected = t.id; render(); };
+    row.onclick = () => selectItem(t.id);
     return row;
   }));
 }
@@ -282,7 +460,7 @@ function facts(t) {
     ['id', t.id],
     ['kind', t.kind],
     ['available', t.available === null ? 'unknown' : String(t.available)],
-    ['blocked by', t.blocked_by ? `${t.blocked_by.rule}` : '—'],
+    ['blocked by', t.blocked_by ? blockedTitle(t.blocked_by).replace('blocked: ', '') : '—'],
     ['repeat', t.repeat ? `${t.repeat.every} (${t.repeat.method})` : '—'],
     ['next review', t.next_review_at ? t.next_review_at.slice(0, 10) : '—'],
     ['created', (t.created_at || '').slice(0, 10)],
@@ -300,6 +478,7 @@ function renderInspector() {
   const t = selected ? byID.get(selected) : null;
   $('#no-selection').hidden = Boolean(t);
   form.hidden = !t;
+  $('#back-label').textContent = 'Home';
   if (!t) return;
 
   form.elements.title.value = t.title;
@@ -310,7 +489,7 @@ function renderInspector() {
   form.elements.estimate.value = t.estimated_minutes ? `${t.estimated_minutes}m` : '';
   form.elements.priority.value = String(t.priority || 0);
   form.elements.flagged.checked = Boolean(t.flagged);
-  // A completed item is put back with the checkbox, not with this menu, so
+  // A completed item is put back with the circle, not with this menu, so
   // "done" is not one of the choices here.
   form.elements.status.value = t.status === 'done' ? 'active' : t.status;
 
@@ -348,8 +527,6 @@ $('#quick').onsubmit = async (event) => {
   const input = $('#quick-title');
   const title = input.value.trim();
   if (!title) return;
-  // Capture goes to the inbox unless a project is the current view, which is
-  // the one place the destination is already unambiguous.
   const body = { title };
   if (view.kind === 'project') body.parent_id = view.key;
   input.value = '';
@@ -409,7 +586,33 @@ $('#remove').onclick = () => {
   // before doing it. The irreversible one is `tdo rm --purge`, which this UI
   // does not have.
   if (!confirm(`Remove “${t.title}” and everything inside it? \`tdo ls --deleted\` still lists it.`)) return;
+  showPane('outline');
   act('DELETE', `/api/tasks/${t.id}`, undefined, 'removed');
+};
+
+// --- navigation ---------------------------------------------------------
+
+$('#back').onclick = () => showPane('home');
+$('#inspector-back').onclick = () => showPane('outline');
+$('#to-inspector').onclick = () => {
+  if (!selected) {
+    const first = currentItems()[0];
+    if (first) selected = first.id;
+  }
+  render();
+  showPane('inspector');
+};
+$('#reload').onclick = () => reload('reloaded').catch((err) => say(err.message, true));
+$('#capture').onclick = () => {
+  showPane('outline');
+  $('#quick-title').focus();
+};
+
+$('#show-other').onclick = (event) => {
+  const list = $('#others');
+  list.hidden = !list.hidden;
+  event.target.textContent = list.hidden ? 'Show' : 'Hide';
+  event.target.setAttribute('aria-expanded', list.hidden ? 'false' : 'true');
 };
 
 // --- keyboard ----------------------------------------------------------
@@ -443,10 +646,16 @@ document.addEventListener('keydown', (event) => {
       break;
     case 'n':
       event.preventDefault();
+      showPane('outline');
       $('#quick-title').focus();
       break;
     case 'r':
       reload('reloaded');
+      break;
+    case 'Escape':
+      // Back out one pane, which on a wide screen is a no-op worth having
+      // anyway: it is the same key in both layouts.
+      showPane(document.body.dataset.pane === 'inspector' ? 'outline' : 'home');
       break;
     default:
       break;

@@ -14,91 +14,135 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="tdo">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2f1f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="icon" href="/icon-192.png" type="image/png">
 <link rel="stylesheet" href="app.css">
 </head>
-<body data-token="{{.Token}}">
-<header id="bar">
-  <h1>tdo</h1>
-  <form id="quick" autocomplete="off">
-    <input id="quick-title" type="text" placeholder="Capture to the inbox…" aria-label="New item title">
-    <button type="submit">Add</button>
-  </form>
-  <span id="store" title="where these tasks live">{{.Store}}</span>
-  <span id="status" role="status" aria-live="polite"></span>
-</header>
 
-<main>
+<!-- data-pane is which of the three panes a narrow screen is showing. On a
+     wide one all three are on screen and the attribute is ignored, which is
+     how OmniFocus 3 behaves across its size classes: one pane when compact,
+     up to three when wide. -->
+<body data-token="{{.Token}}" data-pane="home">
+
+<div id="app">
+
+  <!-- Home: the perspectives, the projects, the tags. -->
   <nav id="sidebar" aria-label="Perspectives">
-    <ul id="views"></ul>
-    <h2>Projects</h2>
-    <ul id="projects"></ul>
-    <h2>Saved</h2>
-    <ul id="saved"></ul>
-    <h2>Tags</h2>
-    <ul id="tags"></ul>
+    <header class="navbar">
+      <h1>tdo</h1>
+      <button type="button" id="reload" class="icon" aria-label="Reload">&#x21bb;</button>
+    </header>
+
+    <div class="pane-body">
+      <ul id="tiles" class="tiles"></ul>
+
+      <section class="group">
+        <h2>Projects</h2>
+        <ul id="projects" class="rows"></ul>
+      </section>
+
+      <section class="group">
+        <h2>Tags</h2>
+        <ul id="tags" class="rows"></ul>
+      </section>
+
+      <section class="group">
+        <h2>Other Perspectives
+          <button type="button" id="show-other" class="disclose" aria-expanded="false">Show</button>
+        </h2>
+        <ul id="others" class="rows" hidden></ul>
+      </section>
+    </div>
+
+    <footer class="toolbar">
+      <button type="button" id="capture" class="icon" aria-label="New inbox item">&#x2295;</button>
+      <span id="store" title="where these tasks live">{{.Store}}</span>
+    </footer>
   </nav>
 
+  <!-- The outline: the one pane that is always on screen. -->
   <section id="list" aria-label="Items">
-    <h2 id="list-title">Inbox</h2>
-    <ol id="items"></ol>
-    <p id="empty" hidden>Nothing here.</p>
+    <header class="navbar">
+      <button type="button" id="back" class="back"><span class="chevron">&#x2039;</span><span id="back-label">Home</span></button>
+      <h2 id="list-title">Inbox</h2>
+      <button type="button" id="to-inspector" class="icon" aria-label="Inspector"><em>i</em></button>
+    </header>
+
+    <div class="pane-body">
+      <form id="quick" autocomplete="off">
+        <input id="quick-title" type="text" placeholder="Add to the inbox&#8230;" aria-label="New item title">
+        <button type="submit">Add</button>
+      </form>
+      <ol id="items" class="rows"></ol>
+      <p id="empty" hidden>Nothing here.</p>
+    </div>
+
+    <footer class="toolbar">
+      <span id="status" role="status" aria-live="polite"></span>
+      <span id="keys">
+        <span><kbd>j</kbd><kbd>k</kbd> move</span>
+        <span><kbd>space</kbd> complete</span>
+        <span><kbd>f</kbd> flag</span>
+        <span><kbd>n</kbd> capture</span>
+      </span>
+    </footer>
   </section>
 
+  <!-- The inspector: one item in full. -->
   <aside id="inspector" aria-label="Inspector">
-    <p id="no-selection">Select an item to see it here.</p>
-    <form id="detail" hidden>
-      <label>Title <input name="title" type="text"></label>
-      <label>Note <textarea name="note" rows="4"></textarea></label>
-      <label>Tags <input name="tags" type="text" placeholder="comma,separated"></label>
-      <div class="pair">
-        <label>Defer <input name="defer_at" type="date"></label>
-        <label>Due <input name="due_at" type="date"></label>
-      </div>
-      <div class="pair">
-        <label>Estimate <input name="estimate" type="text" placeholder="25m"></label>
-        <label>Priority
-          <select name="priority">
-            <option value="0">none</option>
-            <option value="1">low</option>
-            <option value="2">medium</option>
-            <option value="3">high</option>
-          </select>
-        </label>
-      </div>
-      <div class="pair">
-        <label>Status
-          <select name="status">
-            <option value="active">active</option>
-            <option value="on_hold">on hold</option>
-            <option value="dropped">dropped</option>
-          </select>
-        </label>
-        <label>Parent
-          <select name="parent_id"></select>
-        </label>
-      </div>
-      <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
-      <dl id="facts"></dl>
-      <div class="actions">
-        <button type="submit">Save</button>
-        <button type="button" id="complete">Complete</button>
-        <button type="button" id="remove" class="danger">Remove</button>
-      </div>
-    </form>
-  </aside>
-</main>
+    <header class="navbar">
+      <button type="button" id="inspector-back" class="back"><span class="chevron">&#x2039;</span><span>Back</span></button>
+      <h2>Inspector</h2>
+    </header>
 
-<footer id="keys">
-  <span><kbd>j</kbd>/<kbd>k</kbd> move</span>
-  <span><kbd>space</kbd> complete</span>
-  <span><kbd>f</kbd> flag</span>
-  <span><kbd>n</kbd> capture</span>
-  <span><kbd>r</kbd> reload</span>
-</footer>
+    <div class="pane-body">
+      <p id="no-selection">Select an item to see it here.</p>
+      <form id="detail" hidden>
+        <label>Title <input name="title" type="text"></label>
+        <label>Note <textarea name="note" rows="4"></textarea></label>
+        <label>Tags <input name="tags" type="text" placeholder="comma,separated"></label>
+        <div class="pair">
+          <label>Defer <input name="defer_at" type="date"></label>
+          <label>Due <input name="due_at" type="date"></label>
+        </div>
+        <div class="pair">
+          <label>Estimate <input name="estimate" type="text" placeholder="25m"></label>
+          <label>Priority
+            <select name="priority">
+              <option value="0">none</option>
+              <option value="1">low</option>
+              <option value="2">medium</option>
+              <option value="3">high</option>
+            </select>
+          </label>
+        </div>
+        <div class="pair">
+          <label>Status
+            <select name="status">
+              <option value="active">active</option>
+              <option value="on_hold">on hold</option>
+              <option value="dropped">dropped</option>
+            </select>
+          </label>
+          <label>Parent
+            <select name="parent_id"></select>
+          </label>
+        </div>
+        <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
+        <dl id="facts"></dl>
+        <div class="actions">
+          <button type="submit">Save</button>
+          <button type="button" id="complete">Complete</button>
+          <button type="button" id="remove" class="danger">Remove</button>
+        </div>
+      </form>
+    </div>
+  </aside>
+
+</div>
 
 <script src="app.js"></script>
 </body>
