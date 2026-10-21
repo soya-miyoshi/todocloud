@@ -1,0 +1,174 @@
+name: pwa
+
+# Publishes `packages/pwa` to the user site at
+# https://soya-miyoshi.github.io, which is a *separate* repository
+# (soya-miyoshi/soya-miyoshi.github.io) holding nothing but the build output.
+#
+# Why a separate repository rather than this one's own Pages site: every path
+# in the app is root-absolute and has to stay that way. `manifest.webmanifest`
+# declares `id`, `start_url` and `scope` as `/`, `index.html`'s import map and
+# `<link>`s are absolute, and `sw.js`'s precache allow-list is a list of
+# literal absolute paths. Served from `…github.io/todocloud/` every one of
+# them points at the wrong place: the manifest's scope would not contain the
+# page, so the browser would refuse to install it, and the worker's `addAll`
+# would reject as a unit and leave no shell at all. A user site is served from
+# the domain root, so the build needs no path rewriting and no bundler step —
+# which is the whole reason this file copies a directory instead.
+#
+# Nothing secret is published. The app has no credentials of its own: the
+# database URL and token are typed into the connect screen by the person using
+# it and live in that browser's storage (`packages/pwa/src/credentials.ts`),
+# and `sw.js` caches the shell only, so neither value exists in any file this
+# workflow uploads. That is what makes a public static host the right answer
+# here at all.
+
+on:
+  push:
+    branches: [main]
+    # The app is the three packages that `tsconfig.build.json` emits, plus the
+    # viewer assets it copies out of the CLI package, plus this file. A push
+    # that touches none of them cannot change the output.
+    paths:
+      - "packages/pwa/**"
+      - "packages/core/src/**"
+      - "packages/store-turso/src/**"
+      - "packages/cli/assets/**"
+      - "package-lock.json"
+      - ".github/workflows/pwa.yml"
+  # So a deploy can be re-run without an empty commit — after rotating the
+  # deploy key, say.
+  workflow_dispatch:
+
+# This job writes to another repository and does so with its own deploy key,
+# not with GITHUB_TOKEN. The token therefore needs nothing beyond reading this
+# checkout.
+permissions:
+  contents: read
+
+# A second push while the first is mid-deploy would race on `git push`.
+# Serialised rather than cancelled: the losing run has already built, and
+# cancelling it could leave the site on the older of two commits.
+concurrency:
+  group: pwa-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # The version mise.toml pins, like every other job here.
+          node-version: "26"
+
+      - run: npm ci
+
+      # The app ships only if the tree it is built from passes. A broken
+      # shell on a phone is the hardest place to notice and the hardest to
+      # back out of: the worker serves the cached copy first, so a bad deploy
+      # keeps opening until a revalidation lands.
+      - name: Type-check
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build --workspace @todocloud/pwa
+
+      # The cache name is the whole invalidation strategy: `app.js` registers
+      # the worker with `updateViaCache: 'none'`, so `sw.js` is always fetched
+      # from the network, and a changed byte in it is what makes the browser
+      # install a new worker — which re-fetches the entire shell, calls
+      # `skipWaiting` and claims the clients, so the next launch is the new
+      # build. If the name does not change, no new worker runs and the update
+      # arrives only through `shell()`'s background revalidation: the launch
+      # after this one still opens the old shell, with the import map and the
+      # emitted modules from two different builds for that window.
+      #
+      # So the name is stamped with the commit rather than bumped by hand.
+      # `const CACHE = 'tdo-shell-v2'` in the source stays what it is and
+      # remains the version a local build runs under; this edits the copy in
+      # `dist/` only, on its way out. Bumping the literal by hand still works
+      # and still means something — it is the shell format's version — but
+      # forgetting to is no longer a half-broken deploy.
+      - name: Stamp the cache name with the commit
+        run: |
+          cd packages/pwa/dist
+          # Matched exactly, and the result checked: a silent no-op here puts
+          # every future deploy back on the two-launch path, which is the bug
+          # this step exists to remove and is invisible from the outside.
+          before=$(grep -c "^const CACHE = 'tdo-shell-v2';$" sw.js)
+          if [ "$before" != "1" ]; then
+            echo "sw.js no longer has the one CACHE line this step rewrites; update this workflow" >&2
+            exit 1
+          fi
+          sed -i "s|^const CACHE = 'tdo-shell-v2';$|const CACHE = 'tdo-shell-v2-${GITHUB_SHA}';|" sw.js
+          grep -n "^const CACHE = " sw.js
+
+      # `sw.js`'s precache list is written by hand and `addAll` rejects as a
+      # unit, so a single path in it that the build does not produce means no
+      # offline shell at all — and the failure surfaces on the phone, in a
+      # worker, with no console to read. Checking the list against the
+      # directory here is cheap and turns that into a red build.
+      - name: Check the precache list against the build
+        run: |
+          cd packages/pwa/dist
+          # The paths are the single-quoted string literals in the SHELL
+          # array, which is the only array of paths in the file.
+          sed -n "/^const SHELL = \[/,/^\];/p" sw.js \
+            | grep -o "'/[^']*'" \
+            | tr -d "'" \
+            | while read -r path; do
+                # '/' is the navigation entry; it is index.html.
+                [ "$path" = "/" ] && path=/index.html
+                if [ ! -f ".${path}" ]; then
+                  echo "sw.js precaches ${path}, which the build does not produce" >&2
+                  exit 1
+                fi
+              done
+
+      # Jekyll is on by default for a user site and would drop anything whose
+      # name begins with an underscore. Nothing here does today; this is so
+      # that adding such a file is not a silently missing module later.
+      - name: Disable Jekyll
+        run: touch packages/pwa/dist/.nojekyll
+
+      # The target repository, checked out with a deploy key so that pushing
+      # to it needs no personal access token with a wider reach. Create the
+      # key with `ssh-keygen -t ed25519`, put the public half on
+      # soya-miyoshi/soya-miyoshi.github.io as a deploy key *with write
+      # access*, and the private half here as the `PWA_PAGES_DEPLOY_KEY`
+      # secret. It grants write to that one repository and nothing else.
+      - name: Check out the site repository
+        uses: actions/checkout@v4
+        with:
+          repository: soya-miyoshi/soya-miyoshi.github.io
+          ssh-key: ${{ secrets.PWA_PAGES_DEPLOY_KEY }}
+          path: site
+
+      # --delete, because a module removed from the app has to stop being
+      # served: a stale .js left behind is one an old cached page can still
+      # import. .git is excluded for the obvious reason and .nojekyll because
+      # it is created above, inside the source directory, and so is part of
+      # the build output rather than something to preserve.
+      - name: Copy the build over the site
+        run: |
+          rsync -a --delete --exclude '.git' packages/pwa/dist/ site/
+
+      - name: Commit and push
+        working-directory: site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The build is identical to what is already published."
+            exit 0
+          fi
+          # The source commit, so the published site can be traced back to
+          # the tree it came from — the site repository has no history of its
+          # own to read.
+          git commit -m "Deploy todocloud@${GITHUB_SHA} to the PWA site"
+          git push

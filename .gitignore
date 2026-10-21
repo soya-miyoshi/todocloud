@@ -14,6 +14,16 @@
 *.p12
 *.pfx
 id_rsa*
+id_ecdsa*
+# ed25519 is what `ssh-keygen` produces by default now, and an SSH private
+# key has no extension to deny by — so the key name itself is the shape.
+# `*-key` covers the Pages deploy key of .github/workflows/pwa.yml; such a
+# key belongs in ~/.ssh and in a repository secret, never in this tree.
+id_ed25519*
+*-key
+*-key.pub
+*_key
+*_key.pub
 *credentials*.json
 *credential*.json
 service-account*.json
