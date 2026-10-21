@@ -13,7 +13,8 @@ const token = document.body.dataset.token;
 
 let state = { tasks: [], perspectives: [], tags: [], now: null };
 let byID = new Map();
-let view = { kind: 'inbox', key: '' };
+// Where the app opens: the Forecast, today. See `rootHash`.
+let view = { kind: 'due', key: 'today' };
 let selected = null;
 
 // --- what this browser remembers ----------------------------------------
@@ -51,6 +52,29 @@ function saveExpanded() {
   } catch {
     // A viewer that cannot remember which folders were open is still a
     // viewer. The alternative is taking the pane down over a preference.
+  }
+}
+
+// Two more preferences live in the same place and for the same reason: the
+// order the Forecast is read in, and whether its tail is folded open. They
+// are this browser's way of looking at the list and not a fact about it, so
+// they are not in the store either. `remembered`/`remember` are the guarded
+// pair the three of them share — every access has to be in a try, because
+// localStorage throws rather than returning nothing when site data is
+// blocked.
+function remembered(key, fallback) {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function remember(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // As above: a forgotten preference is not worth a message on screen.
   }
 }
 
@@ -166,8 +190,22 @@ async function reload(message) {
     }
   }
   render();
+  updateBadge();
+  // The first snapshot is where the address bar gets its say: a link to an
+  // item cannot be opened before the ids are known. It is here rather than
+  // beside the first `reload()` call at the end of this file because in the
+  // PWA the first successful load is not that call — the page boots with no
+  // store, and the viewer is reloaded once the connect form has opened one.
+  if (!located) {
+    located = true;
+    adoptLocation();
+  }
   say(message || '');
 }
+
+// located guards the above: every later reload leaves the pane where the
+// reader put it.
+let located = false;
 
 // --- the slices of the tree --------------------------------------------
 
@@ -212,6 +250,25 @@ function calendarDays(stamp) {
 const overdue = (t) => Boolean(t.due_at) && open(t) && passed(t.due_at);
 const dueSoon = (t) => Boolean(t.due_at) && open(t) && !passed(t.due_at) && calendarDays(t.due_at) <= 2;
 
+// landed is "the day has come": due today or on any day before it. It is a
+// calendar question and not an hourly one, which is the difference that
+// matters here — something due at 18:00 today has landed at breakfast, and a
+// forecast that waits until 18:01 to say so is useless in the morning.
+//
+// It is what both badges count: the number on the Forecast tile and the one
+// on the app icon (see `updateBadge`). Those two said different things once —
+// the tile counted what was already late — and a badge on the icon that does
+// not match the number behind it is a bug report waiting to be filed.
+const landed = (t) => Boolean(t.due_at) && open(t) && calendarDays(t.due_at) <= 0;
+
+// pastDue is "this is from an earlier day", which is a different question
+// from `overdue` and the one the Forecast needs. A due date with no time on
+// it is midnight, so everything due today is already `overdue` by breakfast
+// — true, and useless for telling today's work apart from last week's.
+// Today's list holds both, there is no Past column to separate them, so this
+// is what the red edge on a row and the red rule under a day cell mean.
+const pastDue = (t) => Boolean(t.due_at) && open(t) && calendarDays(t.due_at) < 0;
+
 // The perspectives, in the order the manual lists OmniFocus's own, with the
 // two this tool has no equivalent for (Forecast's calendar, Nearby's
 // location) standing in for what it does have: a plain due list and the next
@@ -220,9 +277,20 @@ const dueSoon = (t) => Boolean(t.due_at) && open(t) && !passed(t.due_at) && cale
 // count only what is actually available.
 const PERSPECTIVES = [
   {
-    key: 'due', label: 'Forecast', tint: 'salmon', glyph: '◷', sort: byDue, wide: true,
-    pick: (t) => t.due_at && open(t),
-    badge: (items) => items.filter(overdue).length,
+    // Forecast lists tasks, and only tasks. A project carries a due date of
+    // its own and used to appear here beside them, which read as work to do
+    // and was not: a project is a container, the thing to do is whichever of
+    // its tasks is next, and the row for the container was in the way of
+    // seeing it. Projects have a perspective — the one below — and a due date
+    // on one still shows there and in `tdo ls`.
+    //
+    // An item belongs to the forecast if it has either date on it. A defer
+    // date is what this view is sorted by out of the box (see
+    // `forecastOrder`), so an item that has only a defer date has to be in
+    // it, or the default order is over a list the date is missing from.
+    key: 'due', label: 'Forecast', tint: 'salmon', glyph: '◷', wide: true,
+    pick: (t) => t.kind === 'task' && open(t) && (t.due_at || t.defer_at),
+    badge: (items) => items.filter(landed).length,
   },
   {
     key: 'inbox', label: 'Inbox', tint: 'slate', glyph: '▤', wide: true,
@@ -280,6 +348,87 @@ function byDue(a, b) {
   return a.due_at.localeCompare(b.due_at);
 }
 
+// --- the Forecast's own order and horizon --------------------------------
+
+// Forecast is the view this list is read in, so it is the one that gets a
+// choice of order, and the choice is remembered: a preference that has to be
+// made again every time the app is opened is not a preference.
+//
+// Defer first, which is the one the manual's own argument points at. A due
+// date says when something must be finished; a defer date says when it may
+// be started, and a list read in the morning to decide what to do today is a
+// list of what has been released. Due order is the other question — what is
+// closest to going wrong — and is one tap away.
+const ForecastOrderKey = 'tdo.forecast.order';
+const ForecastLaterKey = 'tdo.forecast.later';
+
+const FORECAST_ORDERS = [
+  { key: 'defer', label: 'Defer' },
+  { key: 'due', label: 'Due' },
+];
+
+let forecastOrder = FORECAST_ORDERS.some((o) => o.key === remembered(ForecastOrderKey, ''))
+  ? remembered(ForecastOrderKey, 'defer')
+  : 'defer';
+
+// Whether the tail is open is remembered too, for the same reason, and
+// starts shut.
+let forecastLaterOpen = remembered(ForecastLaterKey, '') === 'open';
+
+function setForecastOrder(key) {
+  forecastOrder = key;
+  remember(ForecastOrderKey, key);
+  render();
+}
+
+function toggleForecastLater() {
+  forecastLaterOpen = !forecastLaterOpen;
+  remember(ForecastLaterKey, forecastLaterOpen ? 'open' : 'shut');
+  render();
+}
+
+// The two orders. Each is named after a date, and the item's *other* date
+// stands in where the named one is missing: an item with no defer date is
+// available already, so in defer order it belongs where its deadline puts it
+// rather than dumped at the end of the list — and an overdue item at the
+// bottom of a forecast is exactly the failure to avoid. Ties break on the
+// title so that the order is stable between renders.
+function byDateThen(first, second) {
+  const keyOf = (t) => t[first] || t[second] || '';
+  return (a, b) => {
+    const x = keyOf(a);
+    const y = keyOf(b);
+    if (!x) return 1;
+    if (!y) return -1;
+    return x.localeCompare(y) || a.title.localeCompare(b.title);
+  };
+}
+
+const FORECAST_SORTS = {
+  defer: byDateThen('defer_at', 'due_at'),
+  due: byDateThen('due_at', 'defer_at'),
+};
+
+// The horizon. A forecast is about the week in front of you: what is
+// already here, and what arrives over the next seven days. Something
+// released in three weeks is a fact about the list and not news about today,
+// so it is still in the view — it has not been filtered away, which would be
+// a different and more dishonest thing — but folded into one row at the end.
+const ForecastHorizonDays = 7;
+
+const beyondHorizon = (t) => Boolean(t.defer_at) && calendarDays(t.defer_at) > ForecastHorizonDays;
+
+// forecastList splits the whole Forecast into the part that is on screen and
+// the tail behind the fold. One function, because the fold's own count and
+// the rows it hides have to agree.
+function forecastList() {
+  const items = state.tasks.filter(specOf('due').pick).sort(FORECAST_SORTS[forecastOrder]);
+  return {
+    near: items.filter((t) => !beyondHorizon(t)),
+    later: items.filter(beyondHorizon),
+  };
+}
+
 // A saved perspective is a stored filter the server runs, and running one
 // here would mean reimplementing it in JavaScript — which is exactly the
 // drift this UI is written to avoid. So Home lists them and says what to
@@ -293,16 +442,22 @@ function currentItems() {
   if (view.kind === 'tag') {
     return state.tasks.filter((t) => open(t) && (t.tags || []).some((g) => g.toLowerCase() === view.key.toLowerCase()));
   }
-  // One day of the forecast. Without a key the Due perspective is the whole
-  // of it, which is what the tile above the strip selects.
   if (view.kind === 'saved') {
     // The server decided what is in it and in what order; the page's job is
     // to render that and not to re-sort it.
     return savedView.name === view.key ? savedView.tasks : [];
   }
-  if (view.kind === 'due' && view.key) {
-    const cell = forecastCell(view.key);
-    return cell ? forecastOn(cell) : [];
+  // The Forecast is one day of the week, or — under `all` — the whole of it
+  // in one list. What is behind the `all` list's fold is in it only while
+  // the fold is open, so that `j`/`k` and the inspector's "first item" never
+  // land on a row that is not on screen.
+  if (view.kind === 'due') {
+    if (view.key && view.key !== 'all') {
+      const cell = forecastCell(view.key);
+      return cell ? forecastOn(cell) : [];
+    }
+    const { near, later } = forecastList();
+    return forecastLaterOpen ? near.concat(later) : near;
   }
   const spec = specOf(view.kind) || PERSPECTIVES[1];
   const items = state.tasks.filter(spec.pick);
@@ -316,12 +471,42 @@ function viewTitle() {
   }
   if (view.kind === 'tag') return view.key;
   if (view.kind === 'saved') return view.key;
-  if (view.kind === 'due' && view.key) {
-    const cell = forecastCell(view.key);
-    return cell ? `Forecast · ${cell.label}` : 'Forecast';
-  }
+  // The week is on screen under the title and says which day is open, so the
+  // title does not repeat it.
+  if (view.kind === 'due') return 'Forecast';
   const spec = specOf(view.kind);
   return spec ? spec.label : 'Items';
+}
+
+// --- search --------------------------------------------------------------
+
+// What is being looked for, as typed. It is not in the URL: a half-typed
+// query is not a place, and a history entry per keystroke would make the
+// back gesture useless for as long as the box has focus.
+let query = '';
+
+// Everything live, matched on the words a person would remember: the title,
+// the note and the tags. Containers are in it too — a project is a thing you
+// look for by name — and so are completed items, because "what did I call
+// that thing I finished last week" is half of what a search is for.
+//
+// The matching is every word, in any order and anywhere: a query of two
+// words finds a title that has both, which is what a search box is assumed
+// to do and is one line to write.
+function searchResults() {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const haystack = (t) => [t.title, t.note || '', ...(t.tags || [])].join(' ').toLowerCase();
+  return state.tasks.filter((t) => {
+    const text = haystack(t);
+    return words.every((w) => text.includes(w));
+  });
+}
+
+function setQuery(text) {
+  query = text;
+  $('#search-clear').hidden = text === '';
+  render();
 }
 
 // --- saved perspectives --------------------------------------------------
@@ -360,6 +545,7 @@ async function openSaved(name) {
 // three are on screen and this attribute is ignored.
 function showPane(name) {
   document.body.dataset.pane = name;
+  if (!restoring) keepLocation(name);
 }
 
 function select(next) {
@@ -377,12 +563,291 @@ function selectItem(id) {
   render();
 }
 
+// --- where we are, in the URL -------------------------------------------
+
+// Walking back a pane has to be the platform's own gesture, and the only way
+// to be handed that gesture is to have an address per pane. Installed to a
+// home screen there is no chrome and no back button at all: iOS gives a
+// standalone app the edge swipe and Android the system back, and both of
+// them mean "pop the history entry". A page that never pushed one is a page
+// those gestures can only leave.
+//
+// So every pane this viewer opens is an entry, and `popstate` is the one
+// thing that puts a pane back. The chevron, Escape and the swipe are all
+// `history.back()` — one path, so they cannot disagree.
+//
+// The addresses are paths and read as paths:
+//
+//     /                      the Forecast, today — where the app opens
+//     /home                  the perspectives
+//     /forecast/d3           one day of the week
+//     /forecast/all          the whole Forecast as one list
+//     /inbox /flagged /next /projects /tags /review /blocked /all /done
+//     /project/<id>
+//     /tag/<name>
+//     /perspective/<name>
+//     …/item/<id>            the inspector, on any of the above
+//
+// They are after a `#`, and that is the one compromise. `tdo serve` serves
+// this page at `/` and the PWA is a static site on GitHub Pages; a real path
+// either of them has not been taught is a 404 on the next reload, and
+// teaching both would mean a catch-all route in the server and a `404.html`
+// in the build. A hash is also never sent to the server, which is the right
+// property for something that names an item id. The grammar above is the
+// part that matters, and it is the same either way.
+//
+// Every segment is encoded, because a tag or a perspective may be named
+// anything at all — a `/` in a tag name would otherwise read as another
+// segment.
+const rootHash = '#/';           // the Forecast, today
+const homeHash = '#/home';
+
+// The word each kind of view is called in an address. A perspective that is
+// not listed is called by its own key (`/inbox`, `/flagged`, …), which is
+// what makes those addresses read the way they do.
+const VIEW_WORDS = { due: 'forecast', project: 'project', tag: 'tag', saved: 'perspective' };
+
+/** pathFor is the address of a view, without the item. */
+function pathFor(v) {
+  const word = VIEW_WORDS[v.kind];
+  if (!word) return `#/${encodeURIComponent(v.kind)}`;
+  if (v.kind === 'due') {
+    // Today is the root: it is where the app opens, and an address bar that
+    // says `/forecast/today` on the screen everybody starts on is noise.
+    if (!v.key || v.key === 'today') return rootHash;
+    return `#/forecast/${encodeURIComponent(v.key)}`;
+  }
+  return `#/${word}/${encodeURIComponent(v.key)}`;
+}
+
+function hashFor(pane) {
+  if (pane === 'home') return homeHash;
+  const at = pathFor(view);
+  if (pane !== 'inspector' || !selected) return at;
+  return `${at === rootHash ? '#' : at}/item/${encodeURIComponent(selected)}`;
+}
+
+// restoring is true only while popstate is being applied: what the entry
+// says is already in the history, and pushing it again would mean two
+// entries for one pane and a back gesture that appears to do nothing.
+let restoring = false;
+
+// keepLocation records the pane in the URL. A pane that is a move *into*
+// something — Home → outline → item — is an entry to come back from; one
+// that only changes what is on screen in the pane already open is not, and
+// gets a replace. On a wide screen every pane is on at once and clicking
+// down a list of thirty items would otherwise push thirty entries.
+function keepLocation(pane) {
+  const next = hashFor(pane);
+  if (next === location.hash) return;
+  const deeper = depthOfPane(pane) > depthOfPane(lastPane);
+  lastPane = pane;
+  try {
+    if (deeper) history.pushState(null, '', next);
+    else history.replaceState(null, '', next);
+  } catch {
+    // A history that refuses to be written is a viewer that still works,
+    // with the back gesture leaving it. There is nothing useful to say.
+  }
+}
+
+// Home is depth 0 and the outline is 1, which is still true now that the app
+// opens on the outline: Home is the screen the back gesture arrives at, and
+// boot puts it under the first entry (see `adoptLocation`).
+const PANE_DEPTH = { home: 0, outline: 1, inspector: 2 };
+const depthOfPane = (pane) => PANE_DEPTH[pane] ?? 0;
+let lastPane = 'home';
+
+// applyLocation is the other direction: the URL decides what is on screen.
+// It runs on `popstate` — the back gesture, the back button, Escape — and
+// once at boot, so a link to an item opens that item.
+function applyLocation() {
+  const where = parseHash(location.hash);
+  // An address this build cannot place — an old link, a typo, a saved
+  // perspective since deleted — lands on the Forecast, and the address is
+  // corrected to say so. An address bar that still names somewhere the app
+  // is not is what makes the next back gesture surprising.
+  if (!where) return goRoot();
+  if (where.pane === 'home') return showRestored('home');
+  view = where.view;
+  if (where.id && byID.has(where.id)) {
+    selected = where.id;
+    return showRestored('inspector');
+  }
+  return showRestored('outline');
+}
+
+/**
+ * parseHash reads one of the addresses above. It returns undefined for
+ * anything it cannot place, which is the caller's cue to go to the root —
+ * the hash came from the address bar, so none of it is trusted.
+ */
+function parseHash(hash) {
+  const parts = hash.replace(/^#\/?/, '').split('/').filter((part) => part !== '')
+    .map((part) => decodeURIComponent(part));
+
+  // `…/item/<id>` is a suffix on any view, so it comes off first.
+  let id = '';
+  if (parts.length >= 2 && parts[parts.length - 2] === 'item') {
+    id = parts[parts.length - 1];
+    parts.length -= 2;
+  }
+
+  const [word = '', key = ''] = parts;
+  if (parts.length > 2) return undefined;
+  if (word === '') return { pane: 'outline', view: { kind: 'due', key: 'today' }, id };
+  if (word === 'home') return parts.length === 1 ? { pane: 'home' } : undefined;
+  if (word === 'forecast') {
+    if (key === '' || key === 'today') return { pane: 'outline', view: { kind: 'due', key: 'today' }, id };
+    if (key === 'all' || forecastCell(key)) return { pane: 'outline', view: { kind: 'due', key }, id };
+    return undefined;
+  }
+  if (word === 'project') {
+    // The id is checked against the store rather than taken on trust: a
+    // project that has been deleted must not open as an empty outline
+    // titled "Project".
+    return byID.has(key) ? { pane: 'outline', view: { kind: 'project', key }, id } : undefined;
+  }
+  if (word === 'tag') {
+    const known = (state.tags || []).some((g) => g.name.toLowerCase() === key.toLowerCase());
+    return known ? { pane: 'outline', view: { kind: 'tag', key }, id } : undefined;
+  }
+  if (word === 'perspective') {
+    const known = (state.perspectives || []).some((perspective) => perspective.name === key);
+    return known ? { pane: 'outline', view: { kind: 'saved', key }, id } : undefined;
+  }
+  if (parts.length === 1 && specOf(word) && !VIEW_WORDS[word]) {
+    return { pane: 'outline', view: { kind: word, key: '' }, id };
+  }
+  return undefined;
+}
+
+function goRoot() {
+  view = { kind: 'due', key: 'today' };
+  try {
+    history.replaceState(null, '', rootHash);
+  } catch { /* a history that cannot be written is still a working viewer */ }
+  return showRestored('outline');
+}
+
+function showRestored(pane) {
+  restoring = true;
+  try {
+    lastPane = pane;
+    showPane(pane);
+    render();
+  } finally {
+    restoring = false;
+  }
+}
+
+// adoptLocation is the boot: Home goes into the history first and whatever
+// the address asked for is pushed on top of it, so that the first back
+// gesture walks up the app rather than out of it. That is what makes the
+// Forecast the opening screen *and* leaves the chevron somewhere to go —
+// `/` is the Forecast, and Home is the entry underneath it.
+function adoptLocation() {
+  const asked = location.hash || rootHash;
+  try {
+    history.replaceState(null, '', homeHash);
+    history.pushState(null, '', asked);
+  } catch {
+    // Without a writable history the viewer opens where it stands, which is
+    // what it did before any of this existed.
+  }
+  applyLocation();
+}
+
+window.addEventListener('popstate', () => applyLocation());
+
+// --- swiping back -------------------------------------------------------
+
+// The gesture an installed viewer does not otherwise get. iOS hands a
+// standalone app its edge swipe, but only near the edge and only when there
+// is an entry to pop; a drag from the middle of the list does nothing, and
+// on a phone the middle of the list is where the thumb is. So the pane
+// itself takes a horizontal drag and reads it as back.
+//
+// Right-to-left is deliberately not forward: there is no one place forward
+// goes from the outline, and a gesture that guesses is worse than no
+// gesture. Back is unambiguous.
+const SwipeMinX = 72;      // far enough not to fire on a tap that slid
+const SwipeMaxY = 50;      // a drag that is mostly vertical is a scroll
+
+let swipe = null;
+
+document.addEventListener('touchstart', (event) => {
+  // One finger only: two is a pinch or a scroll, and neither is this.
+  if (event.touches.length !== 1) {
+    swipe = null;
+    return;
+  }
+  const t = event.touches[0];
+  swipe = { x: t.clientX, y: t.clientY, ok: true };
+}, { passive: true });
+
+document.addEventListener('touchmove', (event) => {
+  if (!swipe || event.touches.length !== 1) return;
+  const t = event.touches[0];
+  // Once a drag has gone further down than across it is a scroll, and it
+  // stays a scroll however it ends: a flick that curves back must not take
+  // the pane away under the finger.
+  if (Math.abs(t.clientY - swipe.y) > SwipeMaxY) swipe.ok = false;
+  swipe.dx = t.clientX - swipe.x;
+}, { passive: true });
+
+document.addEventListener('touchend', () => {
+  const done = swipe;
+  swipe = null;
+  if (!done || !done.ok || !(done.dx > SwipeMinX)) return;
+  // Only where there is a pane to go back to. On a wide screen all three
+  // are on at once and the gesture means nothing, which `data-pane` is also
+  // how the layout decides.
+  if (document.body.dataset.pane === 'home') return;
+  if (!window.matchMedia('(max-width: 859px)').matches) return;
+  history.back();
+}, { passive: true });
+
+// --- the badge on the app icon ------------------------------------------
+
+// What a glance at the home screen should say: how many tasks have a
+// deadline that has arrived. `landed` is the same count as the number on the
+// Forecast tile, on purpose.
+//
+// Both calls are guarded and both are allowed to fail. The API does not
+// exist in every browser, and on iOS it exists but answers only an installed
+// app whose notification permission has been granted — which is what
+// `#badge-ask` is for. A refusal is not an error worth a line on screen:
+// the number is on the tile either way.
+function updateBadge() {
+  if (!('setAppBadge' in navigator)) return;
+  const n = state.tasks.filter(landed).length;
+  const call = n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge();
+  if (call && typeof call.catch === 'function') call.catch(() => {});
+}
+
+// badgeAsk is the one control the badge needs and only on iOS: there, the
+// badge is part of the notification permission, so it cannot be turned on
+// without a tap to hang the prompt on. The button is in Home's toolbar and
+// is hidden unless all three things are true — the API is here, the viewer
+// is installed, and the permission has not been answered yet — so on a
+// desktop browser and on Android nobody ever sees it.
+function renderBadgeAsk() {
+  const button = $('#badge-ask');
+  if (!button) return;
+  const asked = typeof Notification === 'undefined' || Notification.permission !== 'default';
+  const installed = window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+  button.hidden = !('setAppBadge' in navigator) || asked || !installed;
+}
+
 // --- rendering ---------------------------------------------------------
 
 function render() {
   renderHome();
   renderList();
   renderInspector();
+  renderBadgeAsk();
 }
 
 function navRow(label, count, isCurrent, onClick, options = {}) {
@@ -443,7 +908,12 @@ function renderHome() {
     const n = spec.rows === 'tags'
       ? (state.tags || []).length
       : (spec.badge ? spec.badge(items) : items.length);
-    const tile = el('button', { type: 'button', className: 'tile', onclick: () => select({ kind: spec.key, key: '' }) });
+    const tile = el('button', {
+      type: 'button',
+      className: 'tile',
+      // The Forecast opens on today; every other perspective has one list.
+      onclick: () => select({ kind: spec.key, key: spec.key === 'due' ? 'today' : '' }),
+    });
     tile.style.setProperty('--tint', `var(--${spec.tint})`);
     tile.setAttribute('aria-current', view.kind === spec.key ? 'true' : 'false');
     // The square carries the count for a perspective that is a queue of work
@@ -484,23 +954,42 @@ function renderHome() {
 // looked tappable and was not would be worse than one that plainly is not.
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// The buckets, defined once. The strip counts with them and the outline
-// filters with them, so a day that says 2 shows two items — the one thing a
-// forecast must never get wrong. The keys are stable (`d1`..`d4`) while the
-// labels are not: Thursday is `d4` today and `d3` tomorrow, and a view held
-// open across midnight should follow the day it means rather than the name
-// it had.
+// The buckets, defined once. The strip on Home counts with them, the
+// calendar on the Forecast screen counts with them and the outline filters
+// with them, so a day that says 2 shows two items — the one thing a forecast
+// must never get wrong. The keys are stable (`d1`..`d6`) while the labels are
+// not: Thursday is `d4` today and `d3` tomorrow, and a view held open across
+// midnight should follow the day it means rather than the name it had.
+//
+// Seven cells, today first. There is no "Past" cell of its own any more:
+// **Today carries everything already due**, which is what a day you open in
+// the morning has to say — an overdue bill is today's problem, and filing it
+// under a day that has gone is how it stops being looked at. OmniFocus does
+// the same thing, and it is why `dueMatch` and `startMatch` are separate: a
+// deadline that has passed belongs to today, a defer date that has passed is
+// nothing but availability and belongs to no day at all.
 function forecastDays() {
   const today = new Date(state.now);
-  const cells = [
-    { key: 'past', label: 'Past', match: (d) => d < 0, late: true },
-    { key: 'today', label: 'Today', match: (d) => d === 0, today: true },
-  ];
-  for (let i = 1; i <= 4; i += 1) {
+  const cells = [{
+    key: 'today',
+    label: 'Today',
+    day: today.getUTCDate(),
+    weekday: WEEKDAYS[today.getUTCDay()],
+    dueMatch: (d) => d <= 0,
+    startMatch: (d) => d === 0,
+    today: true,
+  }];
+  for (let i = 1; i <= 6; i += 1) {
     const day = new Date(today.getTime() + i * 86400000);
-    cells.push({ key: `d${i}`, label: WEEKDAYS[day.getUTCDay()], match: (d) => d === i });
+    cells.push({
+      key: `d${i}`,
+      label: WEEKDAYS[day.getUTCDay()],
+      day: day.getUTCDate(),
+      weekday: WEEKDAYS[day.getUTCDay()],
+      dueMatch: (d) => d === i,
+      startMatch: (d) => d === i,
+    });
   }
-  cells.push({ key: 'future', label: 'Future', match: (d) => d > 4 });
   return cells;
 }
 
@@ -520,10 +1009,14 @@ const forecastCell = (key) => forecastDays().find((c) => c.key === key);
 // starting in a calm one. Past carries no starting count, because something
 // released last week is not news — it is just available, which is what the
 // Next perspective is for.
-const dueOn = (cell) => state.tasks.filter((t) => t.due_at && open(t) && cell.match(calendarDays(t.due_at)));
+// Tasks only, here as in the perspective itself: the day's number has to be
+// the number of rows the day opens, and a project with a due date was in
+// both the count and the list.
+const dueOn = (cell) => state.tasks.filter(
+  (t) => t.kind === 'task' && t.due_at && open(t) && cell.dueMatch(calendarDays(t.due_at)));
 
-const startsOn = (cell) => (cell.late ? [] : state.tasks.filter(
-  (t) => t.defer_at && open(t) && cell.match(calendarDays(t.defer_at))));
+const startsOn = (cell) => state.tasks.filter(
+  (t) => t.kind === 'task' && t.defer_at && open(t) && cell.startMatch(calendarDays(t.defer_at)));
 
 // forecastOn is the day itself: everything the day has to say, deadlines
 // first. It is what a day cell opens.
@@ -533,41 +1026,59 @@ function forecastOn(cell) {
   for (const t of startsOn(cell)) {
     if (!ids.has(t.id)) items.push(t);
   }
-  return items.sort(byDue);
+  // In the order the reader chose for the Forecast, like every other list in
+  // it: a day that sorted itself differently from the week above it would be
+  // a second rule to learn for no reason.
+  return items.sort(FORECAST_SORTS[forecastOrder]);
 }
 
 function forecastStrip() {
-  const strip = el('div', { className: 'forecast' });
-  for (const c of forecastDays()) {
-    const n = dueOn(c).length;
-    const starting = startsOn(c).length;
-    // A day is a button, not a label: the count is only useful if the
-    // things it counts are one tap away. An empty day stays live rather
-    // than going dead under the finger — the outline has an empty state,
-    // and a control that is sometimes a control is worse than one that is
-    // always one.
+  // The same cells and the same class as the Forecast's own week: one
+  // picture, drawn in two places.
+  return el('div', { className: 'week forecast' }, weekCells());
+}
+
+// weekCells is the seven day buttons, which Home's strip and the Forecast's
+// own week both draw. One builder, because the two have to agree about what
+// a day holds — and they used to be two copies of this loop.
+//
+// A day is a button, not a label: the count is only useful if the things it
+// counts are one tap away. An empty day stays live rather than going dead
+// under the finger — the outline has an empty state, and a control that is
+// sometimes a control is worse than one that is always one.
+function weekCells() {
+  return forecastDays().map((c) => {
+    const due = dueOn(c);
+    // Counted apart from the deadlines and never twice: an item that is both
+    // due and released on the same day is one row, not two.
+    const starting = startsOn(c).filter((t) => !due.some((x) => x.id === t.id));
     const cell = el('button', {
       type: 'button',
       className: 'day',
       onclick: () => select({ kind: 'due', key: c.key }),
     });
     cell.setAttribute('aria-current', view.kind === 'due' && view.key === c.key ? 'true' : 'false');
-    cell.setAttribute('aria-label', starting
-      ? `${c.label}, ${n} due, ${starting} starting`
-      : `${c.label}, ${n} due`);
+    // There is no Past cell, so the lateness has to be in the colour: the
+    // count turns red and the cell gets a red rule under it. A screen reader
+    // gets the same fact as a number, because a colour is not a label.
+    const late = due.filter(pastDue).length;
+    const says = [`${due.length} due`];
+    if (late) says.push(`${late} from earlier days`);
+    if (starting.length) says.push(`${starting.length} starting`);
+    cell.setAttribute('aria-label', `${c.label}, ${says.join(', ')}`);
     if (c.today) cell.classList.add('today');
-    if (c.late && n) cell.classList.add('late');
-    if (!n && !starting) cell.classList.add('none');
+    if (late) cell.classList.add('late');
+    if (!due.length && !starting.length) cell.classList.add('none');
     cell.append(
-      el('span', { className: 'when', textContent: c.label }),
-      el('span', { className: 'n', textContent: String(n) }));
+      el('span', { className: 'when', textContent: c.today ? 'Today' : c.weekday }),
+      el('span', { className: 'date', textContent: String(c.day) }),
+      el('span', { className: 'n', textContent: due.length ? String(due.length) : '\u00b7' }));
     // The second number is only there when there is something to say. An
     // arrow rather than a plus, because it is the same `↓` the rows use for
     // a defer date.
-    if (starting) cell.append(el('span', { className: 'starting', textContent: `↓${starting}` }));
-    strip.append(cell);
-  }
-  return strip;
+    if (starting.length) cell.append(el('span', { className: 'starting', textContent: `\u2193${starting.length}` }));
+    return cell;
+  });
 }
 
 // typeIcon is the small glyph that says what kind of container this is.
@@ -699,12 +1210,20 @@ function tagRows() {
 function renderList() {
   $('#list-title').textContent = viewTitle();
   $('#back-label').textContent = 'Home';
+  renderWeek();
 
-  // Capture goes to the inbox unless a project is on screen, which is the one
-  // place the destination is already unambiguous.
-  $('#quick-title').placeholder = view.kind === 'project'
-    ? `Add to ${viewTitle()}…`
-    : 'Add to the inbox…';
+  // A search is a view of its own and ignores the one underneath it: typing
+  // into the box at the top of a list to filter *that list* is the behaviour
+  // nobody wants, because the thing being looked for is almost never in the
+  // list already on screen. So the whole store is searched, and clearing the
+  // box puts the view back exactly as it was.
+  if (query) {
+    const found = searchResults();
+    $('#list-title').textContent = `Search \u00b7 ${found.length}`;
+    $('#empty').hidden = found.length > 0;
+    $('#items').replaceChildren(...found.map((t) => itemRow(t, () => 0)));
+    return;
+  }
 
   // Two perspectives list something that is not a task: Projects is the
   // tree of containers, Tags is the tags. Both are ways through the tree
@@ -734,64 +1253,161 @@ function renderList() {
     ? 0
     : parentsOf(t).filter((p) => p.id !== root.id && inSubtree(p, root.id)).length);
 
-  $('#items').replaceChildren(...items.map((t) => {
-    const row = el('li', { className: 'item', tabIndex: -1 });
-    row.dataset.id = t.id;
-    row.setAttribute('aria-selected', selected === t.id ? 'true' : 'false');
-    const depth = depthOf(t);
-    if (depth > 0) {
-      row.classList.add('nested');
-      row.style.setProperty('--nest', String(depth));
-      // A screen reader gets the nesting from the level rather than from an
-      // indent it cannot see.
-      row.setAttribute('aria-level', String(depth + 1));
+  // The whole Forecast is the one view with furniture of its own: the order
+  // it is read in at the top, and the tail beyond the horizon folded at the
+  // bottom. A single day of it is a plain list — there is nothing to fold,
+  // because the day *is* the horizon.
+  if (view.kind === 'due' && (!view.key || view.key === 'all')) {
+    const { near, later } = forecastList();
+    const rows = near.map((t) => itemRow(t, depthOf));
+    if (later.length) {
+      rows.push(laterRow(later.length));
+      if (forecastLaterOpen) rows.push(...later.map((t) => itemRow(t, depthOf)));
     }
-    if (closed(t)) row.classList.add('closed');
-    // Grey for what cannot be worked on — completed, blocked, on hold, a
-    // container — and black again for anything due soon or overdue, which is
-    // the exception the manual makes and the reason the rule is useful.
-    if (closed(t) || isContainer(t) || t.available === false) row.classList.add('quiet');
-    if (overdue(t) || dueSoon(t)) row.classList.add('dated');
+    $('#items').replaceChildren(...rows);
+    return;
+  }
 
-    // Directly actionable items have a status circle; a project or a folder
-    // carries its type icon instead, because it is not something to do.
-    row.append(isContainer(t) ? el('span', { className: 'type' }, typeIcon(t)) : statusCircle(t));
+  $('#items').replaceChildren(...items.map((t) => itemRow(t, depthOf)));
+}
 
-    const lines = el('div', { className: 'lines' });
-    // The project path goes above the title, not beside it: on one line the
-    // title shared its width with the path, the tags and the date, and the
-    // thing being read was the first to be cut.
-    const where = parentsOf(t).map((p) => p.title).join(' › ');
-    if (where && view.kind !== 'project') lines.append(el('div', { className: 'where', textContent: where }));
-    if (!where && view.kind === 'inbox') lines.append(el('div', { className: 'where', textContent: 'No project' }));
-    lines.append(el('div', { className: 'title', textContent: t.title }));
+// --- the Forecast's week -------------------------------------------------
 
-    const under = el('div', { className: 'under' });
-    for (const g of t.tags || []) under.append(tagChip(g));
-    if (t.note) under.append(el('span', { className: 'note', textContent: '✎' }));
-    if (isContainer(t)) {
-      const inside = state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && open(x) && x.kind === 'task');
-      const late = inside.filter(overdue).length;
-      under.append(el('span', {
-        className: 'count',
-        textContent: late ? `${inside.length} items · ${late} overdue` : `${inside.length} items`,
-      }));
-    }
-    if (under.childNodes.length) lines.append(under);
-    row.append(lines);
+// The week, at the top of the Forecast and nowhere else: seven days from
+// today, each a column with its weekday, its date and what it holds. It is
+// the shape of the week that is the information — which is why an empty day
+// fades rather than disappearing — and the day you are reading is the one
+// highlighted.
+//
+// Today is the one that matters and it is first, carrying **everything
+// already due** as well as today's own (see `forecastDays`). A list opened
+// in the morning that leaves last week's unpaid bill on last week's day is a
+// list that has stopped being read.
+function renderWeek() {
+  const bar = $('#week');
+  if (!bar) return;
+  bar.hidden = view.kind !== 'due' || Boolean(query);
+  if (bar.hidden) {
+    bar.replaceChildren();
+    return;
+  }
 
-    const mark = stateMark(t);
-    if (mark && isContainer(t)) row.append(mark);
-    const dates = dateCell(t);
-    if (dates) row.append(dates);
-    if (t.blocked_by) row.title = blockedTitle(t.blocked_by);
+  const week = el('div', { className: 'week' }, weekCells());
 
-    // As in the sidebar: the second click of a double click is the one that
-    // starts an edit, so it must not also change pane.
-    row.onclick = (event) => { if (event.detail < 2) selectItem(t.id); };
-    draggable(row, t, t);
-    return row;
-  }));
+  // Under the week: the whole Forecast as one list, and the order both it
+  // and the days are read in. `All` is a day cell's opposite number, so it
+  // is marked the same way.
+  const row = el('div', { className: 'weekbar' });
+  const all = el('button', {
+    type: 'button',
+    className: 'seg',
+    textContent: 'All',
+    onclick: () => select({ kind: 'due', key: 'all' }),
+  });
+  all.setAttribute('aria-pressed', view.key === 'all' ? 'true' : 'false');
+  row.append(all, el('span', { className: 'spacer' }), el('span', { className: 'label', textContent: 'Sort' }));
+  // Two words, the one in force marked: a menu to pick between two things is
+  // one tap too many.
+  for (const o of FORECAST_ORDERS) {
+    const button = el('button', {
+      type: 'button',
+      className: 'seg',
+      textContent: o.label,
+      onclick: () => setForecastOrder(o.key),
+    });
+    button.setAttribute('aria-pressed', forecastOrder === o.key ? 'true' : 'false');
+    row.append(button);
+  }
+
+  bar.replaceChildren(week, row);
+}
+
+// laterRow is the fold at the end of the Forecast. It says how many rows are
+// behind it and when they start, because a fold that says only "more" gives
+// no reason to open it or to leave it shut.
+function laterRow(n) {
+  const row = el('li', { className: 'fold' });
+  const button = el('button', {
+    type: 'button',
+    onclick: toggleForecastLater,
+  });
+  button.setAttribute('aria-expanded', forecastLaterOpen ? 'true' : 'false');
+  button.append(
+    el('span', { className: 'twisty', textContent: forecastLaterOpen ? '\u25be' : '\u25b8' }),
+    el('span', {
+      className: 'name',
+      textContent: `Later \u2014 ${n} item${n === 1 ? '' : 's'} deferred past the next ${ForecastHorizonDays} days`,
+    }));
+  row.append(button);
+  return row;
+}
+
+// itemRow is one row of the outline. It was the body of a `map` inside
+// renderList and became a function of its own when the Forecast grew a fold:
+// the rows behind the fold are the same rows, and two copies of this would
+// be two things to keep in step.
+function itemRow(t, depthOf) {
+  const row = el('li', { className: 'item', tabIndex: -1 });
+  row.dataset.id = t.id;
+  row.setAttribute('aria-selected', selected === t.id ? 'true' : 'false');
+  const depth = depthOf(t);
+  if (depth > 0) {
+    row.classList.add('nested');
+    row.style.setProperty('--nest', String(depth));
+    // A screen reader gets the nesting from the level rather than from an
+    // indent it cannot see.
+    row.setAttribute('aria-level', String(depth + 1));
+  }
+  if (closed(t)) row.classList.add('closed');
+  // Grey for what cannot be worked on — completed, blocked, on hold, a
+  // container — and black again for anything due soon or overdue, which is
+  // the exception the manual makes and the reason the rule is useful.
+  if (closed(t) || isContainer(t) || t.available === false) row.classList.add('quiet');
+  if (overdue(t) || dueSoon(t)) row.classList.add('dated');
+  // Today's list holds what is due today and what was due before it, and
+  // nothing in the row said which was which beyond a date two words long.
+  // A red edge does, at the speed a list is actually read — and it is why
+  // the week needs no Past cell to send the late work somewhere else.
+  if (pastDue(t)) row.classList.add('late');
+
+  // Directly actionable items have a status circle; a project or a folder
+  // carries its type icon instead, because it is not something to do.
+  row.append(isContainer(t) ? el('span', { className: 'type' }, typeIcon(t)) : statusCircle(t));
+
+  const lines = el('div', { className: 'lines' });
+  // The project path goes above the title, not beside it: on one line the
+  // title shared its width with the path, the tags and the date, and the
+  // thing being read was the first to be cut.
+  const where = parentsOf(t).map((p) => p.title).join(' \u203a ');
+  if (where && view.kind !== 'project') lines.append(el('div', { className: 'where', textContent: where }));
+  if (!where && view.kind === 'inbox') lines.append(el('div', { className: 'where', textContent: 'No project' }));
+  lines.append(el('div', { className: 'title', textContent: t.title }));
+
+  const under = el('div', { className: 'under' });
+  for (const g of t.tags || []) under.append(tagChip(g));
+  if (t.note) under.append(el('span', { className: 'note', textContent: '\u270e' }));
+  if (isContainer(t)) {
+    const inside = state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && open(x) && x.kind === 'task');
+    const late = inside.filter(overdue).length;
+    under.append(el('span', {
+      className: 'count',
+      textContent: late ? `${inside.length} items \u00b7 ${late} overdue` : `${inside.length} items`,
+    }));
+  }
+  if (under.childNodes.length) lines.append(under);
+  row.append(lines);
+
+  const mark = stateMark(t);
+  if (mark && isContainer(t)) row.append(mark);
+  const dates = dateCell(t);
+  if (dates) row.append(dates);
+  if (t.blocked_by) row.title = blockedTitle(t.blocked_by);
+
+  // As in the sidebar: the second click of a double click is the one that
+  // starts an edit, so it must not also change pane.
+  row.onclick = (event) => { if (event.detail < 2) selectItem(t.id); };
+  draggable(row, t, t);
+  return row;
 }
 
 function facts(t) {
@@ -1142,15 +1758,78 @@ function complete(t) {
   return act('POST', `/api/tasks/${t.id}/done`, {}, 'completed');
 }
 
-$('#quick').onsubmit = async (event) => {
+// --- capture ------------------------------------------------------------
+
+// The Add button at the bottom opens a form rather than capturing a bare
+// title, which is what the box at the top of the list used to do. Both of
+// those were one decision: a phone's keyboard is at the bottom, so the
+// control that summons it belongs there, and a captured task nearly always
+// wants a date or a project — going straight to the inspector afterwards to
+// add one is the step the form removes.
+//
+// Everything but the title is optional, so the fast path is still a title
+// and Add.
+const capture = $('#capture-editor');
+
+function openCapture() {
+  const form = $('#capture-form');
+  form.reset();
+  $('#capture-note').textContent = '';
+
+  // Only a container a task may legally live in, as in the inspector, so
+  // the tree rules of §3.1 are a shape on screen rather than an error after
+  // a save.
+  const parents = state.tasks.filter((p) => open(p) && canContain(p.kind, 'task'));
+  form.elements.parent_id.replaceChildren(
+    el('option', { value: '', textContent: '(inbox)' }),
+    ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
+
+  // Captured where you are standing: inside a project it goes there, and on
+  // a day of the Forecast it is due that day. Both are what the screen was
+  // already saying, and both can be changed before Add is pressed.
+  if (view.kind === 'project') form.elements.parent_id.value = view.key;
+  const cell = view.kind === 'due' && view.key !== 'all' ? forecastCell(view.key) : undefined;
+  if (cell && !cell.today) form.elements.due_at.value = dayValue(cell);
+  capture.showModal();
+  form.elements.title.focus();
+}
+
+/** dayValue is a forecast day as the `yyyy-mm-dd` a date input takes. */
+function dayValue(cell) {
+  const at = new Date(state.now);
+  const days = forecastDays().findIndex((c) => c.key === cell.key);
+  at.setUTCDate(at.getUTCDate() + Math.max(days, 0));
+  return at.toISOString().slice(0, 10);
+}
+
+$('#add').onclick = openCapture;
+$('#capture-close').onclick = () => capture.close();
+
+$('#capture-form').onsubmit = async (event) => {
   event.preventDefault();
-  const input = $('#quick-title');
-  const title = input.value.trim();
+  const form = event.currentTarget;
+  const title = form.elements.title.value.trim();
   if (!title) return;
   const body = { title };
-  if (view.kind === 'project') body.parent_id = view.key;
-  input.value = '';
-  await act('POST', '/api/tasks', body, 'captured');
+  const text = (name) => form.elements[name].value.trim();
+  if (text('note')) body.note = text('note');
+  if (text('tags')) body.tags = text('tags').split(',').map((g) => g.trim()).filter(Boolean);
+  if (text('defer_at')) body.defer_at = text('defer_at');
+  if (text('due_at')) body.due_at = text('due_at');
+  if (text('estimate')) body.estimate = text('estimate');
+  if (form.elements.priority.value !== '0') body.priority = Number(form.elements.priority.value);
+  if (form.elements.parent_id.value) body.parent_id = form.elements.parent_id.value;
+  if (form.elements.flagged.checked) body.flagged = true;
+  try {
+    await api('POST', '/api/tasks', body);
+  } catch (err) {
+    // The dialog stays open with what was typed still in it: a rejected
+    // estimate or a date that would not parse is a correction, not a loss.
+    $('#capture-note').textContent = err.message;
+    return;
+  }
+  capture.close();
+  await reload('captured');
 };
 
 // --- the inspector saves itself ----------------------------------------
@@ -1439,8 +2118,12 @@ $('#others').addEventListener('dblclick', (event) => {
 
 // --- navigation ---------------------------------------------------------
 
-$('#back').onclick = () => showPane('home');
-$('#inspector-back').onclick = () => showPane('outline');
+// The chevrons are `history.back()` and not a pane change, so that they
+// unwind the same stack the swipe and the system back button unwind. A
+// viewer opened straight onto a deep hash has an entry behind it too: boot
+// puts Home in the history first (see the end of this file).
+$('#back').onclick = () => history.back();
+$('#inspector-back').onclick = () => history.back();
 $('#to-inspector').onclick = () => {
   if (!selected) {
     const first = currentItems()[0];
@@ -1449,10 +2132,19 @@ $('#to-inspector').onclick = () => {
   render();
   showPane('inspector');
 };
+// A search box submits nothing: it filters as it is typed, and the Enter
+// key on a phone keyboard must not reload the page.
+$('#search').onsubmit = (event) => event.preventDefault();
+$('#search-text').oninput = (event) => setQuery(event.target.value.trim());
+$('#search-clear').onclick = () => {
+  $('#search-text').value = '';
+  setQuery('');
+};
+
 $('#reload').onclick = () => reload('reloaded').catch((err) => say(err.message, true));
 $('#capture').onclick = () => {
   showPane('outline');
-  $('#quick-title').focus();
+  openCapture();
 };
 
 $('#show-other').onclick = (event) => {
@@ -1494,15 +2186,22 @@ document.addEventListener('keydown', (event) => {
     case 'n':
       event.preventDefault();
       showPane('outline');
-      $('#quick-title').focus();
+      openCapture();
+      break;
+    case '/':
+      // The search box, by the key every list on the web uses for it.
+      event.preventDefault();
+      showPane('outline');
+      $('#search-text').focus();
       break;
     case 'r':
       reload('reloaded');
       break;
     case 'Escape':
       // Back out one pane, which on a wide screen is a no-op worth having
-      // anyway: it is the same key in both layouts.
-      showPane(document.body.dataset.pane === 'inspector' ? 'outline' : 'home');
+      // anyway: it is the same key in both layouts. The history rather than
+      // the attribute, for the same reason the chevrons are.
+      if (document.body.dataset.pane !== 'home') history.back();
       break;
     default:
       break;
@@ -1510,6 +2209,24 @@ document.addEventListener('keydown', (event) => {
 });
 
 reload().catch((err) => say(err.message, true));
+
+// The permission the badge needs, asked for only when it is tapped: a
+// prompt nobody asked for is the thing that gets a permission denied
+// forever. iOS grants the badge along with notifications; nothing here
+// sends a notification, and there is no push subscription and no server to
+// send one from.
+if ($('#badge-ask')) {
+  $('#badge-ask').onclick = async () => {
+    try {
+      await Notification.requestPermission();
+    } catch {
+      // An older iOS rejects rather than resolving; either way the next
+      // render hides the button, because the permission is answered.
+    }
+    updateBadge();
+    renderBadgeAsk();
+  };
+}
 
 // --- installing to a home screen ---------------------------------------
 

@@ -79,6 +79,7 @@ body {
   color: var(--ink);
   height: 100dvh;
   overflow: hidden;
+  overscroll-behavior: none;
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
            env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
@@ -98,7 +99,23 @@ body {
 #list { flex: 1; min-width: 0; }
 #inspector { width: 320px; flex: none; border-left: 1px solid var(--edge); }
 
-.pane-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px 28px; }
+/* A pane scrolls; nothing else does, and nothing scrolls sideways. The two
+   `overscroll-behavior` lines are what stop a flick that reaches the end of
+   the list from becoming a pull on the page behind it — which on iOS is the
+   rubber-band that looked like the layout coming apart — and
+   `overflow-x: hidden` stops a row that is momentarily too wide (a long
+   unbroken title, a date field mid-layout) from leaving the pane able to
+   scroll across. */
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  overscroll-behavior-x: none;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 12px 28px;
+}
 
 /* The navigation bar: a translucent strip with a title in the middle and at
    most one control on each side, which is what makes the three panes read as
@@ -253,40 +270,11 @@ input, textarea, select {
   white-space: nowrap;
 }
 
-/* The week under Due. Seven equal columns, the day above its count, and
-   only two of them ever coloured: today, and the past when it is not
-   empty. A day with nothing due fades rather than disappearing, because
-   the shape of the week is the information. */
-.forecast {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  padding: 0 12px 12px;
-}
-/* Each day is a button that opens that day in the outline, so it gets a
-   target the width of its column rather than the width of its digit. */
-.forecast .day {
-  display: grid;
-  justify-items: center;
-  gap: 2px;
-  padding: 4px 0;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  cursor: pointer;
-}
-.forecast .day:hover { background: var(--select); }
-.forecast .day[aria-current="true"] { background: var(--select); }
-.forecast .when { font-size: 11px; color: var(--dim); }
-.forecast .n { font-size: 17px; color: var(--ink); font-variant-numeric: tabular-nums; }
-.forecast .day.none .when,
-.forecast .day.none .n { color: var(--faint); }
-.forecast .day.today .when,
-.forecast .day.today .n { color: var(--soon); font-weight: 600; }
-.forecast .day.late .n { color: var(--over); font-weight: 600; }
-/* What becomes available that day, kept visibly apart from what is due:
-   a deadline and a release are not the same news. */
-.forecast .starting { font-size: 10px; color: var(--sky); font-variant-numeric: tabular-nums; }
-.forecast .day.none .starting { color: var(--faint); }
+/* The week under Forecast on Home. It is the same seven cells the Forecast
+   screen draws — same class, same builder — with only the padding that puts
+   it under the tile instead of under the navigation bar. A second set of
+   rules here is how the two pictures would start disagreeing. */
+.forecast { padding: 0 12px 12px; }
 
 /* In a wide window the sidebar is a column, not a phone's Home screen, and
    OmniFocus lists its perspectives there rather than tiling them. One
@@ -302,7 +290,11 @@ input, textarea, select {
   .tile:hover .name { text-decoration: none; }
   .tile .glyph { width: 22px; height: 22px; border-radius: 6px; font-size: 12px; }
   .tile .name { font-size: 14px; font-weight: 500; }
-  .forecast { display: none; }
+  /* Both classes, because the cells carry `.week` as well now and a
+     one-class rule no longer outranks it: a sidebar is too narrow for seven
+     columns of anything, and the Forecast's own week is on screen beside
+     it anyway. */
+  .week.forecast { display: none; }
 }
 
 /* --- Home: the lists under it -------------------------------------- */
@@ -428,17 +420,6 @@ input, textarea, select {
   border-radius: 10px;
 }
 
-#quick { display: flex; gap: 6px; margin: 2px 0 10px; }
-#quick input { flex: 1; }
-#quick button {
-  border: 1px solid var(--edge);
-  border-radius: 8px;
-  background: var(--raised);
-  color: var(--accent);
-  padding: 7px 12px;
-  cursor: pointer;
-}
-
 #items { background: var(--panel); }
 
 /* One row: circle, then the text column, then the dates. The circle is the
@@ -512,12 +493,24 @@ input, textarea, select {
 
 .item .lines { flex: 1; min-width: 0; }
 .item .where { font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.item .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The title wraps, and the whole of it is on screen. It used to be one line
+   with an ellipsis, which on a phone meant the thing being read was the
+   thing being cut — a row is a task, and half a task is not a task. A row is
+   therefore as tall as its title needs, which is also why `--row` is a
+   minimum and not a height. `anywhere` is for the title that is one
+   unbroken 60-character string: without it that one row would be wider than
+   the pane. */
+.item .title { overflow-wrap: anywhere; }
 .item .under { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 
 /* Grey for completed, blocked, on hold and containers — unless the item is
    due soon or overdue, which the manual makes the exception and which is the
    whole reason the rule reads the way it does. */
+/* The same red, down the edge of the row. In a list that mixes today with
+   what was due before it, this is the only thing that separates the two at a
+   glance — and it is deliberately not the same test as the red date, which
+   asks whether the deadline itself has passed. */
+.item.late { box-shadow: inset 3px 0 0 var(--over); }
 .item.quiet .title { color: var(--dim); }
 .item.dated .title { color: var(--ink); }
 .item.closed .title { text-decoration: line-through; }
@@ -541,6 +534,118 @@ input, textarea, select {
 .item .state.done { color: var(--done); }
 .item .state.dropped { color: var(--dropped); }
 
+/* The Forecast's week, under the navigation bar and above the list: seven
+   columns, each a weekday over its date over what it holds. The same seven
+   columns as Home's strip, because it is the same picture — a week you can
+   see the shape of — and the day being read is the one tinted. */
+#week { padding: 2px 0 0; border-bottom: 1px solid var(--hair); }
+.week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+.week .day {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  padding: 6px 0 7px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  cursor: pointer;
+}
+.week .when { font-size: 10px; color: var(--dim); letter-spacing: 0.02em; }
+.week .date { font-size: 15px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.week .n { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.week .starting { font-size: 10px; color: var(--sky); font-variant-numeric: tabular-nums; }
+.week .day.none .when,
+.week .day.none .date,
+.week .day.none .n { color: var(--faint); }
+.week .day.today .when { color: var(--soon); font-weight: 600; }
+/* A day holding work from an earlier day — which, since nothing is filed
+   under a day that has gone, can only be today. There is no Past column, so
+   this is what says so: the count in the overdue red, and a rule under the
+   cell in the same colour for anyone who reads the shape of the week before
+   they read its numbers. */
+.week .day.late .n { color: var(--over); font-weight: 700; }
+.week .day.late { box-shadow: inset 0 -2px 0 var(--over); }
+/* The day being read. It is a filled tile rather than an underline because
+   on a phone this row is the navigation, and the thing that says where you
+   are has to survive being looked at through a thumb. */
+.week .day[aria-current="true"] { background: var(--select); }
+.week .day[aria-current="true"] .when,
+.week .day[aria-current="true"] .date { color: var(--accent); font-weight: 600; }
+
+/* Under the week: the whole-forecast list, and the order it and the days
+   are read in. It reads as a caption rather than as a control bar — the
+   words are the control, and a segmented box around them would be the
+   loudest thing on a screen whose job is the rows below it. */
+.weekbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 2px 6px;
+}
+.weekbar .spacer { flex: 1; }
+.weekbar .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); padding-right: 2px; }
+.weekbar .seg {
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 9px;
+  min-height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.weekbar .seg[aria-pressed="true"] { background: var(--select); color: var(--accent); font-weight: 600; }
+
+/* The fold at the end of the Forecast. A row like any other, so that the
+   list ends in the list rather than in a control stuck below it. */
+.fold { border-top: 1px solid var(--hair); }
+.fold button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: var(--row);
+  padding: 8px 6px;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.fold button:hover { background: var(--select); }
+.fold .name { min-width: 0; overflow-wrap: anywhere; }
+
+/* The search box. A full-width field at the top of the list, with a clear
+   button inside it rather than beside it: the row is the field. */
+#search { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+#search input { flex: 1; min-width: 0; }
+#search #search-clear { font-size: 15px; padding: 6px 8px; color: var(--dim); }
+
+/* Capture, at the bottom where the thumb is. It is the one filled button in
+   the toolbar, because it is the only thing in it that does something. */
+.add {
+  flex: none;
+  margin-left: auto;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 7px 15px;
+  min-height: 34px;
+  cursor: pointer;
+}
+.add:hover { filter: brightness(1.08); }
+
 #empty { color: var(--dim); padding: 10px 6px; }
 .toolbar .status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navbar .status { flex: none; font-size: 12px; color: var(--dim); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -562,8 +667,20 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   text-transform: none;
   letter-spacing: 0;
 }
+/* Two fields to a row, and `min-width: 0` is what makes that true. A date
+   input has a wide intrinsic minimum — it is a formatted field, not an empty
+   box — and a `flex: 1` item is not allowed to shrink below it, so on a
+   phone Defer and Due each insisted on more width than half the pane and
+   drew over each other. Below 380px they stop sharing a row at all: there is
+   not enough width for two date fields on a small phone, and a field that
+   fits is worth more than a layout that is symmetrical. */
 #inspector .pair { display: flex; gap: 8px; }
-#inspector .pair label { flex: 1; }
+#inspector .pair label { flex: 1; min-width: 0; }
+#inspector .pair input, #inspector .pair select { min-width: 0; max-width: 100%; }
+@media (max-width: 380px) {
+  #inspector .pair { flex-wrap: wrap; }
+  #inspector .pair label { flex-basis: 100%; }
+}
 #inspector label.check { display: flex; gap: 7px; align-items: center; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--ink); }
 #inspector label.check input { width: auto; margin: 0; }
 #inspector .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
@@ -614,7 +731,7 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   /* iOS zooms the page when a field smaller than 16px takes focus and never
      zooms back, so every control is full size here — which also makes them
      big enough to hit. */
-  input, textarea, select, #quick button { font-size: 16px; padding: 9px 11px; }
+  input, textarea, select { font-size: 16px; padding: 9px 11px; }
   /* An inline field keeps its row's own box rather than the padding above,
      but it still has to be 16px or iOS zooms into the row and never zooms
      back out. The row's text is a point smaller, so a name grows slightly
@@ -638,9 +755,12 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
    phone it fills the screen, because a 3-inch wide modal with eighteen
    controls in it is a scroll bar with a form inside. */
 
-#perspective-editor {
+#perspective-editor,
+#capture-editor {
   width: min(560px, calc(100vw - 24px));
-  max-height: min(86vh, 760px);
+  /* `dvh`, as the body uses, so a dialog is not sized against a viewport
+     that includes browser chrome which is not there. */
+  max-height: min(86dvh, 760px);
   padding: 0;
   border: 1px solid var(--edge);
   border-radius: 14px;
@@ -648,8 +768,10 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   color: var(--ink);
   overflow: hidden;
 }
-#perspective-editor::backdrop { background: rgba(0, 0, 0, 0.42); }
-#perspective-form { display: flex; flex-direction: column; max-height: inherit; }
+#perspective-editor::backdrop,
+#capture-editor::backdrop { background: rgba(0, 0, 0, 0.42); }
+#perspective-form,
+#capture-form { display: flex; flex-direction: column; max-height: inherit; }
 
 .dialog-head {
   display: flex;
@@ -660,16 +782,33 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 }
 .dialog-head h2 { flex: 1; margin: 0; font-size: 15px; }
 
+/* `minmax(0, 1fr)` rather than the implicit `auto`, and `min-width: 0` on
+   everything inside it. A grid track sized `auto` is as wide as its widest
+   item's minimum, and a `<select>` is as wide as its longest option — so one
+   long project name in the capture form's Project menu made the column, and
+   with it every field in the dialog, wider than the dialog. On a phone that
+   is a form you have to drag sideways to read, which is the same bug the
+   inspector's date fields had and has the same fix. */
 .dialog-body {
   padding: 12px 14px;
   overflow-y: auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
+.dialog-body > * { min-width: 0; }
+.dialog-body input, .dialog-body select, .dialog-body textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+/* The checkbox is the exception: it is sized by the control, not by the
+   row it sits on. */
+.dialog-body label.check input { width: auto; }
 .dialog-body label { display: grid; gap: 4px; font-size: 12px; color: var(--dim); }
 .dialog-body label.check { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; }
 .dialog-body input, .dialog-body select { color: var(--ink); }
-.dialog-body .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.dialog-body .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 @media (max-width: 460px) { .dialog-body .pair { grid-template-columns: 1fr; } }
 
 .dialog-body fieldset {
@@ -685,20 +824,38 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 .dialog-body .hint { flex-basis: 100%; margin: 2px 0 0; font-size: 11px; color: var(--faint); }
 .dialog-body select:disabled { opacity: 0.45; }
 
-#perspective-form .actions {
+/* On a phone a dialog is pinned near the top rather than centred. Centred,
+   half of it is behind the keyboard the moment a field takes focus — the
+   keyboard takes the bottom of the screen and `dvh` does not shrink for it —
+   so the first fields are the ones that end up out of reach. Top-anchored,
+   the title is where the thumb and the eye already are and the rest is a
+   scroll away. */
+@media (max-width: 559px) {
+  #perspective-editor,
+  #capture-editor {
+    width: calc(100vw - 16px);
+    max-height: min(92dvh, 760px);
+    margin: 8px auto auto;
+  }
+}
+
+#perspective-form .actions,
+#capture-form .actions {
   display: flex;
   gap: 8px;
   padding: 12px 14px;
   border-top: 1px solid var(--hair);
 }
-#perspective-form .actions button {
+#perspective-form .actions button,
+#capture-form .actions button {
   border: 1px solid var(--edge);
   border-radius: 8px;
   background: var(--raised);
   padding: 8px 14px;
   cursor: pointer;
 }
-#perspective-form .actions #perspective-save { background: var(--accent); border-color: var(--accent); color: #fff; }
+#perspective-form .actions #perspective-save,
+#capture-form .actions #capture-save { background: var(--accent); border-color: var(--accent); color: #fff; }
 /* Delete sits at the far end, away from Save: the two are one tap apart and
    only one of them can be undone by typing it again. */
 #perspective-form .actions #perspective-delete { margin-left: auto; }

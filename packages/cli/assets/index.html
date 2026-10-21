@@ -53,6 +53,12 @@
     <footer class="toolbar">
       <button type="button" id="capture" class="icon" aria-label="New inbox item">&#x2295;</button>
       <span id="store" title="where these tasks live">{{.Store}}</span>
+      <!-- The badge on the app icon needs a permission on iOS, and a
+           permission needs a tap. app.js keeps this hidden unless it is
+           actually needed: the API has to exist, the viewer has to be
+           installed to a home screen, and the permission has to be
+           unanswered. Nothing here sends a notification. -->
+      <button type="button" id="badge-ask" class="disclose" hidden>Badge</button>
     </footer>
   </nav>
 
@@ -65,10 +71,16 @@
     </header>
 
     <div class="pane-body">
-      <form id="quick" autocomplete="off">
-        <input id="quick-title" type="text" placeholder="Add to the inbox&#8230;" aria-label="New item title">
-        <button type="submit">Add</button>
+      <!-- Search, not capture. The box at the top of a list is the one you
+           reach for to find something; capture is a thing you finish and
+           leave, which is the Add button in the toolbar below and the form
+           it opens. -->
+      <form id="search" role="search" autocomplete="off">
+        <input id="search-text" type="search" placeholder="Search&#8230;" aria-label="Search" enterkeyhint="search">
+        <button type="button" id="search-clear" class="icon" aria-label="Clear the search" hidden>&#x2715;</button>
       </form>
+      <!-- The Forecast's week, filled by app.js and empty everywhere else. -->
+      <div id="week" hidden></div>
       <ol id="items" class="rows"></ol>
       <p id="empty" hidden>Nothing here.</p>
     </div>
@@ -81,6 +93,8 @@
         <span><kbd>f</kbd> flag</span>
         <span><kbd>n</kbd> capture</span>
       </span>
+      <!-- Capture lives at the bottom, where the thumb is. -->
+      <button type="button" id="add" class="add">&#x2b; Add</button>
     </footer>
   </section>
 
@@ -139,6 +153,52 @@
   </aside>
 
 </div>
+
+<!-- Capture. The same argument as the perspective editor: a thing you
+     finish and leave, so a <dialog> with `showModal` and its focus trap
+     rather than a fourth pane or a box wedged above the list. The fields
+     are the ones `POST /api/tasks` already takes — this adds no endpoint
+     and no shape — and all of them are optional but the title, so the
+     fast path is still type a title and press Add. -->
+<dialog id="capture-editor" aria-label="New item">
+  <form id="capture-form" method="dialog">
+    <header class="dialog-head">
+      <h2>New item</h2>
+      <button type="button" class="icon" id="capture-close" aria-label="Close">&#x2715;</button>
+    </header>
+
+    <div class="dialog-body">
+      <label>Title <input name="title" type="text" required autocomplete="off"></label>
+      <label>Note <textarea name="note" rows="2"></textarea></label>
+      <label>Tags <input name="tags" type="text" autocomplete="off" placeholder="comma,separated"></label>
+
+      <div class="pair">
+        <label>Defer <input name="defer_at" type="date"></label>
+        <label>Due <input name="due_at" type="date"></label>
+      </div>
+
+      <div class="pair">
+        <label>Estimate <input name="estimate" type="text" placeholder="25m"></label>
+        <label>Priority
+          <select name="priority">
+            <option value="0">none</option>
+            <option value="1">low</option>
+            <option value="2">medium</option>
+            <option value="3">high</option>
+          </select>
+        </label>
+      </div>
+
+      <label>Project <select name="parent_id"></select></label>
+      <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
+      <p class="hint" id="capture-note"></p>
+    </div>
+
+    <div class="actions">
+      <button type="submit" id="capture-save">Add</button>
+    </div>
+  </form>
+</dialog>
 
 <!-- The perspective editor. A perspective is a stored `Filter`, and this is
      one control per field of it: what the store can evaluate and nothing
