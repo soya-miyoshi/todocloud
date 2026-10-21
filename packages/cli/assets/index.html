@@ -51,7 +51,6 @@
     </div>
 
     <footer class="toolbar">
-      <button type="button" id="capture" class="icon" aria-label="New inbox item">&#x2295;</button>
       <span id="store" title="where these tasks live">{{.Store}}</span>
       <!-- The badge on the app icon needs a permission on iOS, and a
            permission needs a tap. app.js keeps this hidden unless it is
@@ -93,8 +92,6 @@
         <span><kbd>f</kbd> flag</span>
         <span><kbd>n</kbd> capture</span>
       </span>
-      <!-- Capture lives at the bottom, where the thumb is. -->
-      <button type="button" id="add" class="add">&#x2b; Add</button>
     </footer>
   </section>
 
@@ -152,6 +149,22 @@
     </div>
   </aside>
 
+<!-- One way to add anything, in one place on every pane: a floating button
+     at the bottom right, and a menu of what it makes. There were two before —
+     a ⊕ at the bottom left of Home and an Add at the bottom right of the
+     outline — which did the same thing in different places and made only one
+     kind of item between them. What is being added is a question with four
+     answers here, so the button asks it rather than assuming "task". -->
+<div id="fab-wrap">
+  <div id="fab-menu" role="menu" aria-label="What to add" hidden>
+    <button type="button" role="menuitem" data-new="task">Task</button>
+    <button type="button" role="menuitem" data-new="project">Project</button>
+    <button type="button" role="menuitem" data-new="folder">Folder</button>
+    <button type="button" role="menuitem" data-new="perspective">Perspective</button>
+  </div>
+  <button type="button" id="fab" aria-haspopup="menu" aria-expanded="false" aria-label="Add">&#x2b;</button>
+</div>
+
 </div>
 
 <!-- Capture. The same argument as the perspective editor: a thing you
@@ -163,7 +176,7 @@
 <dialog id="capture-editor" aria-label="New item">
   <form id="capture-form" method="dialog">
     <header class="dialog-head">
-      <h2>New item</h2>
+      <h2 id="capture-title">New task</h2>
       <button type="button" class="icon" id="capture-close" aria-label="Close">&#x2715;</button>
     </header>
 
@@ -189,7 +202,9 @@
         </label>
       </div>
 
-      <label>Project <select name="parent_id"></select></label>
+      <!-- A task goes in a project, a project in a folder: app.js writes
+           both the word and the choices when it opens the form. -->
+      <label><span id="capture-parent-label">Project</span> <select name="parent_id"></select></label>
       <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
       <p class="hint" id="capture-note"></p>
     </div>

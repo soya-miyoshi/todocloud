@@ -72,6 +72,13 @@
 
 * { box-sizing: border-box; }
 
+/* `hidden` is a `display: none` in the browser's own stylesheet, and any
+   author rule that sets `display` outranks it — which is how the search
+   box's clear button came back while the box was empty, the moment the
+   touch-target rules below gave `button.icon` a `display` of its own. The
+   attribute means hidden; this makes it mean that whatever else is said. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -142,7 +149,12 @@ body {
   white-space: nowrap;
 }
 
-.navbar h1 { color: var(--accent); font-size: 16px; letter-spacing: 0.02em; }
+/* The app's name is a title like any other title: the same size, weight and
+   tracking as the one on every other pane, in the accent colour because it is
+   the name and not a heading. It used to be a point smaller with its own
+   letter-spacing, which read as a different font every time you walked back
+   to Home. */
+.navbar h1 { color: var(--accent); }
 
 .toolbar {
   display: flex;
@@ -622,29 +634,148 @@ input, textarea, select {
 .fold button:hover { background: var(--select); }
 .fold .name { min-width: 0; overflow-wrap: anywhere; }
 
+/* What a write reported, floating above the list on a layout with no status
+   bar. It sits above the floating button rather than beside it, and lets
+   touches through: it is a message, never a control. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  z-index: 7;
+  max-width: min(72vw, 420px);
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: rgba(21, 20, 26, 0.92);
+  color: #fff;
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
+}
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+.toast.error { background: var(--over); }
+/* On a wide screen the status bars are on screen and say the same thing. */
+@media (min-width: 860px) {
+  .toast { display: none; }
+}
+
+/* The pull-to-reload indicator. It hangs above the top of the screen and is
+   brought down by `--pull`, the distance in pixels the finger has earned, so
+   that it follows the drag rather than appearing at the end of it. Fixed
+   rather than inside a pane: it belongs to the screen, and a pane that is
+   about to be replaced by a reload is the wrong thing to attach it to. */
+.pull {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  z-index: 5;
+  display: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-left: -16px;
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
+  color: var(--dim);
+  font-size: 16px;
+  line-height: 1;
+  /* Below the safe-area inset to begin with, so it is off screen at rest
+     and not merely invisible. */
+  transform: translateY(calc(var(--pull, 0) * 1px - 44px));
+  pointer-events: none;
+}
+.pull.on { display: grid; }
+/* Far enough: letting go now reloads, and the control says so before the
+   finger lifts rather than after. */
+.pull.ready { color: var(--accent); }
+.pull.ready .mark { transform: rotate(180deg); }
+.pull .mark { transition: transform 120ms ease-out; }
+.pull.busy {
+  /* Pinned where it was let go, turning until the reload lands. */
+  transform: translateY(16px);
+}
+.pull.busy .mark { animation: pull-spin 700ms linear infinite; }
+
+@keyframes pull-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* A pointer has the reload button in the navigation bar and does not drag
+   lists; the gesture is for touch. */
+@media (hover: hover) and (pointer: fine) {
+  .pull { display: none !important; }
+}
+
 /* The search box. A full-width field at the top of the list, with a clear
    button inside it rather than beside it: the row is the field. */
 #search { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 #search input { flex: 1; min-width: 0; }
 #search #search-clear { font-size: 15px; padding: 6px 8px; color: var(--dim); }
 
-/* Capture, at the bottom where the thumb is. It is the one filled button in
-   the toolbar, because it is the only thing in it that does something. */
-.add {
-  flex: none;
-  margin-left: auto;
+/* Capture: one floating button, bottom right, over whichever pane is on
+   screen, and the menu of what it makes. It floats rather than sitting in a
+   bar because it is the one thing on the screen that is always available and
+   never part of what is being read — and because there were two of these in
+   two different corners before, which is one too many of both. */
+#fab-wrap {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+#fab {
+  width: 56px;
+  height: 56px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--accent);
   color: #fff;
+  font-size: 28px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.26);
+  cursor: pointer;
+  /* The same turn the menu opens with, so the two read as one control. */
+  transition: transform 140ms ease-out;
+}
+#fab.open { transform: rotate(45deg); }
+#fab:hover { filter: brightness(1.08); }
+
+/* The menu opens upwards, because the button is at the bottom of the
+   screen and a menu below it would be off it. */
+#fab-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 164px;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--hair);
+}
+#fab-menu button {
+  border: 0;
+  background: none;
+  color: var(--ink);
   font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 7px 15px;
-  min-height: 34px;
+  font-size: 15px;
+  text-align: left;
+  padding: 11px 12px;
+  min-height: 44px;
+  border-radius: 9px;
   cursor: pointer;
 }
-.add:hover { filter: brightness(1.08); }
+#fab-menu button:hover { background: var(--select); color: var(--accent); }
 
 #empty { color: var(--dim); padding: 10px 6px; }
 .toolbar .status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -725,8 +856,24 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 
   button.back { display: flex; }
   #keys, #store { display: none; }
-  .navbar h1, .navbar h2 { text-align: center; }
-  .navbar { min-height: 50px; }
+  .navbar { min-height: 50px; position: relative; }
+
+  /* Centred on the screen, not in what is left over. As a flex item between
+     a back button and an icon the title sat wherever those two left room —
+     which is a different place on every pane, and visibly off-centre on all
+     of them. Taking it out of the flow and centring it on the bar is the
+     only way the title lands in the same place each time; the controls then
+     need the last of them pushed to the right, because with the title gone
+     from the row they would all bunch up on the left. */
+  .navbar h1, .navbar h2 {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    flex: none;
+    max-width: calc(100% - 136px);
+    text-align: center;
+  }
+  .navbar > *:last-child { margin-left: auto; }
 
   /* iOS zooms the page when a field smaller than 16px takes focus and never
      zooms back, so every control is full size here — which also makes them
@@ -740,6 +887,33 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   .inline { padding: 0 2px; }
   .item { padding: 9px 4px; }
   .tile { min-height: 62px; }
+
+  /* Room under the last row for the floating button, which would otherwise
+     sit on top of it — and the last row of a list is a row you complete. */
+  .pane-body { padding-bottom: 96px; }
+
+  /* Touch targets. A 19px glyph with 8px around it is a 35px target, which
+     is under the 44px a thumb actually needs and was being missed —
+     particularly the back chevron, which sits in the corner where the hand
+     is least accurate. The bars grow with them so nothing is cramped. */
+  .navbar { min-height: 54px; }
+  .toolbar { min-height: 50px; }
+  button.icon {
+    font-size: 22px;
+    padding: 10px;
+    min-width: 44px;
+    min-height: 44px;
+    display: grid;
+    place-items: center;
+  }
+  button.icon em { font-size: 20px; }
+  button.back { font-size: 17px; padding: 10px 8px 10px 2px; min-height: 44px; }
+  button.back .chevron { font-size: 28px; }
+  /* The outline's toolbar held the keyboard hints and a status line; the
+     hints are hidden here and the capture button has left it, so on a phone
+     there is nothing in it worth a bar across the bottom. The status still
+     has the inspector's own line and the one on Home. */
+  #list > .toolbar { display: none; }
 }
 
 /* An installed viewer has no reload button of its own in the browser chrome,

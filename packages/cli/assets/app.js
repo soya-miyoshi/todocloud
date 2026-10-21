@@ -151,6 +151,31 @@ function say(message, isError) {
     node.textContent = message || '';
     node.classList.toggle('error', Boolean(isError));
   }
+  toast(message, isError);
+}
+
+// The same words, floating, for the layout that has no room for a status
+// bar: on a phone the outline's toolbar is gone — the keyboard hints mean
+// nothing there and capture has left it — so what a write reported would
+// otherwise be reported to a bar nobody can see. It is built here rather
+// than in either index.html for the reason the pull indicator is: it
+// belongs to this behaviour, not to the page.
+const toaster = el('div', { className: 'toast' });
+document.body.append(toaster);
+let toastTimer = null;
+
+function toast(message, isError) {
+  clearTimeout(toastTimer);
+  if (!message) {
+    toaster.classList.remove('on');
+    return;
+  }
+  toaster.textContent = message;
+  toaster.classList.toggle('error', Boolean(isError));
+  toaster.classList.add('on');
+  // An error stays longer: it is the one a reader has to act on, and it is
+  // also the one most likely to arrive while they are looking elsewhere.
+  toastTimer = setTimeout(() => toaster.classList.remove('on'), isError ? 5000 : 2200);
 }
 
 // A write reports what it changed beyond what was asked: a repeat's
@@ -776,6 +801,51 @@ const SwipeMaxY = 50;      // a drag that is mostly vertical is a scroll
 
 let swipe = null;
 
+// --- pulling down to reload ---------------------------------------------
+
+// The other half of the same gesture. A phone list is reloaded by dragging
+// it down past its top, and this one has to do it itself: the page is a
+// single screen with `overflow: hidden` on the body, each pane scrolls
+// inside itself, and `overscroll-behavior` stops the pull from reaching the
+// browser — which is the right answer for the rubber-band and leaves no
+// native refresh to inherit. Installed to a home screen there is no reload
+// button in any chrome either, and the one in Home's navigation bar is a
+// pane away from the list being read.
+//
+// It fires only from a pane already scrolled to its top. Anywhere else the
+// drag is a scroll, and a list that reloaded because someone scrolled up
+// quickly would be worse than one that never reloaded at all.
+const PullTrigger = 72;   // how far down before letting go means reload
+const PullMax = 110;      // where the indicator stops following the finger
+
+// The indicator is built here rather than in either index.html, because it
+// belongs to this behaviour and both front ends would otherwise carry a
+// markup element whose only purpose is to be found by this file.
+const puller = el('div', { className: 'pull' }, el('span', { className: 'mark', textContent: '\u21bb' }));
+document.body.append(puller);
+
+function showPull(distance, ready) {
+  if (distance <= 0) {
+    puller.classList.remove('on', 'ready', 'busy');
+    puller.style.removeProperty('--pull');
+    return;
+  }
+  puller.classList.add('on');
+  puller.classList.toggle('ready', ready);
+  puller.style.setProperty('--pull', String(Math.min(distance, PullMax)));
+}
+
+async function pullReload() {
+  puller.classList.add('busy');
+  try {
+    await reload('reloaded');
+  } catch (err) {
+    say(err.message, true);
+  } finally {
+    showPull(0, false);
+  }
+}
+
 document.addEventListener('touchstart', (event) => {
   // One finger only: two is a pinch or a scroll, and neither is this.
   if (event.touches.length !== 1) {
@@ -783,29 +853,74 @@ document.addEventListener('touchstart', (event) => {
     return;
   }
   const t = event.touches[0];
-  swipe = { x: t.clientX, y: t.clientY, ok: true };
+  // The pane this drag started in, and only when it is already at its top:
+  // what makes a pull a pull is that there is nothing above it to scroll to.
+  // `closest` also answers no inside a dialog, which is what should happen —
+  // a modal is not a list to refresh.
+  const pane = event.target.closest ? event.target.closest('.pane-body') : null;
+  swipe = {
+    x: t.clientX,
+    y: t.clientY,
+    ok: true,
+    pane: pane && pane.scrollTop <= 0 ? pane : null,
+    pulled: 0,
+  };
 }, { passive: true });
 
 document.addEventListener('touchmove', (event) => {
   if (!swipe || event.touches.length !== 1) return;
   const t = event.touches[0];
+  const dy = t.clientY - swipe.y;
+  swipe.dx = t.clientX - swipe.x;
   // Once a drag has gone further down than across it is a scroll, and it
   // stays a scroll however it ends: a flick that curves back must not take
   // the pane away under the finger.
-  if (Math.abs(t.clientY - swipe.y) > SwipeMaxY) swipe.ok = false;
-  swipe.dx = t.clientX - swipe.x;
+  if (Math.abs(dy) > SwipeMaxY) swipe.ok = false;
+
+  // Downwards, from the top, and more down than across — the last of those
+  // is what keeps the back swipe and this gesture from both being true.
+  if (swipe.pane && dy > 0 && dy > Math.abs(swipe.dx)) {
+    // The pane may have been scrolled since the drag began: a momentum
+    // scroll still settling is not the top.
+    if (swipe.pane.scrollTop > 0) {
+      swipe.pulled = 0;
+      showPull(0, false);
+      return;
+    }
+    // Resistance, so that the indicator keeps moving as the finger does but
+    // the trip is longer than the thumb's: a pull that fires at the first
+    // pixel fires by accident.
+    swipe.pulled = dy * 0.5;
+    showPull(swipe.pulled, swipe.pulled >= PullTrigger);
+  } else if (swipe.pulled) {
+    swipe.pulled = 0;
+    showPull(0, false);
+  }
 }, { passive: true });
 
 document.addEventListener('touchend', () => {
   const done = swipe;
   swipe = null;
-  if (!done || !done.ok || !(done.dx > SwipeMinX)) return;
+  if (!done) return;
+  if (done.pulled >= PullTrigger) {
+    pullReload();
+    return;
+  }
+  if (done.pulled) showPull(0, false);
+  if (!done.ok || !(done.dx > SwipeMinX)) return;
   // Only where there is a pane to go back to. On a wide screen all three
   // are on at once and the gesture means nothing, which `data-pane` is also
   // how the layout decides.
   if (document.body.dataset.pane === 'home') return;
   if (!window.matchMedia('(max-width: 859px)').matches) return;
   history.back();
+}, { passive: true });
+
+// A cancelled touch — a call arriving, a system gesture taking over — leaves
+// the indicator on screen with nothing driving it.
+document.addEventListener('touchcancel', () => {
+  swipe = null;
+  showPull(0, false);
 }, { passive: true });
 
 // --- the badge on the app icon ------------------------------------------
@@ -1771,28 +1886,84 @@ function complete(t) {
 // and Add.
 const capture = $('#capture-editor');
 
-function openCapture() {
+// What the form is making. A task, a project and a folder are the same seven
+// fields over the same endpoint — only the name of the thing and the list of
+// places it may go differ — so they are one dialog and not three.
+const NEW_KINDS = {
+  task: { title: 'New task', home: 'Project', empty: '(inbox)' },
+  project: { title: 'New project', home: 'Folder', empty: '(top level)' },
+  folder: { title: 'New folder', home: 'Folder', empty: '(top level)' },
+};
+
+let capturing = 'task';
+
+function openCapture(kind = 'task') {
+  const spec = NEW_KINDS[kind] || NEW_KINDS.task;
+  capturing = NEW_KINDS[kind] ? kind : 'task';
   const form = $('#capture-form');
   form.reset();
   $('#capture-note').textContent = '';
+  $('#capture-title').textContent = spec.title;
+  $('#capture-parent-label').textContent = spec.home;
 
-  // Only a container a task may legally live in, as in the inspector, so
+  // Only a container this kind may legally live in, as in the inspector, so
   // the tree rules of §3.1 are a shape on screen rather than an error after
   // a save.
-  const parents = state.tasks.filter((p) => open(p) && canContain(p.kind, 'task'));
+  const parents = state.tasks.filter((p) => open(p) && canContain(p.kind, capturing));
   form.elements.parent_id.replaceChildren(
-    el('option', { value: '', textContent: '(inbox)' }),
+    el('option', { value: '', textContent: spec.empty }),
     ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
 
   // Captured where you are standing: inside a project it goes there, and on
   // a day of the Forecast it is due that day. Both are what the screen was
   // already saying, and both can be changed before Add is pressed.
-  if (view.kind === 'project') form.elements.parent_id.value = view.key;
-  const cell = view.kind === 'due' && view.key !== 'all' ? forecastCell(view.key) : undefined;
+  if (view.kind === 'project' && canContain(byID.get(view.key)?.kind || '', capturing)) {
+    form.elements.parent_id.value = view.key;
+  }
+  const cell = capturing === 'task' && view.kind === 'due' && view.key !== 'all'
+    ? forecastCell(view.key)
+    : undefined;
   if (cell && !cell.today) form.elements.due_at.value = dayValue(cell);
   capture.showModal();
   form.elements.title.focus();
 }
+
+// --- the floating button ------------------------------------------------
+
+// One control, bottom right, on every pane. It opens a menu rather than
+// capturing straight away, because "add" has four answers here and a button
+// that silently picks one of them is a button you have to undo.
+const fabMenu = $('#fab-menu');
+
+function showFabMenu(on) {
+  fabMenu.hidden = !on;
+  $('#fab').setAttribute('aria-expanded', on ? 'true' : 'false');
+  $('#fab').classList.toggle('open', on);
+}
+
+$('#fab').onclick = (event) => {
+  event.stopPropagation();
+  showFabMenu(fabMenu.hidden);
+};
+
+fabMenu.addEventListener('click', (event) => {
+  const what = event.target.closest('[data-new]');
+  if (!what) return;
+  showFabMenu(false);
+  if (what.dataset.new === 'perspective') {
+    openEditor('');
+    return;
+  }
+  openCapture(what.dataset.new);
+});
+
+// A menu closes when the next thing is touched, wherever that is.
+document.addEventListener('click', () => {
+  if (!fabMenu.hidden) showFabMenu(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !fabMenu.hidden) showFabMenu(false);
+}, true);
 
 /** dayValue is a forecast day as the `yyyy-mm-dd` a date input takes. */
 function dayValue(cell) {
@@ -1802,7 +1973,6 @@ function dayValue(cell) {
   return at.toISOString().slice(0, 10);
 }
 
-$('#add').onclick = openCapture;
 $('#capture-close').onclick = () => capture.close();
 
 $('#capture-form').onsubmit = async (event) => {
@@ -1811,6 +1981,9 @@ $('#capture-form').onsubmit = async (event) => {
   const title = form.elements.title.value.trim();
   if (!title) return;
   const body = { title };
+  // The endpoint defaults to a task, so the kind is sent only when it is
+  // something else — which keeps the request the same one it always was.
+  if (capturing !== 'task') body.kind = capturing;
   const text = (name) => form.elements[name].value.trim();
   if (text('note')) body.note = text('note');
   if (text('tags')) body.tags = text('tags').split(',').map((g) => g.trim()).filter(Boolean);
@@ -2142,10 +2315,7 @@ $('#search-clear').onclick = () => {
 };
 
 $('#reload').onclick = () => reload('reloaded').catch((err) => say(err.message, true));
-$('#capture').onclick = () => {
-  showPane('outline');
-  openCapture();
-};
+
 
 $('#show-other').onclick = (event) => {
   const list = $('#others');
