@@ -57,6 +57,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, so the ordering guard in "Commit and push" can ask
+          # whether the commit already published is an ancestor of this one.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -197,6 +201,27 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Do not publish an older tree over a newer one. `concurrency`
+          # serialises these jobs but says nothing about their order, and a
+          # run can start late: a push and a force-push minutes apart once
+          # arrived in reverse, so the second deploy put the earlier build
+          # back and silently undid the first. Each deploy records its source
+          # commit in the message above, so that question is answerable --
+          # if what is published is a descendant of this run's commit, this
+          # run is the stale one and stops here.
+          #
+          # Anything unresolvable is treated as "go ahead": an empty site with
+          # no message to read, a first deploy, and a commit that no longer
+          # exists because history was rewritten. The guard exists to drop a
+          # late duplicate, not to be the authority on what may ship.
+          deployed=$(git log -1 --pretty=%B 2>/dev/null | sed -n 's/^Deploy todocloud@\([0-9a-f]\{40\}\).*/\1/p' | head -1)
+          if [ -n "$deployed" ] && [ "$deployed" != "$GITHUB_SHA" ] \
+            && git -C "$GITHUB_WORKSPACE" cat-file -e "${deployed}^{commit}" 2>/dev/null \
+            && git -C "$GITHUB_WORKSPACE" merge-base --is-ancestor "$GITHUB_SHA" "$deployed"; then
+            echo "Published site is already at ${deployed}, a descendant of ${GITHUB_SHA}. Nothing to do."
+            exit 0
+          fi
+
           git add -A
           # `git status --porcelain` rather than `git diff --cached`, which
           # needs a HEAD to compare against and there is none on the first
