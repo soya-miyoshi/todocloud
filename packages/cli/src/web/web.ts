@@ -75,6 +75,7 @@ import type { Store } from '@todocloud/core/store';
 import { resolveBundled } from '../respath.ts';
 
 import { API, type Handler, type Req, maxBodyBytes } from '@todocloud/core/webapi';
+import type { Settings } from '@todocloud/core/webapi/http';
 import {
   Mutex,
   type PathMatch,
@@ -283,6 +284,23 @@ export class Server {
       asset('/sw.js', 'sw.js', 'text/javascript; charset=utf-8'),
 
       this.read('GET', exact('/api/state'), this.api.handleState),
+      // The server dialog's data. Read-only on purpose: this process was
+      // started against the CLI's configuration, and a page that rewrote it
+      // would be a credential-handling surface `tdo serve` does not otherwise
+      // have. There is no PUT, so a request for one answers 405.
+      this.read('GET', exact('/api/settings'), async () => {
+        const settings: Settings = {
+          editable: false,
+          url: this.st.describe(),
+          token_set: false,
+          remember: false,
+          notice:
+            'The connection is set from the command line, not here. ' +
+            'Run `tdo config set provider <name>` and `tdo config set turso.url <url>`, ' +
+            'and `tdo login` for a token; then restart `tdo serve`.',
+        };
+        return settings;
+      }),
       this.write('POST', exact('/api/tasks'), this.api.handleCreate),
       this.write('PATCH', taskPath(''), this.api.handleEdit),
       this.write('DELETE', taskPath(''), this.api.handleRemove),

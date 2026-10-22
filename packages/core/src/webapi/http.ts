@@ -183,3 +183,25 @@ export function taskPath(tail: string): PathMatch {
     return { id: taskID };
   };
 }
+
+/**
+ * Settings is what `GET /api/settings` answers, in both front ends. The page's
+ * server dialog is one piece of code; what differs is whether the front end
+ * lets it change anything. `tdo serve` does not — its connection is the CLI's
+ * configuration, and the notice says which commands change it — while the PWA
+ * owns its own and saves it in the browser.
+ *
+ * The token is never in here, in either direction: `token_set` says whether
+ * one exists, and that is all a page is ever told.
+ */
+export interface Settings {
+  /** editable is whether the dialog may send a `PUT` at all. */
+  editable: boolean;
+  /** url is the database, credential-free: `Store.describe` or the stored URL. */
+  url: string;
+  token_set: boolean;
+  /** remember is whether the token outlives the tab, for the checkbox. */
+  remember: boolean;
+  /** notice is shown above the form; empty for none. */
+  notice: string;
+}

@@ -1,129 +1,29 @@
-/* The connect screen, and only the connect screen.
- *
- * `app.css` is `packages/cli/assets/app.css` byte for byte and is going to
- * stay that way, so the styles for the one screen the PWA adds live in their
- * own file rather than as a diff against the viewer's. The variables below
- * are read from `app.css`, which defines them on `:root` for both colour
- * schemes, so this screen follows the viewer's palette without restating it.
+/* What the PWA adds to the viewer's own styles: the warning the server dialog
+ * carries about holding a token in a browser, and the token fingerprint in the
+ * sidebar footer. Everything else on that dialog is `app.css`'s.
  */
 
-#connect {
-  box-sizing: border-box;
-  max-width: 34rem;
-  margin: 0 auto;
-  /* The safe-area insets, for the installed case: this screen is the first
-   * thing a phone shows after the icon is tapped. */
-  padding: calc(env(safe-area-inset-top) + 1.5rem) 1.25rem
-    calc(env(safe-area-inset-bottom) + 2rem);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  color: var(--ink, #15141a);
-}
-
-/* The two screens are both in the document from the start — `app.js` queries
- * the viewer's markup at load — so this is which one is on screen. */
-body.connecting {
-  overflow: auto;
-}
-
-#connect h1 {
-  margin: 0 0 0.25rem;
-  font-size: 1.6rem;
-  letter-spacing: -0.01em;
-}
-
-#connect .lede {
-  margin: 0 0 1.25rem;
-  color: var(--ink, #15141a);
-}
-
-#connect h2 {
-  margin: 0 0 0.5rem;
-  font-size: 0.95rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--dim, #78767f);
-}
-
-/* The one piece of emphasis on the page. What it frames is not a legal
- * notice to be scrolled past: it is the four facts someone needs in order to
- * decide whether to paste a credential into a browser. */
-#connect .warning {
-  margin: 0 0 1.5rem;
-  padding: 0.9rem 1rem;
+#settings-editor .warning {
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.9rem;
   border: 1px solid var(--edge, #d8d7dc);
-  border-left: 3px solid var(--over, #ff3b30);
-  border-radius: var(--radius, 10px);
-  background: var(--panel, #ffffff);
+  border-left: 4px solid var(--soon, #ff9f0a);
+  border-radius: 8px;
+  font-size: 13px;
 }
 
-#connect .warning ul {
+#settings-editor .warning h2 {
+  margin: 0 0 0.4rem;
+  font-size: 14px;
+}
+
+#settings-editor .warning ul {
   margin: 0;
   padding-left: 1.1rem;
 }
 
-#connect .warning li + li {
-  margin-top: 0.6rem;
-}
-
-#connect label {
-  display: block;
-  margin: 1rem 0 0.35rem;
-  font-weight: 600;
-}
-
-#connect label.check {
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
-  font-weight: 600;
-}
-
-#connect input[type="url"],
-#connect input[type="password"] {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 0.6rem 0.7rem;
-  border: 1px solid var(--edge, #d8d7dc);
-  border-radius: var(--radius, 10px);
-  background: var(--panel, #ffffff);
-  color: inherit;
-  /* 16px or larger, or iOS Safari zooms the page when the field is focused —
-   * which on the device this app is for is the whole layout jumping. */
-  font: inherit;
-  font-size: 16px;
-}
-
-#connect .hint {
-  margin: 0.35rem 0 0;
-  font-size: 0.85rem;
-  color: var(--dim, #78767f);
-}
-
-#connect code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.85em;
-  overflow-wrap: anywhere;
-}
-
-#connect button[type="submit"] {
-  margin-top: 1.25rem;
-  padding: 0.65rem 1.1rem;
-  border: 0;
-  border-radius: var(--radius, 10px);
-  background: var(--accent, #7a4fd4);
-  color: #fff;
-  font: inherit;
-  font-weight: 600;
-}
-
-#connect .status {
-  min-height: 1.4em;
-  margin: 0.75rem 0 0;
-  color: var(--dim, #78767f);
-}
-
-#connect .status.error {
-  color: var(--over, #ff3b30);
+#settings-editor .warning li + li {
+  margin-top: 0.4rem;
 }
 
 /* The fingerprint of the token in use — `[REDACTED]#1a2b3c4d`, never any

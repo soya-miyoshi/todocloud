@@ -81,108 +81,11 @@
      no listener in this app: the API is in the tab. -->
 <body data-pane="home">
 
-<!-- The connect screen. Everything on it is here because of one fact: this
-     app has no server, so the token is in this browser, and the person
-     pasting it is entitled to know what that means before they do. -->
-<main id="connect">
-  <h1>tdo</h1>
-  <p class="lede">
-    This app talks to <strong>your own Turso database, directly from this
-    browser</strong>. There is no todocloud server, no account, and nothing
-    in the middle: your tasks go from this tab to your database and nowhere
-    else.
-  </p>
-
-  <section class="warning" aria-labelledby="risk">
-    <h2 id="risk">What you are accepting</h2>
-    <ul>
-      <li>
-        <strong>The token is stored in this browser.</strong> Any script that
-        runs on this site can read it, and so can anyone who opens devtools
-        on this device. The protection here is that this site serves a
-        handful of hand-written files and no third-party code — not that the
-        value is hidden from anything.
-      </li>
-      <li>
-        <strong>Use a token that is as narrow and as short-lived as you can
-        make it.</strong> Turso issues tokens per database, which is why it
-        is the provider this app supports: a token minted for your todo
-        database cannot touch anything else you own. Give it an expiry —
-        <code>turso db tokens create &lt;database&gt; --expiration 7d</code>
-        — and mint a read-only one if you only want to look
-        (<code>--read-only</code>).
-      </li>
-      <li>
-        <strong>Anyone who unlocks this device can see your tasks.</strong>
-        Leave the box below unchecked on a shared or borrowed machine: the
-        token is then kept for this tab only and goes when you close it.
-      </li>
-      <li>
-        <strong>Revoking is done at Turso, not here.</strong> Disconnecting
-        removes this browser's copy of the token. It does not end the
-        token's life — <code>turso db tokens invalidate &lt;database&gt;</code>
-        does.
-      </li>
-    </ul>
-  </section>
-
-  <form id="connect-form" autocomplete="off">
-    <label for="turso-url">Database URL</label>
-    <input id="turso-url" name="url" type="url" inputmode="url"
-           autocomplete="off" autocapitalize="off" spellcheck="false"
-           placeholder="libsql://example.turso.io" required>
-    <p class="hint">
-      From <code>turso db show &lt;database&gt; --url</code>. The URL is
-      remembered on this device; it is not a credential. A token is never put
-      in it — a URL is logged by every proxy it passes, so this app refuses a
-      URL that carries one.
-    </p>
-
-    <label for="turso-token">Database token</label>
-    <!-- type=password so the value is not on screen, and autocomplete off
-         so no password manager is invited to keep a copy of a database
-         credential. The field is cleared the moment the value is read. -->
-    <input id="turso-token" name="token" type="password"
-           autocomplete="off" autocapitalize="off" spellcheck="false"
-           placeholder="TOKEN_GOES_HERE" required>
-    <p class="hint">
-      From <code>turso db tokens create &lt;database&gt;</code>. It is sent
-      as an <code>Authorization</code> header to your database and to nowhere
-      else.
-    </p>
-
-    <label class="check" for="remember">
-      <input id="remember" type="checkbox">
-      Remember this token on this device
-    </label>
-    <p class="hint">
-      Unchecked — the default — keeps it for this tab only, so closing the
-      tab forgets it. Checked, it survives until you disconnect or the token
-      expires.
-    </p>
-
-    <button type="submit">Connect</button>
-    <p id="connect-status" class="status" role="status" aria-live="polite"></p>
-  </form>
-
-  <p class="hint">
-    The database must already have a tdo schema in it: run
-    <code>tdo init</code> once against it from the CLI. This app creates
-    nothing.
-  </p>
-  <p class="hint">
-    Offline, this is a shell with nothing behind it. Reads and writes need
-    your database, and a write that cannot reach it fails and says so rather
-    than being queued — your list is in one place, and a copy in here that
-    disagreed with it would be worse than an error.
-  </p>
-</main>
-
 <!-- Everything below is `packages/cli/assets/index.html`, the viewer the
      project already has, with two changes: the store-description template
      action is an empty span that `main.ts` fills in, and a Disconnect button sits beside
      it, because a page holding a credential needs a way to let go of it. -->
-<div id="app" hidden>
+<div id="app">
 
   <!-- Home: the perspectives, and nothing else. The projects and the tags
        used to be lists of their own below the tiles; both are perspectives
@@ -216,6 +119,8 @@
            unanswered. Nothing here sends a notification. -->
       <button type="button" id="badge-ask" class="disclose" hidden>Badge</button>
       <span id="token-hint" title="which token this browser is using; a fingerprint, never the value"></span>
+      <button type="button" id="theme" class="disclose">Theme: auto</button>
+      <button type="button" id="settings" class="disclose">Server</button>
       <button type="button" id="disconnect" class="disclose">Disconnect</button>
     </footer>
   </nav>
@@ -263,12 +168,24 @@
            It is repeated here because on a phone the outline's toolbar —
            the other place it appears — is a pane away. -->
       <span class="status" role="status" aria-live="polite"></span>
+      <!-- Three widths, cycled, remembered. The inspector holds the fields
+           of one item and the right width for that depends on the screen and
+           on what is in the item, neither of which this file knows. Hidden on
+           a phone, where the inspector is the whole screen and there is no
+           width to choose. -->
+      <button type="button" id="inspector-width" class="icon" aria-label="Inspector width" title="Inspector width">&#x21d4;</button>
     </header>
 
     <div class="pane-body">
       <p id="no-selection">Select an item to see it here.</p>
       <form id="detail" hidden>
-        <label>Title <input name="title" type="text"></label>
+        <!-- A textarea, not a text input, because a title that does not fit
+             should wrap and take the room it needs rather than scroll
+             sideways inside one line. `rows="1"` is the floor; app.js
+             grows it to its contents the way it already grows the note.
+             Enter still commits here instead of adding a line, because a
+             title is one line of text whatever it is drawn in. -->
+        <label>Title <textarea name="title" rows="1"></textarea></label>
         <label>Note <textarea name="note" rows="3"></textarea></label>
         <label>Tags <input name="tags" type="text" placeholder="comma,separated"></label>
         <div class="pair">
@@ -508,6 +425,74 @@
      request, which would otherwise go to this static host and come back
      404. `app.js` also registers the service worker, which is why nothing
      in `main.ts` does. -->
+<!-- The server dialog: where this viewer's database is. One markup and one
+     script serve both front ends; `GET /api/settings` says whether this one
+     may change it. `tdo serve` may not (its connection is the CLI's
+     configuration, so the fieldset below is disabled and the notice says what
+     to run), and the PWA saves it in this browser. -->
+<dialog id="settings-editor" aria-label="Server">
+  <form id="settings-form" method="dialog" autocomplete="off">
+    <header class="dialog-head">
+      <h2>Server</h2>
+      <button type="button" class="icon" id="settings-close" aria-label="Close">&#x2715;</button>
+    </header>
+
+    <div class="dialog-body">
+      <p class="hint" id="settings-notice"></p>
+      <section class="warning" aria-labelledby="risk">
+          <h2 id="risk">What you are accepting</h2>
+          <ul>
+            <li>
+              <strong>The token is stored in this browser.</strong> Any script that
+              runs on this site can read it, and so can anyone who opens devtools
+              on this device. The protection here is that this site serves a
+              handful of hand-written files and no third-party code — not that the
+              value is hidden from anything.
+            </li>
+            <li>
+              <strong>Use a token that is as narrow and as short-lived as you can
+              make it.</strong> Turso issues tokens per database, which is why it
+              is the provider this app supports: a token minted for your todo
+              database cannot touch anything else you own. Give it an expiry —
+              <code>turso db tokens create &lt;database&gt; --expiration 7d</code>
+              — and mint a read-only one if you only want to look
+              (<code>--read-only</code>).
+            </li>
+            <li>
+              <strong>Anyone who unlocks this device can see your tasks.</strong>
+              Leave the box below unchecked on a shared or borrowed machine: the
+              token is then kept for this tab only and goes when you close it.
+            </li>
+            <li>
+              <strong>Revoking is done at Turso, not here.</strong> Disconnecting
+              removes this browser's copy of the token. It does not end the
+              token's life — <code>turso db tokens invalidate &lt;database&gt;</code>
+              does.
+            </li>
+          </ul>
+        </section>
+      <fieldset id="settings-fields">
+        <label>Database URL
+          <input id="settings-url" name="url" type="url" inputmode="url"
+                 autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="libsql://example.turso.io">
+        </label>
+        <label>Database token (optional for a local sqld)
+          <input id="settings-token" name="token" type="password"
+                 autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="TOKEN_GOES_HERE">
+        </label>
+        <label class="check"><input name="remember" type="checkbox"> Remember this token on this device</label>
+        <div class="actions">
+          <button type="submit" id="settings-save">Save</button>
+          <button type="button" id="settings-local">Local sqld</button>
+        </div>
+      </fieldset>
+      <p class="hint status" id="settings-status" role="status" aria-live="polite"></p>
+    </div>
+  </form>
+</dialog>
+
 <script type="module" src="/pwa/src/main.js"></script>
 <script src="/app.js" defer></script>
 </body>

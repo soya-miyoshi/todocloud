@@ -382,3 +382,24 @@ test("an aborted signal stops the server", async () => {
   await assert.rejects(fetch(`http://${addr}/`));
   await st.close();
 });
+
+test("the server dialog's settings are read-only here, and say how to change them", async (t) => {
+  const h = await Harness.start(t);
+
+  const res = await fetch(`${h.base}/api/settings`);
+  assert.equal(res.status, 200);
+  const settings = (await res.json()) as { editable: boolean; url: string; token_set: boolean; notice: string };
+  assert.equal(settings.editable, false);
+  assert.equal(settings.token_set, false);
+  assert.match(settings.notice, /tdo config set/);
+  assert.match(settings.notice, /tdo login/);
+
+  // There is no way to write it: the connection is the CLI's configuration.
+  const put = await fetch(`${h.base}/api/settings`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", [TokenHeader]: h.srv.token },
+    body: JSON.stringify({ url: "libsql://example.turso.io", token: "TOKEN_GOES_HERE", remember: true }),
+  });
+  await put.text();
+  assert.equal(put.status, 405);
+});

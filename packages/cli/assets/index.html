@@ -58,6 +58,8 @@
            installed to a home screen, and the permission has to be
            unanswered. Nothing here sends a notification. -->
       <button type="button" id="badge-ask" class="disclose" hidden>Badge</button>
+      <button type="button" id="settings" class="disclose">Server</button>
+      <button type="button" id="theme" class="disclose">Theme: auto</button>
     </footer>
   </nav>
 
@@ -104,12 +106,24 @@
            It is repeated here because on a phone the outline's toolbar —
            the other place it appears — is a pane away. -->
       <span class="status" role="status" aria-live="polite"></span>
+      <!-- Three widths, cycled, remembered. The inspector holds the fields
+           of one item and the right width for that depends on the screen and
+           on what is in the item, neither of which this file knows. Hidden on
+           a phone, where the inspector is the whole screen and there is no
+           width to choose. -->
+      <button type="button" id="inspector-width" class="icon" aria-label="Inspector width" title="Inspector width">&#x21d4;</button>
     </header>
 
     <div class="pane-body">
       <p id="no-selection">Select an item to see it here.</p>
       <form id="detail" hidden>
-        <label>Title <input name="title" type="text"></label>
+        <!-- A textarea, not a text input, because a title that does not fit
+             should wrap and take the room it needs rather than scroll
+             sideways inside one line. `rows="1"` is the floor; app.js
+             grows it to its contents the way it already grows the note.
+             Enter still commits here instead of adding a line, because a
+             title is one line of text whatever it is drawn in. -->
+        <label>Title <textarea name="title" rows="1"></textarea></label>
         <label>Note <textarea name="note" rows="3"></textarea></label>
         <label>Tags <input name="tags" type="text" placeholder="comma,separated"></label>
         <div class="pair">
@@ -339,6 +353,42 @@
     <div class="actions">
       <button type="submit" id="perspective-save">Save</button>
       <button type="button" id="perspective-delete" class="danger" hidden>Delete</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- The server dialog: where this viewer's database is. One markup and one
+     script serve both front ends; `GET /api/settings` says whether this one
+     may change it. `tdo serve` may not (its connection is the CLI's
+     configuration, so the fieldset below is disabled and the notice says what
+     to run), and the PWA saves it in this browser. -->
+<dialog id="settings-editor" aria-label="Server">
+  <form id="settings-form" method="dialog" autocomplete="off">
+    <header class="dialog-head">
+      <h2>Server</h2>
+      <button type="button" class="icon" id="settings-close" aria-label="Close">&#x2715;</button>
+    </header>
+
+    <div class="dialog-body">
+      <p class="hint" id="settings-notice"></p>
+      <fieldset id="settings-fields">
+        <label>Database URL
+          <input id="settings-url" name="url" type="url" inputmode="url"
+                 autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="libsql://example.turso.io">
+        </label>
+        <label>Database token (optional for a local sqld)
+          <input id="settings-token" name="token" type="password"
+                 autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="TOKEN_GOES_HERE">
+        </label>
+        <label class="check"><input name="remember" type="checkbox"> Remember this token on this device</label>
+        <div class="actions">
+          <button type="submit" id="settings-save">Save</button>
+          <button type="button" id="settings-local">Local sqld</button>
+        </div>
+      </fieldset>
+      <p class="hint status" id="settings-status" role="status" aria-live="polite"></p>
     </div>
   </form>
 </dialog>

@@ -70,6 +70,51 @@
   }
 }
 
+/* A forced scheme. `data-theme` on the root outranks the plain `:root` rules
+   above, so these win over the system's choice in either direction; with no
+   attribute, the media query decides. The values restate the two palettes
+   above, since a rule cannot be shared between a media query and an
+   attribute selector. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+    --bg: #000000;
+    --panel: #1c1c1e;
+    --raised: #2c2c2e;
+    --edge: #38383a;
+    --hair: #38383a;
+    --ink: #f2f2f7;
+    --dim: #9d9ca5;
+    --faint: #6b6a73;
+    --accent: #b08cf5;
+    --select: #33264d;
+    --salmon: #ff7b70;
+    --slate: #8795a9;
+    --mint: #32d74b;
+    --over: #ff453a;
+    --soon: #ffd60a;
+    --flag: #ff9f0a;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+    --bg: #f2f1f6;
+    --panel: #ffffff;
+    --raised: #ffffff;
+    --edge: #d8d7dc;
+    --hair: #e7e6eb;
+    --ink: #15141a;
+    --dim: #78767f;
+    --faint: #a9a7b0;
+    --accent: #7a4fd4;
+    --select: #ece6fb;
+    --salmon: #ff6a5e;
+    --slate: #6b7a90;
+    --mint: #30c86b;
+    --over: #ff3b30;
+    --soon: #ff9f0a;
+    --flag: #ff9500;
+}
+
 * { box-sizing: border-box; }
 
 /* `hidden` is a `display: none` in the browser's own stylesheet, and any
@@ -104,7 +149,13 @@ body {
 
 #sidebar { width: 264px; flex: none; border-right: 1px solid var(--edge); background: var(--bg); }
 #list { flex: 1; min-width: 0; }
-#inspector { width: 320px; flex: none; border-left: 1px solid var(--edge); }
+/* The inspector's width is a preference, not a constant: app.js cycles
+   `data-inspector` on the root and remembers it, and the three steps are
+   here because a width belongs in the stylesheet. 320px is what it always
+   was and stays the default. */
+#inspector { width: var(--inspector-w, 320px); flex: none; border-left: 1px solid var(--edge); }
+:root[data-inspector="medium"] { --inspector-w: 440px; }
+:root[data-inspector="wide"] { --inspector-w: 600px; }
 
 /* A pane scrolls; nothing else does, and nothing scrolls sideways. The two
    `overscroll-behavior` lines are what stop a flick that reaches the end of
@@ -824,17 +875,23 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 }
 #inspector .actions #complete { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-/* The note grows with what is in it — app.js sets the height on every
-   keystroke — so it needs no scrollbar of its own and no fixed floor beyond
-   three lines. A drag handle stays, for anyone who wants it smaller. */
-#inspector textarea { overflow: hidden; resize: vertical; min-height: 56px; }
+/* The note and the title grow with what is in them — app.js sets the height
+   on every keystroke — so they need no scrollbar of their own. The floor is
+   here rather than in app.js: `grow` sets `height` and a CSS `min-height`
+   still wins over it, so three lines for the note and one for the title are
+   a stylesheet decision like every other size. `overflow-wrap` is for the
+   title a URL was pasted into: a textarea breaks at spaces on its own, and a
+   26-character id or a long link has none to break at. A drag handle stays,
+   for anyone who wants either box smaller. */
+#inspector textarea { overflow: hidden; resize: vertical; min-height: 56px; overflow-wrap: break-word; }
+#inspector textarea[name="title"] { min-height: 0; }
 #inspector .actions button.danger:hover { color: var(--over); border-color: var(--over); }
 #no-selection { color: var(--dim); }
 
 #facts { font-size: 12px; color: var(--dim); margin: 14px 0 0; }
 #facts dt { float: left; clear: left; width: 8.5em; }
 /* An id is 26 characters with nowhere to break, and the inspector is 320px
-   wide: without this it runs off the edge of the pane. */
+   wide at its narrowest: without this it runs off the edge of the pane. */
 #facts dd { margin: 0 0 3px 8.5em; overflow-wrap: anywhere; }
 
 /* --- compact: one pane at a time ----------------------------------- */
@@ -855,7 +912,11 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   body[data-pane="inspector"] #inspector { display: flex; }
 
   button.back { display: flex; }
-  #keys, #store { display: none; }
+  #keys, #store, #inspector-width { display: none; }
+  /* `.navbar > *:last-child` below pushes the last control to the right, and
+     the width button is now that child on the inspector's bar even though it
+     is hidden here. The status line is what has to be pushed instead. */
+  #inspector .navbar .status { margin-left: auto; }
   .navbar { min-height: 50px; position: relative; }
 
   /* Centred on the screen, not in what is left over. As a flex item between
@@ -930,7 +991,8 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
    controls in it is a scroll bar with a form inside. */
 
 #perspective-editor,
-#capture-editor {
+#capture-editor,
+#settings-editor {
   width: min(560px, calc(100vw - 24px));
   /* `dvh`, as the body uses, so a dialog is not sized against a viewport
      that includes browser chrome which is not there. */
@@ -943,9 +1005,11 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   overflow: hidden;
 }
 #perspective-editor::backdrop,
-#capture-editor::backdrop { background: rgba(0, 0, 0, 0.42); }
+#capture-editor::backdrop,
+#settings-editor::backdrop { background: rgba(0, 0, 0, 0.42); }
 #perspective-form,
-#capture-form { display: flex; flex-direction: column; max-height: inherit; }
+#capture-form,
+#settings-form { display: flex; flex-direction: column; max-height: inherit; }
 
 .dialog-head {
   display: flex;
@@ -1033,3 +1097,9 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 /* Delete sits at the far end, away from Save: the two are one tap apart and
    only one of them can be undone by typing it again. */
 #perspective-form .actions #perspective-delete { margin-left: auto; }
+
+/* The server dialog's fields are one disabled-able group: `tdo serve` greys
+   the whole of it out, and a fieldset's own border would only get in the way. */
+#settings-fields { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+#settings-fields:disabled { opacity: 0.5; }
+#settings-fields input[type="url"], #settings-fields input[type="password"] { width: 100%; }

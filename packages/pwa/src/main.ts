@@ -45,15 +45,15 @@ import {
 import {
   type Doc,
   type Elem,
-  type Ev,
   document,
   pageScheme,
   reloader,
   workers,
 } from './dom.ts';
-import { Router } from './router.ts';
+import { Router, httpError } from './router.ts';
 import { reloadOnUpdate } from './update.ts';
 import { type Shim, install } from './shim.ts';
+import type { Settings } from '@todocloud/core/webapi/http';
 
 /**
  * The shim is installed first, before anything can await, so that `app.js`
@@ -84,34 +84,9 @@ const page: Doc | undefined = document();
 
 const byID = (id: string): Elem | null => page?.getElementById(id) ?? null;
 
-/**
- * note writes to the connect screen's own status line. The viewer has its
- * own (`.status`, driven by `app.js`); this one is for the half of the app
- * that happens before there is a store to report about.
- */
-function note(message: string, isError = false): void {
-  const node = byID('connect-status');
-  if (node === null) {
-    return;
-  }
-  node.textContent = message;
-  node.classList.toggle('error', isError);
-}
-
 /** messageOf reads the text of a thrown value, whatever it is. */
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/**
- * showConnect switches between the two screens. The viewer's markup stays in
- * the document either way — `app.js` queries it at load and expects it to be
- * there — so this hides it rather than building it.
- */
-function showConnect(show: boolean): void {
-  byID('connect')?.toggleAttribute('hidden', !show);
-  byID('app')?.toggleAttribute('hidden', show);
-  page?.body.classList.toggle('connecting', show);
 }
 
 /**
@@ -142,19 +117,18 @@ async function openStore(cred: Credential): Promise<Store> {
 }
 
 /**
- * connect opens the store and hands it to the page. It reports its own
- * failures to the connect screen and leaves the form on screen, because
- * every way this fails is something the user can correct there: a wrong URL,
- * a token for another database, an expired token, a database with no schema.
+ * connect opens the store and hands it to the page. It returns the failure
+ * message rather than showing it, because who shows it depends on who asked:
+ * the server dialog keeps itself open and prints it, and a stored credential
+ * that no longer works at launch is left to the status bar's "could not
+ * connect" with the dialog one tap away.
  */
-async function connect(cred: Credential, stored: boolean): Promise<void> {
-  note('connecting…');
+async function connect(cred: Credential): Promise<string | undefined> {
   let st: Store;
   try {
     st = await openStore(cred);
   } catch (err) {
-    note(messageOf(err), true);
-    return;
+    return messageOf(err);
   }
   await disconnectStore();
   const router = new Router(st);
@@ -171,17 +145,7 @@ async function connect(cred: Credential, stored: boolean): Promise<void> {
     // which is what `tdo login --show` prints and is safe to read out loud.
     which.textContent = cred.token.hint();
   }
-  showConnect(false);
-  note('');
-  refresh();
-  if (!stored) {
-    // Said after the store opened, so a token that does not work is never
-    // reported as remembered.
-    const remember = byID('remember')?.checked === true;
-    if (!save(storages, cred, remember)) {
-      note('this browser would not store the token, so it is kept in memory for this tab only', true);
-    }
-  }
+  return undefined;
 }
 
 /** disconnectStore closes the open store, if there is one. */
@@ -201,85 +165,97 @@ async function disconnectStore(): Promise<void> {
 }
 
 /**
- * submit reads the form. The URL is validated with the provider's own parser
- * before the token is touched, so a URL carrying a query string or embedded
- * credentials is refused here rather than being sent anywhere.
+ * settings answers the server dialog. The URL is validated with the
+ * provider's own parser before the token is touched, so a URL carrying a
+ * query string or embedded credentials is refused here rather than sent
+ * anywhere. An empty token keeps the stored one for the same database, which
+ * is what lets the dialog be reopened without retyping a secret it never
+ * received; a database with no token at all is a local sqld, and is allowed.
  */
-async function submit(event: Ev): Promise<void> {
-  event.preventDefault();
-  const urlField = byID('turso-url');
-  const tokenField = byID('turso-token');
-  if (urlField === null || tokenField === null) {
-    return;
+async function settings(method: string, body: string | undefined): Promise<Response> {
+  if (method === 'GET') {
+    const view: Settings = {
+      editable: true,
+      url: rememberedURL(storages) ?? '',
+      token_set: load(storages) !== undefined,
+      remember: remembered(storages),
+      notice: '',
+    };
+    return json(200, view);
   }
-  const url = (urlField.value ?? '').trim();
+  if (method !== 'PUT') {
+    return httpError(405, 'usage', `${method} is not allowed here`);
+  }
+  let asked: { url?: unknown; token?: unknown; remember?: unknown };
+  try {
+    asked = JSON.parse(body ?? '') as typeof asked;
+  } catch {
+    return httpError(400, 'usage', 'the settings request is not JSON');
+  }
+  const url = typeof asked.url === 'string' ? asked.url.trim() : '';
   let endpoint: string;
   try {
     ({ endpoint } = validateURL(url));
   } catch (err) {
-    note(messageOf(err), true);
-    urlField.focus();
-    return;
+    return httpError(400, 'usage', messageOf(err));
   }
   if (mixedContent(pageScheme(), endpoint)) {
-    note(
-      'this page is served over https, and a browser will not let it reach an http:// database; serve the database over https, or open this app over http',
-      true,
+    return httpError(
+      400,
+      'usage',
+      'this page is served over https, and a browser will not let it reach an http:// database; serve the database over https, or open this app over http. A localhost address is the exception',
     );
-    urlField.focus();
-    return;
   }
-  const token = (tokenField.value ?? '').trim();
-  if (token === '') {
-    note('paste the database token for that database', true);
-    tokenField.focus();
-    return;
+  const typed = typeof asked.token === 'string' ? asked.token.trim() : '';
+  const stored = load(storages);
+  const token = typed !== '' ? new Secret(typed) : stored !== undefined && stored.url === url ? stored.token : new Secret('');
+  const cred = { url, token };
+  const failure = await connect(cred);
+  if (failure !== undefined) {
+    return httpError(503, 'config', failure);
   }
-  // The field is cleared as soon as the value is wrapped: a token sitting in
-  // an input is a token in the DOM, which the next screenshot or the next
-  // autofill prompt can carry further than anyone intended.
-  tokenField.value = '';
-  await connect({ url, token: new Secret(token) }, false);
+  if (!save(storages, cred, asked.remember === true)) {
+    return httpError(503, 'config', 'connected, but this browser would not store the token, so it is kept in memory for this tab only');
+  }
+  return json(200, { ok: true });
+}
+
+function json(status: number, payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+  });
 }
 
 /**
- * disconnect forgets the token and puts the connect screen back. It says
- * what it did *not* do: removing this browser's copy is not revoking the
- * token, and the only place that happens is Turso.
+ * disconnect forgets the token and leaves the app on its "could not connect"
+ * bar. It says what it did *not* do: removing this browser's copy is not
+ * revoking the token, and the only place that happens is Turso.
  */
 async function disconnect(): Promise<void> {
   forget(storages);
   await disconnectStore();
-  showConnect(true);
-  note('the token is gone from this browser. It is still valid at Turso until you revoke it there.');
+  refresh();
 }
 
 /** start wires the page and connects if a credential is already stored. */
 async function start(): Promise<void> {
-  byID('connect-form')?.addEventListener('submit', (event) => {
-    void submit(event);
-  });
+  shim.onSettings(settings);
   byID('disconnect')?.addEventListener('click', () => {
     void disconnect();
   });
 
-  const urlField = byID('turso-url');
-  const known = rememberedURL(storages);
-  if (urlField !== null && known !== undefined) {
-    urlField.value = known;
-  }
-  const box = byID('remember');
-  if (box !== null) {
-    box.checked = remembered(storages);
-  }
-
+  // The app opens first, always. Putting a form up for the moment it takes to
+  // read storage and reach the database made every launch flash a token
+  // prompt at someone who had already configured one. With nothing stored,
+  // the viewer's own first request is answered by the shim with "could not
+  // connect to sqlite server", which lands in its status bar; the Server
+  // button is how to fix that.
   const cred = load(storages);
-  if (cred === undefined) {
-    showConnect(true);
-    return;
+  if (cred !== undefined) {
+    await connect(cred);
   }
-  showConnect(true);
-  await connect(cred, true);
+  refresh();
 }
 
 // A page is the only reason to run any of this. Nothing imports this module

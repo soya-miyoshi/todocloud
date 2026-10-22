@@ -169,7 +169,12 @@ test('validateURL is the provider\'s own parser, so a token cannot hide in a URL
 });
 
 test('mixed content is caught before the request, not after', () => {
-  assert.equal(mixedContent('https:', 'http://localhost:8080/v2/pipeline'), true);
-  assert.equal(mixedContent('http:', 'http://localhost:8080/v2/pipeline'), false);
+  assert.equal(mixedContent('https:', 'http://sqld.example.com:8080/v2/pipeline'), true);
+  assert.equal(mixedContent('http:', 'http://sqld.example.com:8080/v2/pipeline'), false);
+  // Loopback is let through: browsers treat it as a secure context.
+  assert.equal(mixedContent('https:', 'http://localhost:8080/v2/pipeline'), false);
+  assert.equal(mixedContent('https:', 'http://127.0.0.1:8080/v2/pipeline'), false);
+  assert.equal(mixedContent('https:', 'http://[::1]:8080/v2/pipeline'), false);
+  assert.equal(mixedContent('https:', 'http://localhost.evil.example/v2/pipeline'), true);
   assert.equal(mixedContent('https:', 'https://example.turso.io/v2/pipeline'), false);
 });

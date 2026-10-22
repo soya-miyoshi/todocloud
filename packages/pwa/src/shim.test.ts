@@ -119,7 +119,7 @@ test('disconnected, the API answers with the config envelope', async () => {
   const payload = (await res.json()) as { error?: { code?: string; message?: string } };
   assert.equal(payload.error?.code, 'config');
   // The message tells the user what to do, because the page shows it.
-  assert.match(payload.error?.message ?? '', /Turso URL and token/);
+  assert.match(payload.error?.message ?? '', /could not connect to sqlite server/);
   assert.equal(net.calls.length, 0);
 });
 
@@ -141,4 +141,19 @@ test('the shim answers exactly one path space', () => {
   // Stated as a test because it is a contract with `app.js`, which builds
   // every request path from this literal.
   assert.equal(apiPrefix, '/api/');
+});
+
+test('the settings endpoint is answered with no store connected, and only by its handler', async () => {
+  const net = recorder();
+  const shim = new Shim(net.fetch);
+  const asked: { method: string; body: string | undefined }[] = [];
+  shim.onSettings(async (method, body) => {
+    asked.push({ method, body });
+    return new Response('{"editable":true}', { status: 200 });
+  });
+
+  const res = await shim.fetch('/api/settings', { method: 'PUT', body: '{"url":"x"}' });
+  assert.equal(await res.text(), '{"editable":true}');
+  assert.deepEqual(asked, [{ method: 'PUT', body: '{"url":"x"}' }]);
+  assert.equal(net.calls.length, 0);
 });

@@ -1597,15 +1597,21 @@ function fillInspector(form, t) {
     el('option', { value: '', textContent: t.kind === 'task' ? '(inbox)' : '(top level)' }),
     ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
   form.elements.parent_id.value = t.parent_id || '';
+  grow(form.elements.title);
   grow(form.elements.note);
 }
 
-// grow sizes the note to its contents: a note is read far more often than
-// it is written, and a four-line box with twenty lines in it hides what it
-// was written for.
+// grow sizes a box to its contents: a note is read far more often than it is
+// written, and a four-line box with twenty lines in it hides what it was
+// written for. The title is the same argument in one line — it wraps and the
+// box follows rather than scrolling sideways past what was typed.
+//
+// There is no floor here any more. app.css gives each box a `min-height` and
+// that wins over the `height` set below, so the three-line note and the
+// one-line title are a stylesheet decision rather than a number in here.
 function grow(area) {
   area.style.height = 'auto';
-  area.style.height = `${Math.max(area.scrollHeight, 56)}px`;
+  area.style.height = `${area.scrollHeight}px`;
 }
 
 // canContain mirrors task.Kind.CanContain: a folder holds folders and
@@ -2049,11 +2055,19 @@ async function saveNow() {
   return saving;
 }
 
+// oneLine folds the newlines out of a pasted title. The title field wraps
+// what is in it, which is a width, not a line break; the store trims a title
+// and otherwise keeps it exactly, so a break that reached it would stay there
+// and be drawn in every list the item appears in.
+function oneLine(value) {
+  return value.replace(/[\r\n]+/g, ' ');
+}
+
 // readInspector takes the form as a plain value with no DOM left in it, so
 // that what gets saved is what was on screen when the save was asked for.
 function readInspector(form) {
   return {
-    title: form.elements.title.value,
+    title: oneLine(form.elements.title.value),
     note: form.elements.note.value,
     tags: form.elements.tags.value.split(',').map((s) => s.trim()).filter(Boolean),
     estimate: form.elements.estimate.value.trim() || '0',
@@ -2096,9 +2110,20 @@ async function writeInspector(edited, t) {
 }
 
 $('#detail').oninput = (event) => {
-  if (event.target.name === 'note') grow(event.target);
+  if (event.target.tagName === 'TEXTAREA') grow(event.target);
   scheduleSave();
 };
+
+// A title is one line of text whatever it is drawn in, so Enter commits it
+// the way it did when this was an `<input>` — the browser would otherwise put
+// a newline in a field the store keeps verbatim, and the outline would draw
+// an item whose title has a break in the middle of it. A newline that arrives
+// by paste is folded in `readInspector`, which is the other way in.
+$('#detail').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || event.target.name !== 'title') return;
+  event.preventDefault();
+  saveNow();
+});
 
 // A menu, a checkbox or a date is finished the moment it changes, and a
 // date picker never fires `input` on every platform anyway.
@@ -2406,6 +2431,140 @@ if ($('#badge-ask')) {
     updateBadge();
     renderBadgeAsk();
   };
+}
+
+// --- the server dialog -----------------------------------------------
+
+// Where the database is. Both front ends serve this dialog and this code; the
+// only thing that differs is what `GET /api/settings` says about whether the
+// page may change it. `tdo serve` says no — its connection is the CLI's
+// configuration — and the fieldset is disabled, greyed out, with the notice
+// naming the commands. The PWA says yes and keeps what it is given in this
+// browser. Neither ever sends a token back: only whether one is stored.
+const settingsEditor = $('#settings-editor');
+const settingsForm = $('#settings-form');
+const localSqld = 'http://127.0.0.1:8080';
+
+function settingsStatus(message, isError) {
+  const node = $('#settings-status');
+  node.textContent = message || '';
+  node.classList.toggle('error', Boolean(isError));
+}
+
+async function openSettings() {
+  const current = await api('GET', '/api/settings');
+  const f = settingsForm.elements;
+  f.url.value = current.url;
+  f.token.value = '';
+  f.token.placeholder = current.token_set ? 'unchanged — a token is stored' : 'TOKEN_GOES_HERE';
+  f.remember.checked = current.remember;
+  $('#settings-notice').textContent = current.notice;
+  $('#settings-fields').disabled = !current.editable;
+  settingsStatus('');
+  settingsEditor.showModal();
+}
+
+if (settingsEditor) {
+  $('#settings').onclick = () => openSettings().catch((err) => say(err.message, true));
+  $('#settings-close').onclick = () => settingsEditor.close();
+  $('#settings-local').onclick = () => {
+    settingsForm.elements.url.value = localSqld;
+    settingsForm.elements.token.focus();
+  };
+  // `method="dialog"` would close the dialog on submit, so the default is
+  // prevented: a connection that failed has to stay open to say why.
+  settingsForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = settingsForm.elements;
+    settingsStatus('connecting…');
+    try {
+      await api('PUT', '/api/settings', {
+        url: f.url.value.trim(),
+        token: f.token.value.trim(),
+        remember: f.remember.checked,
+      });
+    } catch (err) {
+      settingsStatus(err.message, true);
+      return;
+    }
+    f.token.value = '';
+    settingsEditor.close();
+    await reload('connected').catch((err) => say(err.message, true));
+  };
+}
+
+// --- the colour scheme ------------------------------------------------
+
+// auto follows the system, which is all app.css did on its own; light and
+// dark force it through `data-theme` on the root, and the rules for those
+// are in app.css. The choice is this browser's way of looking at the list,
+// so it lives in localStorage like the other preferences above.
+const ThemeKey = 'todocloud.theme';
+const themes = ['auto', 'light', 'dark'];
+
+function applyTheme(theme) {
+  if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', theme);
+  const button = $('#theme');
+  if (button) button.textContent = `Theme: ${theme}`;
+}
+
+{
+  let theme = remembered(ThemeKey, 'auto');
+  if (!themes.includes(theme)) theme = 'auto';
+  applyTheme(theme);
+  const button = $('#theme');
+  if (button) {
+    button.onclick = () => {
+      theme = themes[(themes.indexOf(theme) + 1) % themes.length];
+      remember(ThemeKey, theme);
+      applyTheme(theme);
+    };
+  }
+}
+
+// --- how wide the inspector is ----------------------------------------
+
+// Three steps, cycled by the button on the inspector's own bar. Which one is
+// right depends on the screen it is being read on and on how much is in the
+// item, so it is a preference and it lives in localStorage beside the theme
+// and the Forecast's order — this browser's way of looking at the list, not a
+// fact about it. The widths themselves are in app.css: `data-inspector` on
+// the root picks one, the same way `data-theme` picks a palette.
+const InspectorWidthKey = 'todocloud.inspector.width';
+const inspectorWidths = ['narrow', 'medium', 'wide'];
+
+function applyInspectorWidth(width) {
+  if (width === 'narrow') document.documentElement.removeAttribute('data-inspector');
+  else document.documentElement.setAttribute('data-inspector', width);
+  const button = $('#inspector-width');
+  // The label is the state, not the next step: the arrow is the same control
+  // whatever it is about to do, and a title attribute is the only place a
+  // one-character button can say which of the three it is in.
+  if (button) button.title = `Inspector width: ${width}`;
+  // A title that was wrapped to the old width is wrapped to the wrong one
+  // now, and the box is still the height the old wrapping needed. Nothing to
+  // re-measure while the form is hidden: `scrollHeight` is 0 there, and
+  // `fillInspector` grows both boxes when an item is put in them.
+  const form = $('#detail');
+  if (form && !form.hidden) {
+    grow(form.elements.title);
+    grow(form.elements.note);
+  }
+}
+
+{
+  let width = remembered(InspectorWidthKey, 'narrow');
+  if (!inspectorWidths.includes(width)) width = 'narrow';
+  applyInspectorWidth(width);
+  const button = $('#inspector-width');
+  if (button) {
+    button.onclick = () => {
+      width = inspectorWidths[(inspectorWidths.indexOf(width) + 1) % inspectorWidths.length];
+      remember(InspectorWidthKey, width);
+      applyInspectorWidth(width);
+    };
+  }
 }
 
 // --- installing to a home screen ---------------------------------------
