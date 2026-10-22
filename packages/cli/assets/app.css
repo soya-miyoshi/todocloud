@@ -171,7 +171,13 @@ body {
   position: fixed;
   inset: 0;
   overflow: hidden;
-  overscroll-behavior: none;
+  /* The vertical axis only. `overscroll-behavior: none` here also turned off
+     the horizontal one, and on a trackpad that axis *is* the browser's
+     back/forward gesture: a two-finger swipe right stopped navigating back.
+     Nothing in this layout scrolls sideways, so there is no sideways
+     overscroll of our own to suppress — leaving x at `auto` gives the
+     gesture back to the browser, where `popstate` already drives the panes. */
+  overscroll-behavior-y: none;
   /* The sides only.
      Installed to a home screen the page reaches under the notch and the home
      indicator (`viewport-fit=cover`), and those two bands have to be paid
@@ -209,8 +215,8 @@ body {
 :root[data-inspector="medium"] { --inspector-w: 440px; }
 :root[data-inspector="wide"] { --inspector-w: 600px; }
 
-/* A pane scrolls; nothing else does, and nothing scrolls sideways. The two
-   `overscroll-behavior` lines are what stop a flick that reaches the end of
+/* A pane scrolls; nothing else does, and nothing scrolls sideways. The
+   `overscroll-behavior-y` line is what stops a flick that reaches the end of
    the list from becoming a pull on the page behind it — which on iOS is the
    rubber-band that looked like the layout coming apart — and
    `overflow-x: hidden` stops a row that is momentarily too wide (a long
@@ -222,7 +228,9 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior-y: contain;
-  overscroll-behavior-x: none;
+  /* x is deliberately left alone: `overflow-x: hidden` above already means a
+     pane cannot scroll across, and a `none` here would eat the trackpad's
+     swipe-back gesture before the browser saw it. */
   -webkit-overflow-scrolling: touch;
   /* The last line pays the home indicator back for the body, which does
      not: see the note there. */
@@ -1297,3 +1305,16 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 #settings-fields { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 #settings-fields:disabled { opacity: 0.5; }
 #settings-fields input[type="url"], #settings-fields input[type="password"] { width: 100%; }
+
+/* The inspector's title is a button so that it can be a way up. */
+.navbar h2 .linklike {
+  all: unset;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.navbar h2 .linklike:disabled { cursor: default; }
+.navbar h2 .linklike:not(:disabled):hover { text-decoration: underline; }
+.navbar h2 .linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

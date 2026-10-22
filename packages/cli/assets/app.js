@@ -2029,6 +2029,7 @@ function renderInspector() {
   $('#no-selection').hidden = Boolean(t);
   form.hidden = !t;
   $('#back-label').textContent = 'Home';
+  renderInspectorTitle(t);
   if (!t) return;
 
   // Every write is followed by a fresh snapshot, and the snapshot arrives
@@ -2044,6 +2045,18 @@ function renderInspector() {
 
   $('#facts').replaceChildren(...facts(t));
   $('#complete').textContent = t.status === 'done' ? 'Reopen' : 'Complete';
+}
+
+// The inspector's title is the project the item belongs to, and clicking it
+// goes up to that project's view. A project is its own title; an item with
+// no project above it (an inbox task, a folder) has nothing to go up to, so
+// the title is plain text there.
+function renderInspectorTitle(t) {
+  const button = /** @type {HTMLButtonElement} */ ($('#inspector-project'));
+  const project = t ? [t, ...parentsOf(t).reverse()].find((x) => x.kind === 'project') : null;
+  button.textContent = project ? project.title : t ? (t.kind === 'folder' ? t.title : 'Inbox') : '';
+  button.disabled = !project;
+  button.onclick = project ? () => openContainer(project) : null;
 }
 
 function fillInspector(form, t) {
