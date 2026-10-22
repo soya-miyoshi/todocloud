@@ -567,6 +567,30 @@ const ProjectDoneKey = 'tdo.project.done';
 
 let projectDoneShown = remembered(ProjectDoneKey, '') === 'shown';
 
+// On one day of the Forecast, whether what was finished that day is on it.
+//
+// A day is the one part of the Forecast where a completed item is not noise.
+// The Forecast as a whole is a list of work and a finished task has left it;
+// a single day is also a day — "what was Tuesday" is a question with an
+// answer, and the answer without the four things that were done that day is
+// a worse answer. OmniFocus's Forecast says the same thing by putting the
+// day's calendar events beside its tasks: a day is a record as much as a
+// plan.
+//
+// Scoped to a day on purpose. `all` does not get these rows: the flat list
+// is ordered by a date that is in the future for most of it, and a task
+// finished on Monday has no place in it. Off to begin with, and remembered
+// per browser like the order above.
+const ForecastDoneKey = 'tdo.forecast.done';
+
+let forecastDoneShown = remembered(ForecastDoneKey, '') === 'shown';
+
+function toggleForecastDone() {
+  forecastDoneShown = !forecastDoneShown;
+  remember(ForecastDoneKey, forecastDoneShown ? 'shown' : 'hidden');
+  render();
+}
+
 function toggleProjectDone() {
   projectDoneShown = !projectDoneShown;
   remember(ProjectDoneKey, projectDoneShown ? 'shown' : 'hidden');
@@ -1327,6 +1351,12 @@ function forecastDays() {
     weekday: WEEKDAYS[today.getUTCDay()],
     dueMatch: (d) => d <= 0,
     startMatch: (d) => d === 0,
+    // Unlike `dueMatch`, today's completions are today's and no earlier
+    // day's. A deadline that has passed is still work and belongs to the day
+    // it is being looked at on; something finished last Tuesday happened on
+    // Tuesday, and today claiming it would make every day's record the whole
+    // history.
+    doneMatch: (d) => d === 0,
     today: true,
   }];
   for (let i = 1; i <= 6; i += 1) {
@@ -1338,6 +1368,7 @@ function forecastDays() {
       weekday: WEEKDAYS[day.getUTCDay()],
       dueMatch: (d) => d === i,
       startMatch: (d) => d === i,
+      doneMatch: (d) => d === i,
       today: false,
     });
   }
@@ -1369,6 +1400,21 @@ const dueOn = (cell) => state.tasks.filter(
 const startsOn = (cell) => state.tasks.filter(
   (t) => t.kind === 'task' && t.defer_at && isOpen(t) && cell.startMatch(calendarDays(t.defer_at)));
 
+// completedOn is the day as a record rather than a plan: what was finished
+// on it. Not counted on the cell and not in any badge — a day's number means
+// work, and a number that grew as the day went well would be the opposite of
+// what the Forecast is read for. These rows appear only inside the day, and
+// only while `forecastDoneShown` is on.
+//
+// `completed_at` rather than the status, because the question is which day it
+// happened on: a task done on Monday is `done` on Tuesday too. Dropped items
+// are not in it — deciding against something is not an achievement to file
+// under the afternoon — and neither is a task completed by its parent, which
+// has no `completed_at` of its own to place it.
+const completedOn = (cell) => state.tasks.filter(
+  (t) => t.kind === 'task' && t.status === 'done' && t.completed_at
+    && cell.doneMatch(calendarDays(t.completed_at)));
+
 // forecastOn is the day itself: everything the day has to say, deadlines
 // first. It is what a day cell opens.
 function forecastOn(cell) {
@@ -1380,7 +1426,18 @@ function forecastOn(cell) {
   // In the order the reader chose for the Forecast, like every other list in
   // it: a day that sorted itself differently from the week above it would be
   // a second rule to learn for no reason.
-  return items.sort(FORECAST_SORTS[forecastOrder]);
+  items.sort(FORECAST_SORTS[forecastOrder]);
+  if (!forecastDoneShown) return items;
+  // After the work, never mixed into it, and in the order they were finished
+  // — which is the order the day happened in and the only order a record
+  // wants. Sorting them with the rest would scatter them through the day's
+  // list by a deadline that no longer means anything, and a task finished
+  // early would sit above the one still to do.
+  // Nothing here can already be above: `dueOn` and `startsOn` take open
+  // items only, and this takes finished ones.
+  const done = completedOn(cell)
+    .sort((a, b) => String(a.completed_at).localeCompare(String(b.completed_at)));
+  return items.concat(done);
 }
 
 function forecastStrip() {
@@ -1741,7 +1798,25 @@ function renderWeek() {
     onclick: () => select({ kind: 'due', key: 'all' }),
   });
   all.setAttribute('aria-pressed', view.key === 'all' ? 'true' : 'false');
-  row.append(all, el('span', { className: 'spacer' }), el('span', { className: 'label', textContent: 'Sort' }));
+  row.append(all);
+
+  // And, on a day, whether what was finished on it is shown. Only on a day:
+  // the toggle does nothing to the `all` list (see `forecastDoneShown`), and
+  // a control that is live on one tab of a bar and inert on the other is a
+  // control that teaches the wrong thing. It says which state it is in
+  // rather than what it would do, like the project's own toggle.
+  if (view.key && view.key !== 'all') {
+    const done = el('button', {
+      type: 'button',
+      className: 'seg',
+      textContent: forecastDoneShown ? 'Completed: shown' : 'Completed: hidden',
+      onclick: toggleForecastDone,
+    });
+    done.setAttribute('aria-pressed', forecastDoneShown ? 'true' : 'false');
+    row.append(done);
+  }
+
+  row.append(el('span', { className: 'spacer' }), el('span', { className: 'label', textContent: 'Sort' }));
   // Two words, the one in force marked: a menu to pick between two things is
   // one tap too many.
   for (const o of FORECAST_ORDERS) {
@@ -3059,6 +3134,7 @@ function openPrefs() {
   $select('#prefs-inspector').value = inspectorWidth;
   $select('#prefs-forecast').value = forecastOrder;
   $input('#prefs-project-done').checked = projectDoneShown;
+  $input('#prefs-forecast-done').checked = forecastDoneShown;
   prefsEditor.showModal();
 }
 
@@ -3069,6 +3145,7 @@ if (prefsEditor) {
   $select('#prefs-inspector').onchange = (event) => setInspectorWidth(/** @type {HTMLInputElement} */ (event.target).value);
   $select('#prefs-forecast').onchange = (event) => setForecastOrder(/** @type {HTMLInputElement} */ (event.target).value);
   $input('#prefs-project-done').onchange = () => toggleProjectDone();
+  $input('#prefs-forecast-done').onchange = () => toggleForecastDone();
   // Where the database is is a question about the store and not about this
   // browser, so it keeps the dialog it had. One modal at a time: the gear is
   // the way to it now, so it closes behind the one it opens.
