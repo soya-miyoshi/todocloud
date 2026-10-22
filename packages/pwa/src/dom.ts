@@ -48,10 +48,17 @@ export interface Ev {
   preventDefault(): void;
 }
 
-/** Doc is the document. */
+/**
+ * Doc is the document. The last two members are optional because they are
+ * not about the markup: they are how `update.ts` notices that the app has
+ * come back to the foreground, and the fakes in the tests that are about
+ * elements have no reason to grow a visibility state.
+ */
 export interface Doc {
   getElementById(id: string): Elem | null;
   readonly body: Elem;
+  readonly visibilityState?: string;
+  addEventListener?(type: string, listener: () => void): void;
 }
 
 /**
@@ -89,6 +96,22 @@ export function pageScheme(global: typeof globalThis = globalThis): string {
 export interface Workers {
   readonly controller: unknown;
   addEventListener(type: string, listener: () => void): void;
+  /**
+   * The registration, for asking it to check whether the worker file has
+   * changed. Optional: it is absent in the fakes that are only about a
+   * controller changing, and a browser that does not have it simply never
+   * gets the extra check.
+   */
+  getRegistration?(): Promise<Registration | null | undefined>;
+}
+
+/**
+ * Registration is a `ServiceWorkerRegistration`, with the one method this
+ * app calls on one: `update()` re-fetches `sw.js` and installs it if a byte
+ * differs.
+ */
+export interface Registration {
+  update(): Promise<unknown>;
 }
 
 /** Reloader is `location`, with the one method used on it. */

@@ -36,7 +36,10 @@
 //     with no network. The background revalidation is what keeps the copy
 //     from going stale: after each shell response is served from the cache, a
 //     fresh one is fetched and written over it, so the next launch runs the
-//     current build. A stale shell is a real hazard — the import map in the
+//     current build. Both that fetch and the precache go past the browser's
+//     HTTP cache (`cache: 'no-cache'` and `cache: 'reload'`), without which
+//     "fresh" means "up to ten minutes old" on this host and a new worker
+//     can precache the build it was installed to replace. A stale shell is a real hazard — the import map in the
 //     page and the emitted modules have to agree — which is why the name
 //     below carries the commit and `activate` deletes every cache that is
 //     not this one.
@@ -129,14 +132,49 @@ const SHELL = [
 const shellURLs = new Set(SHELL.map((path) => new URL(path, self.registration.scope).href));
 
 self.addEventListener('install', (event) => {
-  // A shell that is only half cached is worse than none: the page would load
-  // and its modules would not. `addAll` rejects as a unit, so a failed
-  // install leaves the previous cache in place and the app online-only until
-  // the next one succeeds.
-  event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()),
-  );
+  event.waitUntil(fill().then(() => self.skipWaiting()));
 });
+
+/**
+ * fill precaches the shell, from the network rather than from whatever the
+ * browser happens to be holding.
+ *
+ * This was `cache.addAll(SHELL)`, and that is the line that made a deploy
+ * not arrive. `addAll` fetches with the default cache mode, which consults
+ * the HTTP cache — and GitHub Pages serves every file here with
+ * `max-age=600`. So the new worker, whose entire reason for existing is that
+ * the build changed, filled its brand-new cache with the ten-minute-old
+ * copies of the previous build: a new cache name, the old bytes in it, the
+ * old cache deleted, and nothing left to notice the difference until those
+ * ten minutes lapsed and a background revalidation happened to run. The
+ * shell is also the one place a mix of two builds is fatal — the import map
+ * in the page and the emitted modules have to agree — so a precache that can
+ * silently be a build behind is not a cache at all.
+ *
+ * `cache: 'reload'` is the fix: fetch from the network, ignore the HTTP
+ * cache for the request, and write what came back into it.
+ *
+ * A shell that is only half cached is worse than none: the page would load
+ * and its modules would not. So every response is collected before anything
+ * is written, and one that did not arrive — or arrived as a 404 from a
+ * misconfigured host — throws before the first `put`. A failed install
+ * leaves the previous cache in place and the app online-only until the next
+ * one succeeds, which is what `addAll`'s all-or-nothing gave us and is worth
+ * keeping.
+ */
+async function fill() {
+  const fresh = await Promise.all(
+    SHELL.map(async (path) => {
+      const response = await fetch(new Request(path, { cache: 'reload' }));
+      if (!response.ok) {
+        throw new Error(`sw: ${path} answered ${response.status}`);
+      }
+      return [path, response];
+    }),
+  );
+  const cache = await caches.open(CACHE);
+  await Promise.all(fresh.map(([path, response]) => cache.put(path, response)));
+}
 
 self.addEventListener('activate', (event) => {
   // Every other cache goes, including one from an older version of this
@@ -180,8 +218,16 @@ async function shell(key, request) {
     // The copy on disk is replaced only by a response that actually arrived
     // and was actually ok; a 404 from a misconfigured host must not evict a
     // working shell.
-    const refresh = fetch(request)
-      .then((fresh) => (fresh.ok ? cache.put(key, fresh.clone()) : undefined))
+    // `no-cache`, not the default: the point of this request is to find out
+    // what the server has now, and the default mode can answer it from the
+    // HTTP cache — which on GitHub Pages means a copy up to ten minutes old,
+    // for a check whose whole job is to be current. It still revalidates
+    // rather than re-downloading, so an unchanged file costs a 304.
+    // The key is used rather than `request`, because every entry on the
+    // allow-list is a plain same-origin GET of a static file: a navigation
+    // is answered by `/`, and that is the URL to refresh.
+    const refresh = fetch(key, { cache: 'no-cache' })
+      .then((fresh) => (fresh.ok ? cache.put(key, fresh) : undefined))
       .catch(() => undefined);
     // waitUntil is unavailable here, so the refresh is simply not awaited.
     // A worker killed before it finishes leaves the old entry, which is the

@@ -9,8 +9,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { reloadOnUpdate } from './update.ts';
-import type { Reloader, Workers } from './dom.ts';
+import { checkOnResume, reloadOnUpdate } from './update.ts';
+import type { Doc, Elem, Reloader, Registration, Workers } from './dom.ts';
 
 /**
  * fakeWorkers is `navigator.serviceWorker` with a settable controller and a
@@ -93,4 +93,89 @@ test('no service worker and no location are both survivable', () => {
   const sw = fakeWorkers({});
   reloadOnUpdate(sw, undefined);
   assert.equal(sw.listeners, 0);
+});
+
+/**
+ * fakeDoc is the document as `checkOnResume` sees it: a visibility state
+ * that the test sets, and a `show` that fires the event the browser fires
+ * when the app comes back to the front.
+ */
+function fakeDoc(): Doc & { show(state: string): void; listeners: number } {
+  const listeners: (() => void)[] = [];
+  let state = 'visible';
+  return {
+    getElementById(): Elem | null {
+      return null;
+    },
+    get body(): Elem {
+      throw new Error('fakeDoc has no body');
+    },
+    get visibilityState(): string {
+      return state;
+    },
+    addEventListener(type: string, listener: () => void): void {
+      assert.equal(type, 'visibilitychange');
+      listeners.push(listener);
+    },
+    show(next: string): void {
+      state = next;
+      for (const listener of [...listeners]) {
+        listener();
+      }
+    },
+    get listeners(): number {
+      return listeners.length;
+    },
+  };
+}
+
+/** fakeRegistered counts update checks instead of making a request. */
+function fakeRegistered(): Workers & { checks: number } {
+  let checks = 0;
+  const registration: Registration = {
+    update(): Promise<unknown> {
+      checks += 1;
+      return Promise.resolve(undefined);
+    },
+  };
+  return {
+    controller: {},
+    addEventListener(): void {},
+    getRegistration(): Promise<Registration> {
+      return Promise.resolve(registration);
+    },
+    get checks(): number {
+      return checks;
+    },
+  };
+}
+
+test('coming back to the foreground asks for a new worker', async () => {
+  const sw = fakeRegistered();
+  const doc = fakeDoc();
+  checkOnResume(sw, doc);
+  assert.equal(sw.checks, 0, 'nothing happens until the app is resumed');
+  doc.show('visible');
+  // The check is not awaited by the handler, so let its promises settle.
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(sw.checks, 1);
+});
+
+test('going away does not ask', () => {
+  // `visibilitychange` fires on the way out as well, and a backgrounded app
+  // has no reason to spend a request.
+  const sw = fakeRegistered();
+  const doc = fakeDoc();
+  checkOnResume(sw, doc);
+  doc.show('hidden');
+  assert.equal(sw.checks, 0);
+});
+
+test('a browser with no registration support is survivable', () => {
+  const doc = fakeDoc();
+  checkOnResume({ controller: {}, addEventListener(): void {} }, doc);
+  assert.equal(doc.listeners, 0, 'no listener is even registered');
+  checkOnResume(undefined, doc);
+  assert.equal(doc.listeners, 0);
 });

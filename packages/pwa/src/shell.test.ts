@@ -210,10 +210,18 @@ test('the service worker answers nothing but the allow-list', () => {
   // user's database — and the Authorization header on it — out of here.
   assert.equal([...text.matchAll(/event\.respondWith\(/g)].length, 1);
   assert.match(text, /if \(!shellURLs\.has\(key\)\) \{\s*return;\s*\}\s*event\.respondWith/);
-  // And exactly one place a response is written to a cache, keyed by an
-  // allow-listed URL rather than by the request.
-  assert.equal([...text.matchAll(/cache\.put\(/g)].length, 1);
+  // And exactly two places a response is written to a cache — the precache
+  // and the revalidation behind an answer — each keyed by an allow-listed
+  // URL rather than by the request: `path` comes from SHELL and `key` is a
+  // member of `shellURLs`, checked above.
+  assert.equal([...text.matchAll(/cache\.put\(/g)].length, 2);
   assert.match(text, /cache\.put\(key,/);
+  assert.match(text, /cache\.put\(path,/);
+  // The two fetches that fill it go past the browser's HTTP cache. Without
+  // this a deploy arrives up to `max-age` late, and a worker installed
+  // because the build changed can precache the build it replaces.
+  assert.match(text, /new Request\(path, \{ cache: 'reload' \}\)/);
+  assert.match(text, /fetch\(key, \{ cache: 'no-cache' \}\)/);
 });
 
 test('nothing the browser loads imports node:*', () => {

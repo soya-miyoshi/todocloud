@@ -51,7 +51,7 @@ import {
   workers,
 } from './dom.ts';
 import { Router, httpError } from './router.ts';
-import { reloadOnUpdate } from './update.ts';
+import { checkOnResume, reloadOnUpdate } from './update.ts';
 import { type Shim, install } from './shim.ts';
 import type { Settings } from '@todocloud/core/webapi/http';
 
@@ -264,5 +264,6 @@ async function start(): Promise<void> {
 // could ever load to find out why.
 if (page !== undefined) {
   reloadOnUpdate(workers(), reloader());
+  checkOnResume(workers(), page);
   void start();
 }

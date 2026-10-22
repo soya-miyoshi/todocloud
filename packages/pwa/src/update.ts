@@ -10,7 +10,7 @@
 // with it. So the testable part lives here, where it imports nothing that
 // touches a global.
 
-import type { Reloader, Workers } from './dom.ts';
+import type { Doc, Reloader, Workers } from './dom.ts';
 
 /**
  * reloadOnUpdate makes an update arrive in the launch that fetches it,
@@ -56,5 +56,42 @@ export function reloadOnUpdate(sw: Workers | undefined, loc: Reloader | undefine
     }
     done = true;
     loc.reload();
+  });
+}
+
+/**
+ * checkOnResume asks the browser to look for a new worker whenever the app
+ * comes back to the foreground.
+ *
+ * `app.js` registers the worker inside `window.addEventListener('load')`,
+ * and registering is what makes the browser check `sw.js` for a changed
+ * byte. On a desktop tab that is enough, because a visit is a load. An
+ * installed app on a phone is the opposite: it is opened once and from then
+ * on *resumed* — the page is still there, `load` has long since fired, and
+ * nothing asks again. So a deploy could sit unnoticed for as long as the
+ * person kept using the app, which is exactly the shape of "the PWA is not
+ * updating".
+ *
+ * `update()` costs one conditional request for `sw.js` per time the app is
+ * brought to the front, and nothing else: an unchanged file ends there, and
+ * a changed one installs, precaches the new shell, claims the page and
+ * `reloadOnUpdate` above reloads it.
+ */
+export function checkOnResume(sw: Workers | undefined, doc: Doc | undefined): void {
+  const getRegistration = sw?.getRegistration;
+  const addEventListener = doc?.addEventListener;
+  if (sw === undefined || doc === undefined || getRegistration === undefined || addEventListener === undefined) {
+    return;
+  }
+  addEventListener.call(doc, 'visibilitychange', () => {
+    if (doc.visibilityState !== 'visible') {
+      return;
+    }
+    // Nothing is awaited and nothing is reported: a failed check is a
+    // network that is down, which this app says elsewhere and loudly.
+    void getRegistration
+      .call(sw)
+      .then((registration) => registration?.update())
+      .catch(() => undefined);
   });
 }
