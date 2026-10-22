@@ -18,7 +18,7 @@ Today — 2026-10-22
 2   *     2026-10-22  book the flight
 ```
 
-There is no todocloud server, no account to sign up for, and no telemetry.
+There is no todocloud server and no account to sign up for.
 Every client talks straight to *your* database with *your* credentials, and
 your tasks go there and nowhere else.
 
