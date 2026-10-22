@@ -111,6 +111,11 @@
     </div>
 
     <footer class="toolbar">
+      <!-- One way to the tweaks, at the bottom left of Home, and the same
+           gear the local viewer has: the theme and the server each had a
+           word of their own down here, which is two controls for two of the
+           several things this browser remembers. -->
+      <button type="button" id="prefs" class="icon" aria-label="Settings" aria-haspopup="dialog">&#x2699;</button>
       <span id="store" title="where these tasks live"></span>
       <!-- The badge on the app icon needs a permission on iOS, and a
            permission needs a tap. app.js keeps this hidden unless it is
@@ -119,8 +124,6 @@
            unanswered. Nothing here sends a notification. -->
       <button type="button" id="badge-ask" class="disclose" hidden>Badge</button>
       <span id="token-hint" title="which token this browser is using; a fingerprint, never the value"></span>
-      <button type="button" id="theme" class="disclose">Theme: auto</button>
-      <button type="button" id="settings" class="disclose">Server</button>
       <button type="button" id="disconnect" class="disclose">Disconnect</button>
     </footer>
   </nav>
@@ -144,6 +147,13 @@
       </form>
       <!-- The Forecast's week, filled by app.js and empty everywhere else. -->
       <div id="week" hidden></div>
+      <!-- What the container itself says. A project is a row like any other
+           — it has a note, dates, tags and its own fields — and inside it
+           that row is not on screen, so everything written on the project
+           was only readable by selecting it somewhere else. This block is
+           the project reading as the heading of its own list. Filled by
+           app.js, and hidden in every view that is not a container's. -->
+      <div id="about" hidden></div>
       <ol id="items" class="rows"></ol>
       <p id="empty" hidden>Nothing here.</p>
     </div>
@@ -216,6 +226,17 @@
           </label>
         </div>
         <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
+        <!-- A task's own fields (§ "Your own fields, from an agent"): the
+             open map `--set k=v` writes, which until now only a terminal
+             could see. One row per field, key and value both text, and the
+             value is typed by the same rule `--set` types it — the page
+             sends the text and the server parses it, so there is no second
+             copy of that rule here. The rows are built by app.js. -->
+        <fieldset id="fields">
+          <legend>Fields</legend>
+          <div id="field-rows"></div>
+          <button type="button" id="field-add">Add field</button>
+        </fieldset>
         <dl id="facts"></dl>
         <div class="actions">
           <button type="button" id="complete">Complete</button>
@@ -430,6 +451,60 @@
      may change it. `tdo serve` may not (its connection is the CLI's
      configuration, so the fieldset below is disabled and the notice says what
      to run), and the PWA saves it in this browser. -->
+<!-- Settings: what this browser remembers about how the list is looked at.
+     Nothing in here is in the store — a preference that followed the tasks
+     would be a preference about somebody else's screen — so it is all
+     localStorage, and the dialog is filled from the live state every time
+     it opens rather than kept in step with the controls elsewhere that set
+     the same things. The database is a different question and keeps its own
+     dialog; the button at the end opens it. -->
+<dialog id="prefs-editor" aria-label="Settings">
+  <form id="prefs-form" method="dialog" autocomplete="off">
+    <header class="dialog-head">
+      <h2>Settings</h2>
+      <button type="button" class="icon" id="prefs-close" aria-label="Close">&#x2715;</button>
+    </header>
+
+    <div class="dialog-body">
+      <div class="pair">
+        <label>Theme
+          <select id="prefs-theme" name="theme">
+            <option value="auto">auto</option>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+        </label>
+        <label>Inspector width
+          <select id="prefs-inspector" name="inspector">
+            <option value="narrow">narrow</option>
+            <option value="medium">medium</option>
+            <option value="wide">wide</option>
+          </select>
+        </label>
+      </div>
+
+      <label>Forecast order
+        <select id="prefs-forecast" name="forecast">
+          <option value="defer">defer date</option>
+          <option value="due">due date</option>
+        </select>
+      </label>
+
+      <label class="check">
+        <input id="prefs-project-done" name="project_done" type="checkbox">
+        Keep completed actions on screen inside a project
+      </label>
+      <p class="hint">A project is a plan, so what is finished is part of
+        where it has got to. Every other view is a list of work and never
+        shows it; the Completed perspective is the whole store's history.</p>
+
+      <div class="actions">
+        <button type="button" id="prefs-server">Server&#8230;</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="settings-editor" aria-label="Server">
   <form id="settings-form" method="dialog" autocomplete="off">
     <header class="dialog-head">

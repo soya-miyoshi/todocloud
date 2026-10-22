@@ -2714,7 +2714,12 @@ async function openSettings() {
 }
 
 if (settingsEditor) {
-  $('#settings').onclick = () => openSettings().catch((err) => say(err.message, true));
+  // The footer's own `Server` word is gone — the gear's dialog has the
+  // button now — but the PWA's shell is a different file and may still
+  // carry one, so this stays conditional rather than assuming either.
+  if ($('#settings')) {
+    $('#settings').onclick = () => openSettings().catch((err) => say(err.message, true));
+  }
   $('#settings-close').onclick = () => settingsEditor.close();
   $('#settings-local').onclick = () => {
     settingsForm.elements.url.value = localSqld;
@@ -2758,18 +2763,21 @@ function applyTheme(theme) {
   if (button) button.textContent = `Theme: ${theme}`;
 }
 
-{
-  let theme = remembered(ThemeKey, 'auto');
-  if (!themes.includes(theme)) theme = 'auto';
+// The choice is state of this module rather than of a block, because the
+// settings dialog sets it as well as the button that used to be the only way
+// to: two copies of "which theme is it" would be two answers the first time
+// either changed.
+let theme = themes.includes(remembered(ThemeKey, 'auto')) ? remembered(ThemeKey, 'auto') : 'auto';
+
+function setTheme(next) {
+  theme = themes.includes(next) ? next : 'auto';
+  remember(ThemeKey, theme);
   applyTheme(theme);
-  const button = $('#theme');
-  if (button) {
-    button.onclick = () => {
-      theme = themes[(themes.indexOf(theme) + 1) % themes.length];
-      remember(ThemeKey, theme);
-      applyTheme(theme);
-    };
-  }
+}
+
+setTheme(theme);
+if ($('#theme')) {
+  $('#theme').onclick = () => setTheme(themes[(themes.indexOf(theme) + 1) % themes.length]);
 }
 
 // --- how wide the inspector is ----------------------------------------
@@ -2802,18 +2810,62 @@ function applyInspectorWidth(width) {
   }
 }
 
-{
-  let width = remembered(InspectorWidthKey, 'narrow');
-  if (!inspectorWidths.includes(width)) width = 'narrow';
-  applyInspectorWidth(width);
-  const button = $('#inspector-width');
-  if (button) {
-    button.onclick = () => {
-      width = inspectorWidths[(inspectorWidths.indexOf(width) + 1) % inspectorWidths.length];
-      remember(InspectorWidthKey, width);
-      applyInspectorWidth(width);
-    };
-  }
+// As with the theme: the arrow on the inspector's bar and the menu in the
+// settings dialog are two controls over one piece of state.
+let inspectorWidth = inspectorWidths.includes(remembered(InspectorWidthKey, 'narrow'))
+  ? remembered(InspectorWidthKey, 'narrow')
+  : 'narrow';
+
+function setInspectorWidth(next) {
+  inspectorWidth = inspectorWidths.includes(next) ? next : 'narrow';
+  remember(InspectorWidthKey, inspectorWidth);
+  applyInspectorWidth(inspectorWidth);
+}
+
+setInspectorWidth(inspectorWidth);
+if ($('#inspector-width')) {
+  $('#inspector-width').onclick = () => setInspectorWidth(
+    inspectorWidths[(inspectorWidths.indexOf(inspectorWidth) + 1) % inspectorWidths.length]);
+}
+
+// --- the settings dialog ----------------------------------------------
+
+// The gear at the bottom left of Home. What is in it is everything this
+// browser remembers about how the list is read — the theme, the inspector's
+// width, the Forecast's order, whether a project keeps its completed
+// actions — and none of it is in the store: a preference that followed the
+// tasks would be a preference about somebody else's screen.
+//
+// The controls are filled from the live state each time the dialog opens
+// rather than kept in step with the other ways in (the arrow on the
+// inspector's bar, the Forecast's own segmented words). A dialog that is
+// only ever read while it is open has no reason to hold a second copy of
+// anything, and that is also why each control writes through the same
+// setter those other controls call.
+const prefsEditor = $('#prefs-editor');
+
+function openPrefs() {
+  $('#prefs-theme').value = theme;
+  $('#prefs-inspector').value = inspectorWidth;
+  $('#prefs-forecast').value = forecastOrder;
+  $('#prefs-project-done').checked = projectDoneShown;
+  prefsEditor.showModal();
+}
+
+if (prefsEditor) {
+  $('#prefs').onclick = openPrefs;
+  $('#prefs-close').onclick = () => prefsEditor.close();
+  $('#prefs-theme').onchange = (event) => setTheme(event.target.value);
+  $('#prefs-inspector').onchange = (event) => setInspectorWidth(event.target.value);
+  $('#prefs-forecast').onchange = (event) => setForecastOrder(event.target.value);
+  $('#prefs-project-done').onchange = () => toggleProjectDone();
+  // Where the database is is a question about the store and not about this
+  // browser, so it keeps the dialog it had. One modal at a time: the gear is
+  // the way to it now, so it closes behind the one it opens.
+  $('#prefs-server').onclick = () => {
+    prefsEditor.close();
+    openSettings().catch((err) => say(err.message, true));
+  };
 }
 
 // --- installing to a home screen ---------------------------------------

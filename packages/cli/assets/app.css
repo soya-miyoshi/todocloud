@@ -1194,6 +1194,23 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
    only one of them can be undone by typing it again. */
 #perspective-form .actions #perspective-delete { margin-left: auto; }
 
+/* The settings dialog. Its controls are menus and a checkbox, so it needs
+   nothing the dialog styles above do not already give it; what is here is
+   the way out to the server dialog, set apart from the preferences above it
+   because it is a question about the store and not about this browser. */
+#prefs-form .actions { display: flex; gap: 8px; margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--hair); }
+#prefs-form .actions button {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--raised);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+/* A checkbox is a box beside a line of text, not a field with a label over
+   it, so it opts out of the full-width rule the dialog gives every input. */
+#prefs-form label.check { display: flex; align-items: flex-start; gap: 7px; }
+#prefs-form label.check input { width: auto; flex: 0 0 auto; margin-top: 2px; }
+
 /* The server dialog's fields are one disabled-able group: `tdo serve` greys
    the whole of it out, and a fieldset's own border would only get in the way. */
 #settings-fields { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }

@@ -51,6 +51,12 @@
     </div>
 
     <footer class="toolbar">
+      <!-- One way to the tweaks, at the bottom left of Home. The theme and
+           the server each had a word of their own down here, which is two
+           controls for two of the several things this viewer remembers per
+           browser and nowhere for the rest; the gear is where all of them
+           live now. -->
+      <button type="button" id="prefs" class="icon" aria-label="Settings" aria-haspopup="dialog">&#x2699;</button>
       <span id="store" title="where these tasks live">{{.Store}}</span>
       <!-- The badge on the app icon needs a permission on iOS, and a
            permission needs a tap. app.js keeps this hidden unless it is
@@ -58,8 +64,6 @@
            installed to a home screen, and the permission has to be
            unanswered. Nothing here sends a notification. -->
       <button type="button" id="badge-ask" class="disclose" hidden>Badge</button>
-      <button type="button" id="settings" class="disclose">Server</button>
-      <button type="button" id="theme" class="disclose">Theme: auto</button>
     </footer>
   </nav>
 
@@ -380,6 +384,60 @@
      may change it. `tdo serve` may not (its connection is the CLI's
      configuration, so the fieldset below is disabled and the notice says what
      to run), and the PWA saves it in this browser. -->
+<!-- Settings: what this browser remembers about how the list is looked at.
+     Nothing in here is in the store — a preference that followed the tasks
+     would be a preference about somebody else's screen — so it is all
+     localStorage, and the dialog is filled from the live state every time
+     it opens rather than kept in step with the controls elsewhere that set
+     the same things. The database is a different question and keeps its own
+     dialog; the button at the end opens it. -->
+<dialog id="prefs-editor" aria-label="Settings">
+  <form id="prefs-form" method="dialog" autocomplete="off">
+    <header class="dialog-head">
+      <h2>Settings</h2>
+      <button type="button" class="icon" id="prefs-close" aria-label="Close">&#x2715;</button>
+    </header>
+
+    <div class="dialog-body">
+      <div class="pair">
+        <label>Theme
+          <select id="prefs-theme" name="theme">
+            <option value="auto">auto</option>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+        </label>
+        <label>Inspector width
+          <select id="prefs-inspector" name="inspector">
+            <option value="narrow">narrow</option>
+            <option value="medium">medium</option>
+            <option value="wide">wide</option>
+          </select>
+        </label>
+      </div>
+
+      <label>Forecast order
+        <select id="prefs-forecast" name="forecast">
+          <option value="defer">defer date</option>
+          <option value="due">due date</option>
+        </select>
+      </label>
+
+      <label class="check">
+        <input id="prefs-project-done" name="project_done" type="checkbox">
+        Keep completed actions on screen inside a project
+      </label>
+      <p class="hint">A project is a plan, so what is finished is part of
+        where it has got to. Every other view is a list of work and never
+        shows it; the Completed perspective is the whole store's history.</p>
+
+      <div class="actions">
+        <button type="button" id="prefs-server">Server&#8230;</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="settings-editor" aria-label="Server">
   <form id="settings-form" method="dialog" autocomplete="off">
     <header class="dialog-head">

@@ -872,6 +872,15 @@ project's or a folder's name in the Projects tree, a tag's name in the Tags
 perspective — which moves every task carrying it, exactly as `tdo tag rename`
 does — and a row's title or its tags in the outline.
 
+The gear at the bottom left of Home is where what this browser remembers is
+set: the theme, the inspector's width, the Forecast's order, whether a
+project keeps its completed actions, and the way through to the server
+dialog. None of it is in the store — a preference that followed the tasks
+would be a preference about somebody else's screen — so all of it is this
+browser's `localStorage`, and the controls that set the same things where
+they are used (the arrow on the inspector's bar, the Forecast's segmented
+words, the toggle above a project's list) write through the same state.
+
 It is a front end and not a second implementation. Every read and every write
 goes through the same internal layer `tdo ls` and `tdo done` go through, and a
 task is rendered as the same object `--json` renders, derived keys included

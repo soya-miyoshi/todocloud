@@ -273,3 +273,30 @@ test('the manifest is installable and points at files that exist', () => {
     assert.ok(statSync(servedFile(icon.src.replace(/^\//, ''))).isFile());
   }
 });
+
+// The fifth invariant, learned the hard way: this shell and the local
+// viewer's are two files on purpose — the connect flow, the disconnect
+// button and the token hint are this app's and nothing else's — but `app.js`
+// is one file serving both, and it looks its furniture up by id. An element
+// added to one shell and not the other is not a layout difference; it is a
+// `TypeError` on the next render, in whichever front end was forgotten.
+//
+// So every id `app.js` reaches for has to be in this page. The two it may
+// omit are the two the footer used to carry, `#theme` and `#settings`: the
+// gear's dialog has them now, and `app.js` guards both for a shell that
+// still has the old words.
+test('every element app.js looks up by id is in this shell', () => {
+  const js = read(path.join(assetsDir, 'app.js'));
+  const html = read(publicFile('index.html'));
+  const wanted = new Set(
+    [...js.matchAll(/\$\('#([A-Za-z0-9_-]+)'\)/g)].map((m) => m[1] as string),
+  );
+  const optional = new Set(['theme', 'settings']);
+  const have = new Set([...html.matchAll(/id="([A-Za-z0-9_-]+)"/g)].map((m) => m[1] as string));
+  const missing = [...wanted].filter((id) => !have.has(id) && !optional.has(id)).sort();
+  assert.deepEqual(
+    missing,
+    [],
+    `app.js looks these up and this shell has none of them: ${missing.join(', ')}`,
+  );
+});
