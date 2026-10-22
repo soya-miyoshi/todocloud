@@ -817,6 +817,20 @@ is a static site: a real path neither routes is a 404 on reload. The hash is
 a view and never a write — nothing in it reaches the server — and an address
 the build cannot place lands on the Forecast with the address corrected.
 
+**A different list is an entry; a different item of the same list is not.**
+Inbox to Flagged, the Forecast to a project, one project to another: each is
+somewhere the back button comes back from. Clicking down a list is reading
+one list, so selecting item after item replaces rather than piling up thirty
+entries to get out through. Going deeper — Home, a list, an item — is an
+entry too, which is the walk the back gesture does on a phone.
+
+Opening a project from the Projects tree does both of the things a container
+is: the pane the tree was in becomes the project's own list, and the project
+is selected, so the inspector is showing the project that is open. On a wide
+screen all three panes are up and there is nothing to choose between; on a
+phone the list is what the tap asked for and the inspector waits behind the
+`i` button.
+
 `tdo forecast` prints the viewer's `All` list from the terminal; `--week`
 prints its week and `--day today` the screen it opens on. A day past the
 seventh is in neither and is in the flat list, which is the same difference

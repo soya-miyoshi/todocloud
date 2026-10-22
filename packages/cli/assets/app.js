@@ -756,6 +756,34 @@ function select(next) {
   render();
 }
 
+// compact is the one-pane layout, the same 859px app.css switches on. It is
+// asked rather than remembered because a window is resized and a phone is
+// rotated.
+const compact = () => window.matchMedia('(max-width: 859px)').matches;
+
+// openContainer is a click on a folder or a project in the Projects tree.
+//
+// Two things happen, because a container is two things: a list to read and
+// an item in its own right. The pane the tree was in becomes the
+// container's own outline — its tasks, in tree order, under the heading
+// that says what is written on the container (`renderAbout`) — and the
+// container is also selected, so the inspector is showing the project that
+// is open rather than whatever was selected before it.
+//
+// Which pane is in front afterwards differs with the layout, and only
+// because of what is on screen. Wide, all three panes are up: the list is
+// the project and the inspector is the project, with nothing to choose
+// between. Compact, one pane is up and the list is the one that was asked
+// for — a tap on a project means "show me what is in it" — so the inspector
+// is selected and waits behind the `i` button.
+function openContainer(t) {
+  if (saveTimer) saveNow();
+  view = { kind: 'project', key: t.id };
+  selected = t.id;
+  showPane(compact() ? 'outline' : 'inspector');
+  render();
+}
+
 function selectItem(id) {
   // A pending edit belongs to the item that was on screen when it was
   // typed, so it goes up before the inspector shows another one.
@@ -834,18 +862,38 @@ function hashFor(pane) {
 // entries for one pane and a back gesture that appears to do nothing.
 let restoring = false;
 
-// keepLocation records the pane in the URL. A pane that is a move *into*
-// something — Home → outline → item — is an entry to come back from; one
-// that only changes what is on screen in the pane already open is not, and
-// gets a replace. On a wide screen every pane is on at once and clicking
-// down a list of thirty items would otherwise push thirty entries.
+// viewPathOf is the view half of an address, with any `/item/<id>` suffix
+// taken off: the list a hash names, without which item of it is open.
+function viewPathOf(hash) {
+  return hash.replace(/\/item\/[^/]*$/, '') || rootHash;
+}
+
+// keepLocation records where we are in the URL, and decides whether that is
+// somewhere to come back from.
+//
+// It is an entry — a push — when the list changes: Inbox to Flagged, the
+// Forecast to a project, one project to another. It is a replace when the
+// list is the same one and all that changed is which of its items is
+// selected, because clicking down a list of thirty items is reading one
+// list and not thirty places, and thirty entries would make the back button
+// useless for leaving it.
+//
+// Going deeper is a push as well, which is what the back gesture on a phone
+// walks: Home → a list → an item are three panes and three entries, even
+// when the list is the one already open.
+//
+// This used to be the depth test alone, and on a wide screen that made the
+// back button almost inert: all three panes are up at once there, so
+// nothing is ever deeper after the first click, and every list after the
+// first replaced the one before it. Back left the app instead of walking it.
 function keepLocation(pane) {
   const next = hashFor(pane);
   if (next === location.hash) return;
   const deeper = depthOfPane(pane) > depthOfPane(lastPane);
+  const elsewhere = viewPathOf(next) !== viewPathOf(location.hash);
   lastPane = pane;
   try {
-    if (deeper) history.pushState(null, '', next);
+    if (deeper || elsewhere) history.pushState(null, '', next);
     else history.replaceState(null, '', next);
   } catch {
     // A history that refuses to be written is a viewer that still works,
@@ -1482,7 +1530,7 @@ function treeRows() {
       t.title,
       state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && isOpen(x) && x.kind === 'task').length,
       false,
-      () => select({ kind: 'project', key: t.id }),
+      () => openContainer(t),
       {
         depth: parentsOf(t).length,
         mark: typeIcon(t),
