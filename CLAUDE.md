@@ -112,6 +112,16 @@ replaced it, and the two Go bugs it deliberately does not carry over.
 - `tsc` is clean under `--strict` before every commit, including
   `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Tests:
   `npm test` must pass with no network access.
+- **The viewer's `app.js` and `sw.js` are checked too.** They are
+  hand-written browser JavaScript and stay that way — they are served as
+  they are — but `packages/cli/assets/tsconfig.json` (and `tsconfig.sw.json`
+  for the worker) puts them under `checkJs` with `strictNullChecks`, and
+  `npm run typecheck` runs all three projects. A DOM lookup answers
+  `… | null`, so `$` throws rather than handing a null on, and `maybe` is
+  the lookup for the handful of elements that genuinely differ between the
+  two shells. Do not reach for `document.querySelector` directly, and do not
+  silence a diagnostic with `any` where a JSDoc type would say what the
+  element actually is.
 - Match the surrounding code's style, naming and comment density. This
   repository writes substantial "why" comments; keep them when porting rather
   than dropping them.

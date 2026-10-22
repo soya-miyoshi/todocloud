@@ -9,12 +9,35 @@
 // perspective tiles, and a row whose status circle carries the colour.
 'use strict';
 
+// --- the shapes this file is written against -----------------------------
+//
+// This is JavaScript and stays JavaScript — it is served as it is, with no
+// step between this file and the browser — but it is type-checked, by
+// `tsconfig.json` beside it, with `checkJs` and `strictNullChecks`. The
+// JSDoc below is what gives the checker the shapes: a task as `/api/state`
+// renders it (§ *JSON shapes* in docs/agents.md), which is the same object
+// `tdo ls --json` writes, derived keys included. The index signature is the
+// open fields of `--set k=v`, which are flattened alongside the fixed ones
+// and are what the inspector's Fields block edits.
+//
+/**
+ * @typedef {Object.<string, any>} Task
+ * @typedef {{name: string, status: string, count: number, note?: string}} Tag
+ * @typedef {{name: string, filter: Object.<string, any>, created_at: string, updated_at: string}} Perspective
+ * @typedef {{tasks: Task[], perspectives: Perspective[], tags: Tag[], now: string | null}} State
+ * @typedef {{kind: string, key: string}} View
+ */
+
 const token = document.body.dataset.token;
 
+/** @type {State} */
 let state = { tasks: [], perspectives: [], tags: [], now: null };
+/** @type {Map<string, Task>} */
 let byID = new Map();
 // Where the app opens: the Forecast, today. See `rootHash`.
+/** @type {View} */
 let view = { kind: 'due', key: 'today' };
+/** @type {string | null} */
 let selected = null;
 
 // --- what this browser remembers ----------------------------------------
@@ -92,10 +115,104 @@ function shownInSidebar(t) {
   return parentsOf(t).every((p) => expanded.has(p.id));
 }
 
-const $ = (sel) => document.querySelector(sel);
+// $ is the furniture of the page, by id, and it refuses to answer null.
+//
+// It used to be `querySelector` and nothing else, and a selector that
+// matched nothing gave back null for the caller to walk into — which is how
+// `about.hidden` on a shell without that element became `null is not an
+// object` on a phone rather than anything a reader of this file could have
+// seen. There are two shells over this one script (the local viewer's page
+// and the PWA's, which differ in their connect flow), so a missing element
+// is a real possibility and the honest answer to one is to say which
+// element, at once, by name. The drift itself is caught before it ships:
+// `web.test.ts` and `packages/pwa/src/shell.test.ts` hold both shells to
+// every id this file asks for.
+//
+// `maybe` is for the handful that genuinely differ between the two. The
+// difference between the two functions is the whole point: a caller says
+// which kind of element it is reaching for, and the checker holds it to it.
+/**
+ * @param {string} sel
+ * @param {ParentNode} [root] where to look; the document by default, and a
+ * row of the inspector's Fields block where one is passed.
+ * @returns {HTMLElement}
+ */
+function $(sel, root = document) {
+  const node = root.querySelector(sel);
+  if (node === null) {
+    throw new Error(`tdo: this page has no ${sel}`);
+  }
+  return /** @type {HTMLElement} */ (node);
+}
+
+/**
+ * @param {string} sel
+ * @returns {HTMLElement | null}
+ */
+function maybe(sel) {
+  return /** @type {HTMLElement | null} */ (document.querySelector(sel));
+}
+
+// The same element under the type it actually has. A `<form>`'s `elements`,
+// an `<input>`'s `value` and a `<dialog>`'s `showModal` are not on
+// `HTMLElement`, and a cast at the one place the element is reached for is
+// how the checker is told which kind it is — once, rather than at every use.
+// A form's named controls. The DOM calls them an `HTMLFormControlsCollection`
+// and reaches them by `namedItem`, which is not how any of the code below
+// reads them or how the HTML names them; `form.elements.title` is the
+// idiom, and it is stringly typed by nature — the name is in the markup.
+// So the collection is widened here, once, rather than by a cast at each of
+// the sixty places a field is read.
+/** @typedef {HTMLFormControlsCollection & Object.<string, any>} FormFields */
+/** @param {string} sel @returns {HTMLFormElement & {elements: FormFields}} */
+const $form = (sel) => /** @type {HTMLFormElement & {elements: FormFields}} */ ($(sel));
+
+// The form a submit or a focusout happened in, under that same type.
+/** @param {Event} event @returns {HTMLFormElement & {elements: FormFields}} */
+const formOf = (event) => /** @type {HTMLFormElement & {elements: FormFields}} */ (event.target);
+
+// `closest` from a handler's own node: it answers `Element | null`, and
+// every caller here wants an element it can read a `dataset` off.
+/** @param {Event} event @param {string} sel @returns {HTMLElement | null} */
+const closestOf = (event, sel) => /** @type {HTMLElement | null} */ (closestOf(event, sel));
+
+// `closest` from an element already in hand, same reason.
+/** @param {Element} node @param {string} sel @returns {HTMLElement | null} */
+const closestTo = (node, sel) => /** @type {HTMLElement | null} */ (node.closest(sel));
+/** @param {string} sel @param {ParentNode} [root] @returns {HTMLInputElement} */
+const $input = (sel, root = document) => /** @type {HTMLInputElement} */ ($(sel, root));
+/** @param {string} sel @returns {HTMLSelectElement} */
+const $select = (sel) => /** @type {HTMLSelectElement} */ ($(sel));
+/** @param {string} sel @returns {HTMLDialogElement} */
+const $dialog = (sel) => /** @type {HTMLDialogElement} */ ($(sel));
+/** @param {string} sel @returns {HTMLFieldSetElement} */
+const $fieldset = (sel) => /** @type {HTMLFieldSetElement} */ ($(sel));
+
+// What a handler's event happened on. `event.target` is an `EventTarget`,
+// which has no `closest` and may be null; every listener in this file is on
+// an element and fires for an element.
+/** @param {Event} event @returns {HTMLElement} */
+const nodeOf = (event) => /** @type {HTMLElement} */ (event.target);
+
+// What a caught thing says. A `catch` binding is `unknown` — which is the
+// truth, since `throw` takes anything — and every caller here wants the one
+// line to put on screen.
+/** @param {unknown} err @returns {string} */
+const messageOf = (err) => (err instanceof Error ? messageOf(err) : String(err));
+
+/**
+ * el builds one element: the tag, the properties to assign and the children
+ * to append. The properties are assigned rather than set, so `textContent`,
+ * `className` and the `on…` handlers all work the way they read.
+ *
+ * @param {string} tag
+ * @param {Object.<string, any>} [props]
+ * @param {(Node | string)[] | Node | string} [kids]
+ * @returns {any}
+ */
 const el = (tag, props = {}, kids = []) => {
   const node = Object.assign(document.createElement(tag), props);
-  for (const kid of [].concat(kids)) node.append(kid);
+  for (const kid of Array.isArray(kids) ? kids : [kids]) node.append(kid);
   return node;
 };
 
@@ -125,8 +242,15 @@ const TYPE_ICONS = {
 
 // --- talking to the server ---------------------------------------------
 
+/**
+ * @param {string} method
+ * @param {string} path
+ * @param {unknown} [body]
+ * @returns {Promise<any>}
+ */
 async function api(method, path, body) {
-  const init = { method, headers: { 'X-Tdo-Token': token } };
+  /** @type {RequestInit & {headers: Object.<string, string>}} */
+  const init = { method, headers: token === undefined ? {} : { 'X-Tdo-Token': token } };
   if (body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
@@ -195,7 +319,7 @@ async function act(method, path, body, done) {
     const result = await api(method, path, body);
     await reload(reportExtras(result) || done || '');
   } catch (err) {
-    say(err.message, true);
+    say(messageOf(err), true);
   }
 }
 
@@ -234,8 +358,12 @@ let located = false;
 
 // --- the slices of the tree --------------------------------------------
 
-const closed = (t) => t.status === 'done' || t.status === 'dropped';
-const open = (t) => !closed(t);
+// `isClosed` and `isOpen` rather than `closed` and `open`: this file is a
+// script and not a module, so a top-level `const open` is a redeclaration of
+// `window.open` — which the checker refuses and a reader should not have to
+// think about either.
+const isClosed = (t) => t.status === 'done' || t.status === 'dropped';
+const isOpen = (t) => !isClosed(t);
 const isContainer = (t) => t.kind !== 'task';
 
 function parentsOf(t) {
@@ -256,24 +384,35 @@ function inSubtree(t, rootID) {
 // Both of these answer against the server's own clock rather than the
 // phone's: the two disagree often enough to matter at midnight.
 
+// clock is that reading as a Date. `state.now` is null until the first
+// snapshot arrives, and `new Date(null)` is the epoch, so the fallback is
+// the behaviour this always had rather than a new one — nothing renders
+// before the first reload anyway.
+const clock = () => new Date(state.now ?? 0);
+
 // passed reports whether an instant is behind us. It is the question "is
 // this overdue", which is about the moment and not about the day.
-const passed = (stamp) => Boolean(stamp) && new Date(stamp) <= new Date(state.now);
+const passed = (stamp) => Boolean(stamp) && new Date(stamp) <= clock();
 
 // calendarDays counts whole days between two dates, not elapsed hours: an
 // item due at midnight this morning is still due *today*, an hour overdue,
 // and calling that "Yesterday" is how a list starts lying to its reader.
+/**
+ * @param {string | null | undefined} stamp
+ * @returns {number} days away, or NaN when there is no date — every caller
+ * guards with the date itself first, and NaN compares false either way.
+ */
 function calendarDays(stamp) {
-  if (!stamp) return null;
+  if (!stamp) return NaN;
   const a = new Date(stamp);
-  const b = new Date(state.now);
+  const b = clock();
   const at = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
   const now = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
   return Math.round((at - now) / 86400000);
 }
 
-const overdue = (t) => Boolean(t.due_at) && open(t) && passed(t.due_at);
-const dueSoon = (t) => Boolean(t.due_at) && open(t) && !passed(t.due_at) && calendarDays(t.due_at) <= 2;
+const overdue = (t) => Boolean(t.due_at) && isOpen(t) && passed(t.due_at);
+const dueSoon = (t) => Boolean(t.due_at) && isOpen(t) && !passed(t.due_at) && calendarDays(t.due_at) <= 2;
 
 // landed is "the day has come": due today or on any day before it. It is a
 // calendar question and not an hourly one, which is the difference that
@@ -282,7 +421,7 @@ const dueSoon = (t) => Boolean(t.due_at) && open(t) && !passed(t.due_at) && cale
 //
 // It is what the number on the Forecast tile counts. The app icon counts
 // something wider, `arrived` below.
-const landed = (t) => Boolean(t.due_at) && open(t) && calendarDays(t.due_at) <= 0;
+const landed = (t) => Boolean(t.due_at) && isOpen(t) && calendarDays(t.due_at) <= 0;
 
 // arrived is "either date has come": a task, open, due today or earlier, or
 // deferred until today or earlier. Both, because the two say different things
@@ -291,7 +430,7 @@ const landed = (t) => Boolean(t.due_at) && open(t) && calendarDays(t.due_at) <= 
 // Forecast tile counts: a task whose defer date has passed but which has no
 // deadline is not late, and the tile's number means late.
 const arrived = (t) =>
-  t.kind === 'task' && open(t)
+  t.kind === 'task' && isOpen(t)
   && ((Boolean(t.due_at) && calendarDays(t.due_at) <= 0)
     || (Boolean(t.defer_at) && calendarDays(t.defer_at) <= 0));
 
@@ -301,7 +440,7 @@ const arrived = (t) =>
 // — true, and useless for telling today's work apart from last week's.
 // Today's list holds both, there is no Past column to separate them, so this
 // is what the red edge on a row and the red rule under a day cell mean.
-const pastDue = (t) => Boolean(t.due_at) && open(t) && calendarDays(t.due_at) < 0;
+const pastDue = (t) => Boolean(t.due_at) && isOpen(t) && calendarDays(t.due_at) < 0;
 
 // The perspectives, in the order the manual lists OmniFocus's own, with the
 // two this tool has no equivalent for (Forecast's calendar, Nearby's
@@ -323,17 +462,17 @@ const PERSPECTIVES = [
     // `forecastOrder`), so an item that has only a defer date has to be in
     // it, or the default order is over a list the date is missing from.
     key: 'due', label: 'Forecast', tint: 'salmon', glyph: '◷', wide: true,
-    pick: (t) => t.kind === 'task' && open(t) && (t.due_at || t.defer_at),
+    pick: (t) => t.kind === 'task' && isOpen(t) && (t.due_at || t.defer_at),
     badge: (items) => items.filter(landed).length,
   },
   {
     key: 'inbox', label: 'Inbox', tint: 'slate', glyph: '▤', wide: true,
-    pick: (t) => t.kind === 'task' && !t.parent_id && open(t),
+    pick: (t) => t.kind === 'task' && !t.parent_id && isOpen(t),
     badge: (items) => items.filter((t) => t.available).length,
   },
   {
     key: 'flagged', label: 'Flagged', tint: 'creamsicle', glyph: '⚑',
-    pick: (t) => t.flagged && open(t),
+    pick: (t) => t.flagged && isOpen(t),
     badge: (items) => items.filter((t) => t.available).length,
   },
   {
@@ -347,7 +486,7 @@ const PERSPECTIVES = [
     // is a perspective like any other now, so it opens in the outline and
     // Home is only perspectives.
     key: 'projects', label: 'Projects', tint: 'sky', glyph: '▣', rows: 'tree',
-    pick: (t) => t.kind === 'project' && open(t),
+    pick: (t) => t.kind === 'project' && isOpen(t),
   },
   {
     // Tags is a way into the tree rather than a queue of work, so it lists
@@ -361,7 +500,7 @@ const PERSPECTIVES = [
   },
   {
     key: 'review', label: 'Review', tint: 'violet', glyph: '↻', wide: true,
-    pick: (t) => t.next_review_at && open(t),
+    pick: (t) => t.next_review_at && isOpen(t),
     badge: (items) => items.filter((t) => passed(t.next_review_at)).length,
   },
 ];
@@ -369,9 +508,9 @@ const PERSPECTIVES = [
 // Other Perspectives, which OmniFocus keeps collapsed behind a Show: the
 // views that answer a question about the list rather than offering work.
 const OTHERS = [
-  { key: 'blocked', label: 'Blocked', pick: (t) => open(t) && t.available === false },
-  { key: 'all', label: 'All', pick: (t) => open(t) },
-  { key: 'done', label: 'Completed', pick: (t) => closed(t), sort: (a, b) => (b.completed_at || '').localeCompare(a.completed_at || '') },
+  { key: 'blocked', label: 'Blocked', pick: (t) => isOpen(t) && t.available === false },
+  { key: 'all', label: 'All', pick: (t) => isOpen(t) },
+  { key: 'done', label: 'Completed', pick: (t) => isClosed(t), sort: (a, b) => (b.completed_at || '').localeCompare(a.completed_at || '') },
 ];
 
 const specOf = (key) => PERSPECTIVES.find((v) => v.key === key) || OTHERS.find((v) => v.key === key);
@@ -480,7 +619,8 @@ const beyondHorizon = (t) => Boolean(t.defer_at) && calendarDays(t.defer_at) > F
 // the tail behind the fold. One function, because the fold's own count and
 // the rows it hides have to agree.
 function forecastList() {
-  const items = state.tasks.filter(specOf('due').pick).sort(FORECAST_SORTS[forecastOrder]);
+  const due = PERSPECTIVES[0];
+  const items = state.tasks.filter(due.pick).sort(FORECAST_SORTS[forecastOrder]);
   return {
     near: items.filter((t) => !beyondHorizon(t)),
     later: items.filter(beyondHorizon),
@@ -498,11 +638,11 @@ function currentItems() {
     // A dropped item is not shown either way: it was decided against, and
     // the plan is not a record of what was considered. What is completed is
     // the toggle above the list.
-    const keep = (t) => (projectDoneShown ? t.status !== 'dropped' : open(t));
+    const keep = (t) => (projectDoneShown ? t.status !== 'dropped' : isOpen(t));
     return state.tasks.filter((t) => t.id !== root.id && inSubtree(t, root.id) && keep(t));
   }
   if (view.kind === 'tag') {
-    return state.tasks.filter((t) => open(t) && (t.tags || []).some((g) => g.toLowerCase() === view.key.toLowerCase()));
+    return state.tasks.filter((t) => isOpen(t) && (t.tags || []).some((g) => g.toLowerCase() === view.key.toLowerCase()));
   }
   if (view.kind === 'saved') {
     // The server decided what is in it and in what order; the page's job is
@@ -596,7 +736,7 @@ async function openSaved(name) {
     say('');
     select({ kind: 'saved', key: name });
   } catch (err) {
-    say(err.message, true);
+    say(messageOf(err), true);
   }
 }
 
@@ -730,7 +870,9 @@ function applyLocation() {
   // corrected to say so. An address bar that still names somewhere the app
   // is not is what makes the next back gesture surprising.
   if (!where) return goRoot();
-  if (where.pane === 'home') return showRestored('home');
+  // `/home` is the one address with no view on it; the checker is as
+  // entitled to know that as the reader is.
+  if (where.pane === 'home' || where.view === undefined) return showRestored('home');
   view = where.view;
   if (where.id && byID.has(where.id)) {
     selected = where.id;
@@ -743,6 +885,11 @@ function applyLocation() {
  * parseHash reads one of the addresses above. It returns undefined for
  * anything it cannot place, which is the caller's cue to go to the root —
  * the hash came from the address bar, so none of it is trusted.
+ */
+/**
+ * @typedef {{pane: string, view?: View, id?: string}} Place
+ * @param {string} hash
+ * @returns {Place | undefined}
  */
 function parseHash(hash) {
   const parts = hash.replace(/^#\/?/, '').split('/').filter((part) => part !== '')
@@ -877,7 +1024,7 @@ async function pullReload() {
   try {
     await reload('reloaded');
   } catch (err) {
-    say(err.message, true);
+    say(messageOf(err), true);
   } finally {
     showPull(0, false);
   }
@@ -894,7 +1041,7 @@ document.addEventListener('touchstart', (event) => {
   // what makes a pull a pull is that there is nothing above it to scroll to.
   // `closest` also answers no inside a dialog, which is what should happen —
   // a modal is not a list to refresh.
-  const pane = event.target.closest ? event.target.closest('.pane-body') : null;
+  const pane = closestOf(event, '.pane-body');
   swipe = {
     x: t.clientX,
     y: t.clientY,
@@ -986,11 +1133,11 @@ function updateBadge() {
 // is installed, and the permission has not been answered yet — so on a
 // desktop browser and on Android nobody ever sees it.
 function renderBadgeAsk() {
-  const button = $('#badge-ask');
+  const button = maybe('#badge-ask');
   if (!button) return;
   const asked = typeof Notification === 'undefined' || Notification.permission !== 'default';
   const installed = window.matchMedia('(display-mode: standalone)').matches
-    || window.navigator.standalone === true;
+    || /** @type {any} */ (window.navigator).standalone === true;
   button.hidden = !('setAppBadge' in navigator) || asked || !installed;
 }
 
@@ -1123,7 +1270,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // deadline that has passed belongs to today, a defer date that has passed is
 // nothing but availability and belongs to no day at all.
 function forecastDays() {
-  const today = new Date(state.now);
+  const today = clock();
   const cells = [{
     key: 'today',
     label: 'Today',
@@ -1142,6 +1289,7 @@ function forecastDays() {
       weekday: WEEKDAYS[day.getUTCDay()],
       dueMatch: (d) => d === i,
       startMatch: (d) => d === i,
+      today: false,
     });
   }
   return cells;
@@ -1167,10 +1315,10 @@ const forecastCell = (key) => forecastDays().find((c) => c.key === key);
 // the number of rows the day opens, and a project with a due date was in
 // both the count and the list.
 const dueOn = (cell) => state.tasks.filter(
-  (t) => t.kind === 'task' && t.due_at && open(t) && cell.dueMatch(calendarDays(t.due_at)));
+  (t) => t.kind === 'task' && t.due_at && isOpen(t) && cell.dueMatch(calendarDays(t.due_at)));
 
 const startsOn = (cell) => state.tasks.filter(
-  (t) => t.kind === 'task' && t.defer_at && open(t) && cell.startMatch(calendarDays(t.defer_at)));
+  (t) => t.kind === 'task' && t.defer_at && isOpen(t) && cell.startMatch(calendarDays(t.defer_at)));
 
 // forecastOn is the day itself: everything the day has to say, deadlines
 // first. It is what a day cell opens.
@@ -1323,7 +1471,7 @@ function blockedTitle(blocked) {
 // is unchanged, including the disclosure triangles and the folders that are
 // shut to begin with.
 function treeRows() {
-  const containers = state.tasks.filter((t) => isContainer(t) && open(t));
+  const containers = state.tasks.filter((t) => isContainer(t) && isOpen(t));
   return containers.filter(shownInSidebar).map((t) => {
     // Only a folder holds other containers (§3.1), so only a folder has
     // anything to disclose; a project's contents are tasks, which this list
@@ -1332,7 +1480,7 @@ function treeRows() {
     const holds = t.kind === 'folder' && containers.some((x) => x.parent_id === t.id);
     const row = navRow(
       t.title,
-      state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && open(x) && x.kind === 'task').length,
+      state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && isOpen(x) && x.kind === 'task').length,
       false,
       () => select({ kind: 'project', key: t.id }),
       {
@@ -1523,7 +1671,7 @@ function renderList() {
 // in the morning that leaves last week's unpaid bill on last week's day is a
 // list that has stopped being read.
 function renderWeek() {
-  const bar = $('#week');
+  const bar = maybe('#week');
   if (!bar) return;
   bar.hidden = view.kind !== 'due' || Boolean(query);
   if (bar.hidden) {
@@ -1597,11 +1745,11 @@ function itemRow(t, depthOf) {
     // indent it cannot see.
     row.setAttribute('aria-level', String(depth + 1));
   }
-  if (closed(t)) row.classList.add('closed');
+  if (isClosed(t)) row.classList.add('closed');
   // Grey for what cannot be worked on — completed, blocked, on hold, a
   // container — and black again for anything due soon or overdue, which is
   // the exception the manual makes and the reason the rule is useful.
-  if (closed(t) || isContainer(t) || t.available === false) row.classList.add('quiet');
+  if (isClosed(t) || isContainer(t) || t.available === false) row.classList.add('quiet');
   if (overdue(t) || dueSoon(t)) row.classList.add('dated');
   // Today's list holds what is due today and what was due before it, and
   // nothing in the row said which was which beyond a date two words long.
@@ -1626,7 +1774,7 @@ function itemRow(t, depthOf) {
   for (const g of t.tags || []) under.append(tagChip(g));
   if (t.note) under.append(el('span', { className: 'note', textContent: '\u270e' }));
   if (isContainer(t)) {
-    const inside = state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && open(x) && x.kind === 'task');
+    const inside = state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && isOpen(x) && x.kind === 'task');
     const late = inside.filter(overdue).length;
     under.append(el('span', {
       className: 'count',
@@ -1686,11 +1834,15 @@ const RESERVED_KEYS = new Set([
 
 // customFields lists what a task carries beyond the shape, sorted the way
 // `--json` sorts its keys so the rows do not move about between renders.
+/**
+ * @param {Task} t
+ * @returns {[string, string][]} each key with its value as a line of text
+ */
 function customFields(t) {
   return Object.keys(t)
     .filter((k) => !RESERVED_KEYS.has(k))
     .sort()
-    .map((k) => [k, fieldText(t[k])]);
+    .map((k) => /** @type {[string, string]} */ ([k, fieldText(t[k])]));
 }
 
 // fieldText is a stored value as a line of text to type into. A string is
@@ -1748,7 +1900,7 @@ function renderFields(t) {
 }
 
 function renderInspector() {
-  const form = $('#detail');
+  const form = $form('#detail');
   const t = selected ? byID.get(selected) : null;
   $('#no-selection').hidden = Boolean(t);
   form.hidden = !t;
@@ -1786,7 +1938,7 @@ function fillInspector(form, t) {
   // Only a container this item may legally go into is offered, so the tree
   // rules of §3.1 are a shape on screen rather than an error after a save.
   const parents = state.tasks.filter((p) =>
-    p.id !== t.id && open(p) && !inSubtree(p, t.id) && canContain(p.kind, t.kind));
+    p.id !== t.id && isOpen(p) && !inSubtree(p, t.id) && canContain(p.kind, t.kind));
   form.elements.parent_id.replaceChildren(
     el('option', { value: '', textContent: t.kind === 'task' ? '(inbox)' : '(top level)' }),
     ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
@@ -1928,7 +2080,7 @@ function draggable(node, t, into) {
     // what makes the cursor show the refusal.
     if (!want) return;
     event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
     node.classList.add(`drop-${want}`);
   };
   node.ondragleave = clear;
@@ -1949,7 +2101,7 @@ const outline = $('#items');
 outline.addEventListener('dragover', (event) => {
   if (!dragging) return;
   event.preventDefault();
-  event.dataTransfer.dropEffect = 'move';
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
   outline.classList.add('drop-into');
 });
 outline.addEventListener('dragleave', (event) => {
@@ -2004,7 +2156,7 @@ function editInPlace(node, label, current, commit) {
       await commit(next);
       await reload('saved');
     } catch (err) {
-      say(err.message, true);
+      say(messageOf(err), true);
       render();
     }
   };
@@ -2055,9 +2207,10 @@ function commitTagName(name) {
 $('#items').addEventListener('dblclick', (event) => {
   // A folder or a project in the Projects tree, or a tag in the Tags
   // perspective — both are nav rows rather than item rows.
-  const name = event.target.closest('.nav-row .name');
+  const name = closestOf(event, '.nav-row .name');
   if (name) {
-    const row = name.closest('.nav-row');
+    const row = closestTo(name, '.nav-row');
+    if (!row) return;
     const tag = row.dataset.tag;
     if (tag) {
       editInPlace(name, `name of tag ${tag}`, tag, commitTagName(tag));
@@ -2067,11 +2220,11 @@ $('#items').addEventListener('dblclick', (event) => {
     if (container) editInPlace(name, `title of ${container.title}`, container.title, commitTitle(container));
     return;
   }
-  const row = event.target.closest('.item');
+  const row = closestOf(event, '.item');
   if (!row) return;
-  const t = byID.get(row.dataset.id);
+  const t = byID.get(row.dataset.id ?? '');
   if (!t) return;
-  const chip = event.target.closest('.tag');
+  const chip = closestOf(event, '.tag');
   if (chip) {
     // The whole set is edited as one comma-separated string, because
     // `tags` replaces the set and that is what the field means. The line
@@ -2084,7 +2237,7 @@ $('#items').addEventListener('dblclick', (event) => {
       (next) => api('PATCH', `/api/tasks/${t.id}`, { tags: tagList(next) }));
     return;
   }
-  const title = event.target.closest('.title');
+  const title = closestOf(event, '.title');
   if (title) {
     editInPlace(title, `title of ${t.title}`, t.title, commitTitle(t));
   }
@@ -2112,7 +2265,7 @@ function complete(t) {
 //
 // Everything but the title is optional, so the fast path is still a title
 // and Add.
-const capture = $('#capture-editor');
+const capture = $dialog('#capture-editor');
 
 // What the form is making. A task, a project and a folder are the same seven
 // fields over the same endpoint — only the name of the thing and the list of
@@ -2128,7 +2281,7 @@ let capturing = 'task';
 function openCapture(kind = 'task') {
   const spec = NEW_KINDS[kind] || NEW_KINDS.task;
   capturing = NEW_KINDS[kind] ? kind : 'task';
-  const form = $('#capture-form');
+  const form = $form('#capture-form');
   form.reset();
   $('#capture-note').textContent = '';
   $('#capture-title').textContent = spec.title;
@@ -2137,7 +2290,7 @@ function openCapture(kind = 'task') {
   // Only a container this kind may legally live in, as in the inspector, so
   // the tree rules of §3.1 are a shape on screen rather than an error after
   // a save.
-  const parents = state.tasks.filter((p) => open(p) && canContain(p.kind, capturing));
+  const parents = state.tasks.filter((p) => isOpen(p) && canContain(p.kind, capturing));
   form.elements.parent_id.replaceChildren(
     el('option', { value: '', textContent: spec.empty }),
     ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
@@ -2175,7 +2328,7 @@ $('#fab').onclick = (event) => {
 };
 
 fabMenu.addEventListener('click', (event) => {
-  const what = event.target.closest('[data-new]');
+  const what = closestOf(event, '[data-new]');
   if (!what) return;
   showFabMenu(false);
   if (what.dataset.new === 'perspective') {
@@ -2195,7 +2348,7 @@ document.addEventListener('keydown', (event) => {
 
 /** dayValue is a forecast day as the `yyyy-mm-dd` a date input takes. */
 function dayValue(cell) {
-  const at = new Date(state.now);
+  const at = clock();
   const days = forecastDays().findIndex((c) => c.key === cell.key);
   at.setUTCDate(at.getUTCDate() + Math.max(days, 0));
   return at.toISOString().slice(0, 10);
@@ -2203,16 +2356,17 @@ function dayValue(cell) {
 
 $('#capture-close').onclick = () => capture.close();
 
-$('#capture-form').onsubmit = async (event) => {
+$form('#capture-form').onsubmit = async (event) => {
   event.preventDefault();
-  const form = event.currentTarget;
+  const form = formOf(event);
   const title = form.elements.title.value.trim();
   if (!title) return;
   const body = { title };
   // The endpoint defaults to a task, so the kind is sent only when it is
   // something else — which keeps the request the same one it always was.
   if (capturing !== 'task') body.kind = capturing;
-  const text = (name) => form.elements[name].value.trim();
+  /** @param {string} name */
+  const text = (name) => String(form.elements[name].value).trim();
   if (text('note')) body.note = text('note');
   if (text('tags')) body.tags = text('tags').split(',').map((g) => g.trim()).filter(Boolean);
   if (text('defer_at')) body.defer_at = text('defer_at');
@@ -2226,7 +2380,7 @@ $('#capture-form').onsubmit = async (event) => {
   } catch (err) {
     // The dialog stays open with what was typed still in it: a rejected
     // estimate or a date that would not parse is a correction, not a loss.
-    $('#capture-note').textContent = err.message;
+    $('#capture-note').textContent = messageOf(err);
     return;
   }
   capture.close();
@@ -2249,8 +2403,8 @@ function scheduleSave(delay = 700) {
 
 async function saveNow() {
   clearTimeout(saveTimer);
-  const form = $('#detail');
-  const t = byID.get(form.dataset.id);
+  const form = $form('#detail');
+  const t = byID.get(form.dataset.id ?? '');
   if (!t) return;
   // The fields are read here, synchronously, and the write below is given
   // the values rather than the form. A save queued behind one still in
@@ -2293,8 +2447,8 @@ function readInspector(form) {
     // is `writeInspector`'s to work out, because only it has the item the
     // edit belongs to.
     fields: [...$('#field-rows').querySelectorAll('.field-row')].map((row) => [
-      row.querySelector('.field-key').value.trim(),
-      row.querySelector('.field-value').value,
+      $input('.field-key', row).value.trim(),
+      $input('.field-value', row).value,
     ]),
   };
 }
@@ -2344,12 +2498,12 @@ async function writeInspector(edited, t) {
     }
     await reload('saved');
   } catch (err) {
-    say(err.message, true);
+    say(messageOf(err), true);
   }
 }
 
-$('#detail').oninput = (event) => {
-  if (event.target.tagName === 'TEXTAREA') grow(event.target);
+$form('#detail').oninput = (event) => {
+  if (nodeOf(event).tagName === 'TEXTAREA') grow(nodeOf(event));
   scheduleSave();
 };
 
@@ -2358,27 +2512,27 @@ $('#detail').oninput = (event) => {
 // a newline in a field the store keeps verbatim, and the outline would draw
 // an item whose title has a break in the middle of it. A newline that arrives
 // by paste is folded in `readInspector`, which is the other way in.
-$('#detail').addEventListener('keydown', (event) => {
-  if (event.key !== 'Enter' || event.target.name !== 'title') return;
+$form('#detail').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || /** @type {HTMLInputElement} */ (event.target).name !== 'title') return;
   event.preventDefault();
   saveNow();
 });
 
 // A menu, a checkbox or a date is finished the moment it changes, and a
 // date picker never fires `input` on every platform anyway.
-$('#detail').onchange = () => saveNow();
+$form('#detail').onchange = () => saveNow();
 
 // Leaving a field commits it rather than waiting out the timer, and so does
 // Enter in a single-line field — which must not submit the form, since the
 // form has no submit left to do.
-$('#detail').addEventListener('focusout', () => saveNow());
-$('#detail').onsubmit = (event) => {
+$form('#detail').addEventListener('focusout', () => saveNow());
+$form('#detail').onsubmit = (event) => {
   event.preventDefault();
   saveNow();
 };
 
 $('#complete').onclick = () => {
-  const t = byID.get(selected);
+  const t = selected === null ? undefined : byID.get(selected);
   if (t) complete(t);
 };
 
@@ -2393,7 +2547,7 @@ $('#field-add').onclick = () => {
 };
 
 $('#remove').onclick = () => {
-  const t = byID.get(selected);
+  const t = selected === null ? undefined : byID.get(selected);
   if (!t) return;
   // Removal writes a tombstone and takes the subtree with it, so it says so
   // before doing it. The irreversible one is `tdo rm --purge`, which this UI
@@ -2418,18 +2572,21 @@ $('#remove').onclick = () => {
 // leaves them out, so a perspective saved here and one saved by `tdo
 // perspective save` are the same bytes.
 
-const editor = $('#perspective-editor');
-const editorForm = $('#perspective-form');
+const editor = $dialog('#perspective-editor');
+const editorForm = $form('#perspective-form');
 
 // editingName is the perspective being changed, or '' while making a new
 // one. It is also what a rename is measured against.
 let editingName = '';
 
 const fields = () => editorForm.elements;
-const ticked = (name) => [...editorForm.querySelectorAll(`input[name="${name}"]:checked`)].map((n) => n.value);
+/** @param {string} name */
+const ticked = (name) => [...editorForm.querySelectorAll(`input[name="${name}"]:checked`)]
+  .map((n) => /** @type {HTMLInputElement} */ (n).value);
 const tick = (name, values) => {
   for (const node of editorForm.querySelectorAll(`input[name="${name}"]`)) {
-    node.checked = values.includes(node.value);
+    const box = /** @type {HTMLInputElement} */ (node);
+    box.checked = values.includes(box.value);
   }
 };
 const day = (stamp) => (stamp ? String(stamp).slice(0, 10) : '');
@@ -2457,7 +2614,7 @@ function fillEditor(name, f) {
   // Every container, because a scope may name a folder or a project; the
   // top level is the empty option, which with "Directly inside" is how
   // "the top level itself" is said.
-  const containers = state.tasks.filter((t) => isContainer(t) && open(t));
+  const containers = state.tasks.filter((t) => isContainer(t) && isOpen(t));
   e.scope_id.replaceChildren(
     el('option', { value: '', textContent: '(top level)' }),
     ...containers.map((t) => el('option', { value: t.id, textContent: t.title })));
@@ -2548,7 +2705,7 @@ editorForm.onsubmit = async (event) => {
     if (view.kind === 'saved' && view.key === editingName) view = { kind: 'saved', key: name };
     await reload(renamed ? 'renamed' : 'saved');
   } catch (err) {
-    say(err.message, true);
+    say(messageOf(err), true);
   }
 };
 
@@ -2561,14 +2718,14 @@ $('#perspective-delete').onclick = async () => {
     if (view.kind === 'saved' && view.key === editingName) view = { kind: 'inbox', key: '' };
     await reload('removed');
   } catch (err) {
-    say(err.message, true);
+    say(messageOf(err), true);
   }
 };
 
 // Editing an existing one is a double click on its row, which is how every
 // other name in this UI is edited.
 $('#others').addEventListener('dblclick', (event) => {
-  const row = event.target.closest('.nav-row');
+  const row = closestOf(event, '.nav-row');
   const name = row && row.dataset.perspective;
   if (name) openEditor(name);
 });
@@ -2591,21 +2748,21 @@ $('#to-inspector').onclick = () => {
 };
 // A search box submits nothing: it filters as it is typed, and the Enter
 // key on a phone keyboard must not reload the page.
-$('#search').onsubmit = (event) => event.preventDefault();
-$('#search-text').oninput = (event) => setQuery(event.target.value.trim());
+$form('#search').onsubmit = (event) => event.preventDefault();
+$input('#search-text').oninput = (event) => setQuery(/** @type {HTMLInputElement} */ (event.target).value.trim());
 $('#search-clear').onclick = () => {
-  $('#search-text').value = '';
+  $input('#search-text').value = '';
   setQuery('');
 };
 
-$('#reload').onclick = () => reload('reloaded').catch((err) => say(err.message, true));
+$('#reload').onclick = () => reload('reloaded').catch((err) => say(messageOf(err), true));
 
 
 $('#show-other').onclick = (event) => {
   const list = $('#others');
   list.hidden = !list.hidden;
-  event.target.textContent = list.hidden ? 'Show' : 'Hide';
-  event.target.setAttribute('aria-expanded', list.hidden ? 'false' : 'true');
+  nodeOf(event).textContent = list.hidden ? 'Show' : 'Hide';
+  nodeOf(event).setAttribute('aria-expanded', list.hidden ? 'false' : 'true');
 };
 
 // --- keyboard ----------------------------------------------------------
@@ -2615,7 +2772,7 @@ const typing = (node) => node && /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName);
 document.addEventListener('keydown', (event) => {
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   if (typing(event.target)) {
-    if (event.key === 'Escape') event.target.blur();
+    if (event.key === 'Escape') nodeOf(event).blur();
     return;
   }
   const items = currentItems();
@@ -2646,7 +2803,7 @@ document.addEventListener('keydown', (event) => {
       // The search box, by the key every list on the web uses for it.
       event.preventDefault();
       showPane('outline');
-      $('#search-text').focus();
+      $input('#search-text').focus();
       break;
     case 'r':
       reload('reloaded');
@@ -2662,15 +2819,16 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-reload().catch((err) => say(err.message, true));
+reload().catch((err) => say(messageOf(err), true));
 
 // The permission the badge needs, asked for only when it is tapped: a
 // prompt nobody asked for is the thing that gets a permission denied
 // forever. iOS grants the badge along with notifications; nothing here
 // sends a notification, and there is no push subscription and no server to
 // send one from.
-if ($('#badge-ask')) {
-  $('#badge-ask').onclick = async () => {
+const badgeAsk = maybe('#badge-ask');
+if (badgeAsk) {
+  badgeAsk.onclick = async () => {
     try {
       await Notification.requestPermission();
     } catch {
@@ -2690,8 +2848,8 @@ if ($('#badge-ask')) {
 // configuration — and the fieldset is disabled, greyed out, with the notice
 // naming the commands. The PWA says yes and keeps what it is given in this
 // browser. Neither ever sends a token back: only whether one is stored.
-const settingsEditor = $('#settings-editor');
-const settingsForm = $('#settings-form');
+const settingsEditor = $dialog('#settings-editor');
+const settingsForm = $form('#settings-form');
 const localSqld = 'http://127.0.0.1:8080';
 
 function settingsStatus(message, isError) {
@@ -2708,7 +2866,7 @@ async function openSettings() {
   f.token.placeholder = current.token_set ? 'unchanged — a token is stored' : 'TOKEN_GOES_HERE';
   f.remember.checked = current.remember;
   $('#settings-notice').textContent = current.notice;
-  $('#settings-fields').disabled = !current.editable;
+  $fieldset('#settings-fields').disabled = !current.editable;
   settingsStatus('');
   settingsEditor.showModal();
 }
@@ -2717,8 +2875,9 @@ if (settingsEditor) {
   // The footer's own `Server` word is gone — the gear's dialog has the
   // button now — but the PWA's shell is a different file and may still
   // carry one, so this stays conditional rather than assuming either.
-  if ($('#settings')) {
-    $('#settings').onclick = () => openSettings().catch((err) => say(err.message, true));
+  const serverWord = maybe('#settings');
+  if (serverWord) {
+    serverWord.onclick = () => openSettings().catch((err) => say(messageOf(err), true));
   }
   $('#settings-close').onclick = () => settingsEditor.close();
   $('#settings-local').onclick = () => {
@@ -2738,12 +2897,12 @@ if (settingsEditor) {
         remember: f.remember.checked,
       });
     } catch (err) {
-      settingsStatus(err.message, true);
+      settingsStatus(messageOf(err), true);
       return;
     }
     f.token.value = '';
     settingsEditor.close();
-    await reload('connected').catch((err) => say(err.message, true));
+    await reload('connected').catch((err) => say(messageOf(err), true));
   };
 }
 
@@ -2759,7 +2918,7 @@ const themes = ['auto', 'light', 'dark'];
 function applyTheme(theme) {
   if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', theme);
-  const button = $('#theme');
+  const button = maybe('#theme');
   if (button) button.textContent = `Theme: ${theme}`;
 }
 
@@ -2776,8 +2935,9 @@ function setTheme(next) {
 }
 
 setTheme(theme);
-if ($('#theme')) {
-  $('#theme').onclick = () => setTheme(themes[(themes.indexOf(theme) + 1) % themes.length]);
+const themeWord = maybe('#theme');
+if (themeWord) {
+  themeWord.onclick = () => setTheme(themes[(themes.indexOf(theme) + 1) % themes.length]);
 }
 
 // --- how wide the inspector is ----------------------------------------
@@ -2794,7 +2954,7 @@ const inspectorWidths = ['narrow', 'medium', 'wide'];
 function applyInspectorWidth(width) {
   if (width === 'narrow') document.documentElement.removeAttribute('data-inspector');
   else document.documentElement.setAttribute('data-inspector', width);
-  const button = $('#inspector-width');
+  const button = maybe('#inspector-width');
   // The label is the state, not the next step: the arrow is the same control
   // whatever it is about to do, and a title attribute is the only place a
   // one-character button can say which of the three it is in.
@@ -2803,7 +2963,7 @@ function applyInspectorWidth(width) {
   // now, and the box is still the height the old wrapping needed. Nothing to
   // re-measure while the form is hidden: `scrollHeight` is 0 there, and
   // `fillInspector` grows both boxes when an item is put in them.
-  const form = $('#detail');
+  const form = $form('#detail');
   if (form && !form.hidden) {
     grow(form.elements.title);
     grow(form.elements.note);
@@ -2823,8 +2983,9 @@ function setInspectorWidth(next) {
 }
 
 setInspectorWidth(inspectorWidth);
-if ($('#inspector-width')) {
-  $('#inspector-width').onclick = () => setInspectorWidth(
+const widthArrow = maybe('#inspector-width');
+if (widthArrow) {
+  widthArrow.onclick = () => setInspectorWidth(
     inspectorWidths[(inspectorWidths.indexOf(inspectorWidth) + 1) % inspectorWidths.length]);
 }
 
@@ -2842,29 +3003,29 @@ if ($('#inspector-width')) {
 // only ever read while it is open has no reason to hold a second copy of
 // anything, and that is also why each control writes through the same
 // setter those other controls call.
-const prefsEditor = $('#prefs-editor');
+const prefsEditor = $dialog('#prefs-editor');
 
 function openPrefs() {
-  $('#prefs-theme').value = theme;
-  $('#prefs-inspector').value = inspectorWidth;
-  $('#prefs-forecast').value = forecastOrder;
-  $('#prefs-project-done').checked = projectDoneShown;
+  $select('#prefs-theme').value = theme;
+  $select('#prefs-inspector').value = inspectorWidth;
+  $select('#prefs-forecast').value = forecastOrder;
+  $input('#prefs-project-done').checked = projectDoneShown;
   prefsEditor.showModal();
 }
 
 if (prefsEditor) {
   $('#prefs').onclick = openPrefs;
   $('#prefs-close').onclick = () => prefsEditor.close();
-  $('#prefs-theme').onchange = (event) => setTheme(event.target.value);
-  $('#prefs-inspector').onchange = (event) => setInspectorWidth(event.target.value);
-  $('#prefs-forecast').onchange = (event) => setForecastOrder(event.target.value);
-  $('#prefs-project-done').onchange = () => toggleProjectDone();
+  $select('#prefs-theme').onchange = (event) => setTheme(/** @type {HTMLInputElement} */ (event.target).value);
+  $select('#prefs-inspector').onchange = (event) => setInspectorWidth(/** @type {HTMLInputElement} */ (event.target).value);
+  $select('#prefs-forecast').onchange = (event) => setForecastOrder(/** @type {HTMLInputElement} */ (event.target).value);
+  $input('#prefs-project-done').onchange = () => toggleProjectDone();
   // Where the database is is a question about the store and not about this
   // browser, so it keeps the dialog it had. One modal at a time: the gear is
   // the way to it now, so it closes behind the one it opens.
   $('#prefs-server').onclick = () => {
     prefsEditor.close();
-    openSettings().catch((err) => say(err.message, true));
+    openSettings().catch((err) => say(messageOf(err), true));
   };
 }
 

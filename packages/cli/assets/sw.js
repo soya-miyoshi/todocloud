@@ -25,13 +25,20 @@
 // worker is installable, which is how this reaches a home screen.
 'use strict';
 
+// `self` in a service worker is a `ServiceWorkerGlobalScope`, which is not
+// the `self` of a window and not the one the checker assumes by default.
+// `sw` is that same object under the right type — this is a type assertion
+// and nothing else, so it costs the browser nothing — and it is what gives
+// `skipWaiting` and `clients` below. See `tsconfig.sw.json`.
+const sw = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
+
 // A worker one version behind is the stale shell in another form, so a new
 // one takes over immediately rather than waiting for every tab to close.
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+sw.addEventListener('install', () => sw.skipWaiting());
+sw.addEventListener('activate', (event) => event.waitUntil(sw.clients.claim()));
 
 // Present, and deliberately inert. A fetch listener that never calls
 // respondWith leaves the browser to make the request itself, which is what
 // an installability check looks for without putting this file in the path of
 // a single byte.
-self.addEventListener('fetch', () => {});
+sw.addEventListener('fetch', () => {});

@@ -281,19 +281,18 @@ test('the manifest is installable and points at files that exist', () => {
 // added to one shell and not the other is not a layout difference; it is a
 // `TypeError` on the next render, in whichever front end was forgotten.
 //
-// So every id `app.js` reaches for has to be in this page. The two it may
-// omit are the two the footer used to carry, `#theme` and `#settings`: the
-// gear's dialog has them now, and `app.js` guards both for a shell that
-// still has the old words.
+// So every id `app.js` reaches for with `$` has to be in this page. `$`
+// throws rather than answering null, which is what makes the list it asks
+// for a contract; the handful that genuinely differ between the two shells
+// are asked for with `maybe`, which answers null, and are not on it.
 test('every element app.js looks up by id is in this shell', () => {
   const js = read(path.join(assetsDir, 'app.js'));
   const html = read(publicFile('index.html'));
   const wanted = new Set(
-    [...js.matchAll(/\$\('#([A-Za-z0-9_-]+)'\)/g)].map((m) => m[1] as string),
+    [...js.matchAll(/\$\('#([A-Za-z0-9_-]+)'/g)].map((m) => m[1] as string),
   );
-  const optional = new Set(['theme', 'settings']);
   const have = new Set([...html.matchAll(/id="([A-Za-z0-9_-]+)"/g)].map((m) => m[1] as string));
-  const missing = [...wanted].filter((id) => !have.has(id) && !optional.has(id)).sort();
+  const missing = [...wanted].filter((id) => !have.has(id)).sort();
   assert.deepEqual(
     missing,
     [],

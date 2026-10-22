@@ -1,0 +1,12 @@
+{
+  // The service worker, checked on its own. A worker is not a window: it has
+  // `skipWaiting` and `clients` and it has no `document`, and the two global
+  // scopes cannot be described by one program — `lib: ["DOM"]` and
+  // `lib: ["WebWorker"]` declare the same names with different types. So
+  // `app.js` has the config beside this one and the worker has this.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "WebWorker"]
+  },
+  "include": ["sw.js"]
+}

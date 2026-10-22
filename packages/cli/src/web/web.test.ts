@@ -225,19 +225,20 @@ test("the page carries the token and is not cached", async (t) => {
 // the script reaches for. `packages/pwa/src/shell.test.ts` asserts the same
 // thing about the other page.
 //
-// `#inspector-width` and the rest of the furniture are in the page as served
-// rather than in the file on disk, so this reads what the server sends.
+// The furniture is in the page as served rather than in the file on disk, so
+// this reads what the server sends.
 test("every element app.js looks up by id is in the page", async (t) => {
   const h = await Harness.start(t);
   const html = await (await fetch(`${h.base}/`)).text();
   const js = await (await fetch(`${h.base}/app.js`)).text();
 
-  const wanted = new Set([...js.matchAll(/\$\('#([A-Za-z0-9_-]+)'\)/g)].map((m) => m[1] as string));
-  // The two words the footer used to carry. The gear's dialog has them now;
-  // `app.js` still guards both, because the PWA's shell may keep them.
-  const optional = new Set(["theme", "settings"]);
+  // `$` is the furniture that has to be there — it throws rather than
+  // answering null — and `maybe` is the handful that differs between the two
+  // shells. The script says which is which, so this test does not have to
+  // carry a list that would go stale.
+  const wanted = new Set([...js.matchAll(/\$\('#([A-Za-z0-9_-]+)'/g)].map((m) => m[1] as string));
   const have = new Set([...html.matchAll(/id="([A-Za-z0-9_-]+)"/g)].map((m) => m[1] as string));
-  const missing = [...wanted].filter((id) => !have.has(id) && !optional.has(id)).sort();
+  const missing = [...wanted].filter((id) => !have.has(id)).sort();
   assert.deepEqual(missing, [], `app.js looks these up and the page has none of them: ${missing.join(", ")}`);
 });
 

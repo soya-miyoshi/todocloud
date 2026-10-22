@@ -1,0 +1,45 @@
+{
+  // The viewer's two scripts, type-checked.
+  //
+  // `app.js` and `sw.js` are hand-written browser JavaScript and will stay
+  // that way: they are served as they are, by a Go-less server that reads
+  // this directory off disk and by a build that copies it into the PWA, so
+  // there is no step between this file and the browser and nothing to
+  // compile. That is why they were outside the TypeScript project — and it
+  // is also how a `$('#about')` that answers null in one of the two shells
+  // reached a phone. `checkJs` puts them under the same compiler the rest
+  // of the tree is held to, without changing what is shipped.
+  //
+  // What is on:
+  //
+  //   - `strictNullChecks`, which is the point of the exercise. Every
+  //     `querySelector` is `… | null` and every use of one has to say what
+  //     it does about that, so an element this file reaches for and a shell
+  //     that does not have it is a compile error rather than a TypeError on
+  //     somebody's phone.
+  //   - `noImplicitThis` and the rest of `strict` minus `noImplicitAny`.
+  //     Annotating every event handler's parameter would be several hundred
+  //     JSDoc comments in a file whose comments are prose, for a class of
+  //     bug the DOM's own types already catch at the call sites that matter.
+  //
+  // `types: []` keeps `@types/node` out: nothing here runs in Node, and a
+  // `setTimeout` that returns a `Timeout` rather than a number is exactly
+  // the wrong answer for a file that runs in a browser.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "types": [],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "noImplicitThis": true,
+    "useUnknownInCatchVariables": true,
+    "alwaysStrict": true
+  },
+  "include": ["app.js"]
+}
