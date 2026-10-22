@@ -148,7 +148,7 @@ export async function confirm(a: App, question: string): Promise<boolean> {
   a.env.stderr.write(`${question} [y/N] `);
   let text: string;
   try {
-    text = await a.env.stdin.read();
+    text = await (a.env.stdin.readLine ?? a.env.stdin.read).call(a.env.stdin);
   } catch {
     // Go returned (false, nil) when the read failed with nothing read: an
     // unreadable stdin is a "no", not a failure of the command.

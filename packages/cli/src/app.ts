@@ -145,6 +145,13 @@ import { exportCommand, importCommand } from './transfer.ts';
  */
 export interface Reader {
   read(): Promise<string>;
+  /**
+   * readLine resolves with the first line, newline included, or with whatever
+   * arrived if the input ended first. A prompt on a terminal needs it: the
+   * terminal's Enter is not an end of input, so `read` would wait for Ctrl-D.
+   * A test reader may leave it out, and `read` stands in.
+   */
+  readLine?(): Promise<string>;
 }
 
 /**
@@ -224,13 +231,36 @@ const emptyReader: Reader = {
 };
 
 /** processStdin reads the whole of the real stdin. */
-const processStdin: Reader = {
+export const processStdin: Reader = {
   async read(): Promise<string> {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
       chunks.push(Buffer.from(chunk as Uint8Array));
     }
     return Buffer.concat(chunks).toString('utf8');
+  },
+  readLine(): Promise<string> {
+    return new Promise((resolve) => {
+      let buf = '';
+      const finish = (text: string): void => {
+        process.stdin.off('data', onData);
+        process.stdin.off('end', onEnd);
+        // Paused so that the process can exit once the prompt is answered.
+        process.stdin.pause();
+        resolve(text);
+      };
+      const onData = (chunk: string): void => {
+        buf += chunk;
+        const i = buf.indexOf('\n');
+        if (i >= 0) {
+          finish(buf.slice(0, i + 1));
+        }
+      };
+      const onEnd = (): void => finish(buf);
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', onData);
+      process.stdin.on('end', onEnd);
+    });
   },
 };
 

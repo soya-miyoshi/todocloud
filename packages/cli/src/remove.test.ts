@@ -152,6 +152,30 @@ test('purge prompts on a terminal and a yes goes through', async (t: TestContext
 });
 
 // Declining is not a failure; nothing was changed.
+// The prompt must come back at the end of the line. On a terminal the stream
+// never ends, so a reader that waits for EOF waits for Ctrl-D: this reader's
+// `read` never settles, and only `readLine` answers.
+test('purge answers from one line, not from the end of stdin', async (t: TestContext) => {
+  const h = await newHarness(t, commands);
+  const task = await h.add('Purge on a live terminal');
+  const out = new buffer();
+  const err = new buffer();
+  const env: Env = {
+    stdout: out,
+    stderr: err,
+    stdin: {
+      read: (): Promise<string> => new Promise<string>(() => {}),
+      readLine: (): Promise<string> => Promise.resolve('y\n'),
+    },
+    getenv: (name: string): string => h.env[name] ?? '',
+    stdinIsTTY: (): boolean => true,
+  };
+  const code = await RunWith(env, ['tdo', 'rm', task.id, '--purge'], commands);
+  assert.equal(code, 0, err.text);
+  assert.match(out.text, new RegExp(`purged ${task.id}`));
+  assert.equal(await storedTotal(h), 0);
+});
+
 test('declining the prompt purges nothing and exits 0', async (t: TestContext) => {
   const h = await newHarness(t, commands);
   const task = await h.add('Staying');

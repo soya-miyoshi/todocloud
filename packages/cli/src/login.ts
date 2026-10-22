@@ -22,7 +22,7 @@
 // not a failure: the user is told the command to run themselves and the
 // command exits 0.
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 
 import * as exit from '@todocloud/core/exit';
@@ -94,33 +94,48 @@ export function ensureProviderCLI(): void {
       }
       return found;
     },
-    runner(signal, name, args) {
-      const res = spawnSync(name, [...args], {
-        // 'ignore' for stdin: see the note above.
-        stdio: ['ignore', 'pipe', 'pipe'],
-        encoding: 'utf8',
-        signal,
-      });
-      const out: providercli.Output = {
-        stdout: res.stdout ?? '',
-        stderr: res.stderr ?? '',
-      };
-      if (res.error !== undefined && res.error !== null) {
-        return { ...out, err: res.error };
-      }
-      if (typeof res.status === 'number' && res.status !== 0) {
-        // An ExitError rather than a plain one, because tursoLoggedIn reads
-        // a non-zero exit as "not logged in" — an answer — and anything else
-        // as a failure to report.
-        return { ...out, err: new providercli.ExitError(res.status) };
-      }
-      if (res.signal !== null && res.signal !== undefined) {
-        return { ...out, err: new Error(`killed by ${res.signal}`) };
-      }
-      return out;
-    },
+    runner: spawnRunner,
   });
 }
+
+/**
+ * Asynchronous on purpose. providercli bounds every child with a timer
+ * that aborts `signal`, and a timer only runs when the event loop does:
+ * under `spawnSync` the loop is blocked for as long as the child lives, so
+ * a `turso` that hangs would never be cut off and `tdo login` wedged.
+ */
+export const spawnRunner: providercli.Runner = (signal, name, args) => {
+  return new Promise<providercli.Output>((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let failure: Error | undefined;
+    // 'ignore' for stdin: see the note above.
+    const child = spawn(name, [...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      signal,
+    });
+    child.stdout.setEncoding('utf8').on('data', (c: string) => (stdout += c));
+    child.stderr.setEncoding('utf8').on('data', (c: string) => (stderr += c));
+    child.on('error', (err) => {
+      failure = err;
+    });
+    child.on('close', (code, sig) => {
+      const out: providercli.Output = { stdout, stderr };
+      if (failure !== undefined) {
+        resolve({ ...out, err: failure });
+      } else if (typeof code === 'number' && code !== 0) {
+        // An ExitError rather than a plain one, because tursoLoggedIn
+        // reads a non-zero exit as "not logged in" — an answer — and
+        // anything else as a failure to report.
+        resolve({ ...out, err: new providercli.ExitError(code) });
+      } else if (sig !== null) {
+        resolve({ ...out, err: new Error(`killed by ${sig}`) });
+      } else {
+        resolve(out);
+      }
+    });
+  });
+};
 
 /**
  * lookOnPath resolves file against PATH, as exec.LookPath did. It returns the
@@ -542,7 +557,9 @@ async function readToken(a: App, provider: config.Provider): Promise<Secret> {
 async function readTokenLine(a: App): Promise<Secret> {
   let line: string;
   try {
-    line = firstLine(await a.env.stdin.read());
+    line = firstLine(
+      await (a.env.stdin.readLine ?? a.env.stdin.read).call(a.env.stdin),
+    );
   } catch (err) {
     throw new Error(`read token from stdin: ${asError(err).message}`);
   }
