@@ -861,7 +861,13 @@ A container is an item too, so a project has a note, dates, tags and fields
 like anything else — and the one row a project's own list leaves out is the
 project. Opening one therefore draws what is written on it above the items:
 its note, whatever dates, flags and fields it carries, its tags, and a way
-into its inspector. Renaming is where the name is: a double click edits a
+into its inspector. Beside those is the one view setting a project has:
+**Completed: hidden or shown**. A project is a plan read to see where it has
+got to, so the actions already finished are part of the answer; every other
+view is a list of work, where a finished item is not work, and none of them
+offers the choice. It applies to every project, is off to begin with and is
+remembered per browser like the Forecast's order. A dropped item stays
+hidden either way — the plan is not a record of what was considered against. Renaming is where the name is: a double click edits a
 project's or a folder's name in the Projects tree, a tag's name in the Tags
 perspective — which moves every task carrying it, exactly as `tdo tag rename`
 does — and a row's title or its tags in the outline.

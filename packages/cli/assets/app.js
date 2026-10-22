@@ -409,6 +409,30 @@ let forecastOrder = FORECAST_ORDERS.some((o) => o.key === remembered(ForecastOrd
 // starts shut.
 let forecastLaterOpen = remembered(ForecastLaterKey, '') === 'open';
 
+// Inside a project, whether what is finished stays on screen.
+//
+// Everywhere else the answer is no and is not a choice: the Forecast, Next
+// and the tag views are lists of work, and a finished item is not work. A
+// project is the other thing — a plan, read to see where it has got to —
+// and there the completed actions are what says how far it has got. That is
+// the question OmniFocus answers with a per-project View setting, and this
+// is the same setting with one scope: it applies to every project, because
+// a preference per project is a thing to set over and over before it is
+// ever useful.
+//
+// Off to begin with, so a project opens as a list of what is left, and
+// remembered per browser like the Forecast's order. `Completed` is still
+// the view for the whole store's history.
+const ProjectDoneKey = 'tdo.project.done';
+
+let projectDoneShown = remembered(ProjectDoneKey, '') === 'shown';
+
+function toggleProjectDone() {
+  projectDoneShown = !projectDoneShown;
+  remember(ProjectDoneKey, projectDoneShown ? 'shown' : 'hidden');
+  render();
+}
+
 function setForecastOrder(key) {
   forecastOrder = key;
   remember(ForecastOrderKey, key);
@@ -471,7 +495,11 @@ function currentItems() {
   if (view.kind === 'project') {
     const root = byID.get(view.key);
     if (!root) return [];
-    return state.tasks.filter((t) => t.id !== root.id && inSubtree(t, root.id) && open(t));
+    // A dropped item is not shown either way: it was decided against, and
+    // the plan is not a record of what was considered. What is completed is
+    // the toggle above the list.
+    const keep = (t) => (projectDoneShown ? t.status !== 'dropped' : open(t));
+    return state.tasks.filter((t) => t.id !== root.id && inSubtree(t, root.id) && keep(t));
   }
   if (view.kind === 'tag') {
     return state.tasks.filter((t) => open(t) && (t.tags || []).some((g) => g.toLowerCase() === view.key.toLowerCase()));
@@ -1356,9 +1384,22 @@ function renderAbout(t) {
   }
 
   const kids = [];
+  // The toggle lives here rather than in the sidebar's settings, where it
+  // would be a preference about a view you cannot see while you set it. It
+  // says which state it is in rather than what it would do, like the
+  // Forecast's own segmented words.
+  const done = el('button', {
+    type: 'button',
+    className: 'about-toggle',
+    textContent: projectDoneShown ? 'Completed: shown' : 'Completed: hidden',
+    onclick: toggleProjectDone,
+  });
+  done.setAttribute('aria-pressed', projectDoneShown ? 'true' : 'false');
+
   kids.push(el('div', { className: 'about-head' }, [
     el('span', { className: 'type' }, typeIcon(t)),
     el('span', { className: 'about-kind', textContent: t.kind }),
+    done,
     el('button', {
       type: 'button',
       className: 'about-open',

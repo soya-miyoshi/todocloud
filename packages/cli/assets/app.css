@@ -464,6 +464,21 @@ input, textarea, select {
 .about-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
 .about-head .type { color: var(--dim); }
 .about-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
+/* Whether what is finished stays on screen. Drawn like the Forecast's
+   segmented words — the state it is in, marked when it is on — rather than
+   as a checkbox in a settings pane the project is not visible from. */
+.about-toggle {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  min-height: 28px;
+  border-radius: 8px;
+  color: var(--dim);
+  cursor: pointer;
+}
+.about-toggle[aria-pressed="true"] { background: var(--select); color: var(--accent); }
 /* Pushed to the far end, where the inspector is. */
 .about-open { margin-left: auto; border: 0; background: none; padding: 2px 0; font-size: 12px; color: var(--accent); cursor: pointer; }
 .about-note { font-size: 14px; color: var(--ink); white-space: pre-wrap; overflow-wrap: break-word; }
