@@ -153,32 +153,41 @@ function maybe(sel) {
   return /** @type {HTMLElement | null} */ (document.querySelector(sel));
 }
 
+// What a handler's event happened on. `event.target` is an `EventTarget`,
+// which has no `closest` and may be null; every listener in this file is on
+// an element and fires for an element.
+/** @param {Event} event @returns {HTMLElement} */
+const nodeOf = (event) => /** @type {HTMLElement} */ (event.target);
+
+// `closest` from a handler's own node, and from an element already in hand:
+// it answers `Element | null`, and every caller here wants an element it can
+// read a `dataset` off.
+/** @param {Event} event @param {string} sel @returns {HTMLElement | null} */
+const closestOf = (event, sel) => /** @type {HTMLElement | null} */ (nodeOf(event).closest(sel));
+/** @param {Element} node @param {string} sel @returns {HTMLElement | null} */
+const closestTo = (node, sel) => /** @type {HTMLElement | null} */ (node.closest(sel));
+
+// What a caught thing says. A `catch` binding is `unknown` — which is the
+// truth, since `throw` takes anything — and every caller here wants the one
+// line to put on screen.
+/** @param {unknown} err @returns {string} */
+const messageOf = (err) => (err instanceof Error ? err.message : String(err));
+
 // The same element under the type it actually has. A `<form>`'s `elements`,
 // an `<input>`'s `value` and a `<dialog>`'s `showModal` are not on
 // `HTMLElement`, and a cast at the one place the element is reached for is
 // how the checker is told which kind it is — once, rather than at every use.
-// A form's named controls. The DOM calls them an `HTMLFormControlsCollection`
-// and reaches them by `namedItem`, which is not how any of the code below
-// reads them or how the HTML names them; `form.elements.title` is the
-// idiom, and it is stringly typed by nature — the name is in the markup.
-// So the collection is widened here, once, rather than by a cast at each of
-// the sixty places a field is read.
+//
+// A form's named controls are the exception that needs a type of its own.
+// The DOM calls them an `HTMLFormControlsCollection` and reaches them by
+// `namedItem`, which is not how any of the code below reads them or how the
+// HTML names them; `form.elements.title` is the idiom, and it is stringly
+// typed by nature — the name is in the markup. So the collection is widened
+// here, once, rather than by a cast at each of the sixty places a field is
+// read.
 /** @typedef {HTMLFormControlsCollection & Object.<string, any>} FormFields */
 /** @param {string} sel @returns {HTMLFormElement & {elements: FormFields}} */
 const $form = (sel) => /** @type {HTMLFormElement & {elements: FormFields}} */ ($(sel));
-
-// The form a submit or a focusout happened in, under that same type.
-/** @param {Event} event @returns {HTMLFormElement & {elements: FormFields}} */
-const formOf = (event) => /** @type {HTMLFormElement & {elements: FormFields}} */ (event.target);
-
-// `closest` from a handler's own node: it answers `Element | null`, and
-// every caller here wants an element it can read a `dataset` off.
-/** @param {Event} event @param {string} sel @returns {HTMLElement | null} */
-const closestOf = (event, sel) => /** @type {HTMLElement | null} */ (closestOf(event, sel));
-
-// `closest` from an element already in hand, same reason.
-/** @param {Element} node @param {string} sel @returns {HTMLElement | null} */
-const closestTo = (node, sel) => /** @type {HTMLElement | null} */ (node.closest(sel));
 /** @param {string} sel @param {ParentNode} [root] @returns {HTMLInputElement} */
 const $input = (sel, root = document) => /** @type {HTMLInputElement} */ ($(sel, root));
 /** @param {string} sel @returns {HTMLSelectElement} */
@@ -188,17 +197,9 @@ const $dialog = (sel) => /** @type {HTMLDialogElement} */ ($(sel));
 /** @param {string} sel @returns {HTMLFieldSetElement} */
 const $fieldset = (sel) => /** @type {HTMLFieldSetElement} */ ($(sel));
 
-// What a handler's event happened on. `event.target` is an `EventTarget`,
-// which has no `closest` and may be null; every listener in this file is on
-// an element and fires for an element.
-/** @param {Event} event @returns {HTMLElement} */
-const nodeOf = (event) => /** @type {HTMLElement} */ (event.target);
-
-// What a caught thing says. A `catch` binding is `unknown` — which is the
-// truth, since `throw` takes anything — and every caller here wants the one
-// line to put on screen.
-/** @param {unknown} err @returns {string} */
-const messageOf = (err) => (err instanceof Error ? messageOf(err) : String(err));
+// The form a submit or a focusout happened in, under that same type.
+/** @param {Event} event @returns {HTMLFormElement & {elements: FormFields}} */
+const formOf = (event) => /** @type {HTMLFormElement & {elements: FormFields}} */ (event.target);
 
 /**
  * el builds one element: the tag, the properties to assign and the children
