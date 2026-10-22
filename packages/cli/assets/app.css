@@ -163,7 +163,13 @@ body {
   font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   background: var(--bg);
   color: var(--ink);
-  height: 100dvh;
+  /* Pinned to the edges rather than sized with `100dvh`. An installed iOS
+     app reports a `dvh` that can come up short of the screen at the bottom,
+     and whatever is left under it is not the layout's to paint — it is the
+     strip that read as a black frame under the panes. `fixed; inset: 0`
+     is the layout viewport itself, whatever it is measured as. */
+  position: fixed;
+  inset: 0;
   overflow: hidden;
   overscroll-behavior: none;
   /* The sides only.
