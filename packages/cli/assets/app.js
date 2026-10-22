@@ -1130,6 +1130,7 @@ document.addEventListener('touchstart', (event) => {
   const t = event.touches[0];
   // The pane this drag started in, and only when it is already at its top:
   // what makes a pull a pull is that there is nothing above it to scroll to.
+  // On a narrow screen the page scrolls rather than the pane, so both count.
   // `closest` also answers no inside a dialog, which is what should happen —
   // a modal is not a list to refresh.
   const pane = closestOf(event, '.pane-body');
@@ -1137,7 +1138,7 @@ document.addEventListener('touchstart', (event) => {
     x: t.clientX,
     y: t.clientY,
     ok: true,
-    pane: pane && pane.scrollTop <= 0 ? pane : null,
+    pane: pane && pane.scrollTop + window.scrollY <= 0 ? pane : null,
     pulled: 0,
   };
 }, { passive: true });
@@ -1157,7 +1158,7 @@ document.addEventListener('touchmove', (event) => {
   if (swipe.pane && dy > 0 && dy > Math.abs(swipe.dx)) {
     // The pane may have been scrolled since the drag began: a momentum
     // scroll still settling is not the top.
-    if (swipe.pane.scrollTop > 0) {
+    if (swipe.pane.scrollTop + window.scrollY > 0) {
       swipe.pulled = 0;
       showPull(0, false);
       return;

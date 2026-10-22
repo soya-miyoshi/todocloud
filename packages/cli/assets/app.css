@@ -1067,15 +1067,26 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 /* --- compact: one pane at a time ----------------------------------- */
 
 @media (max-width: 859px) {
-  #app { display: block; position: relative; height: 100%; }
+  /* The page scrolls here, like any website. A body pinned to the viewport
+     with the scrolling done inside a pane came up short of the screen under
+     Safari's floating toolbar and in an installed app, clipping the last
+     row; leaving the layout to the document lets the browser own those
+     edges. The bars stay in view by being sticky instead. */
+  html, body { height: auto; }
+  body { position: static; overflow: visible; min-height: 100vh; min-height: 100dvh; }
+  #app { display: block; position: relative; height: auto; }
 
   #sidebar, #list, #inspector {
-    position: absolute;
-    inset: 0;
+    position: static;
+    min-height: 100vh;
+    min-height: 100dvh;
     width: auto;
     border: 0;
     display: none;
   }
+  .pane-body { overflow: visible; }
+  .navbar { position: sticky; top: 0; z-index: 5; }
+  .toolbar { position: sticky; bottom: 0; z-index: 5; }
 
   body[data-pane="home"] #sidebar,
   body[data-pane="outline"] #list,
@@ -1087,7 +1098,7 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
      the width button is now that child on the inspector's bar even though it
      is hidden here. The status line is what has to be pushed instead. */
   #inspector .navbar .status { margin-left: auto; }
-  .navbar { min-height: 50px; position: relative; }
+  .navbar { min-height: 50px; }
 
   /* Centred on the screen, not in what is left over. As a flex item between
      a back button and an icon the title sat wherever those two left room —
