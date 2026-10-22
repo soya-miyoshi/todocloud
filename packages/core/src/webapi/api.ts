@@ -49,7 +49,7 @@
 //     where a bool belongs, a fraction where an int belongs.
 
 import type { Perspective, Store, Tag } from '../store/store.ts';
-import { Availability, OrderPosition } from '../store/store.ts';
+import { Availability, OrderPosition, tagKey } from '../store/store.ts';
 import { Filter, filterFromJSON } from '../store/filter.ts';
 import * as id from '../id.ts';
 import { NewTaskView, Views } from '../output/view.ts';
@@ -67,6 +67,7 @@ import {
   formatTime,
   kindValid,
   parseDue,
+  parseValue,
   statusValid,
 } from '../task.ts';
 
@@ -271,6 +272,23 @@ function reqStrings(o: JSONObject, key: string): string[] {
  * left exactly as they arrived: the shared layer decides which keys are
  * reserved and which values are legal, and this is a transport.
  */
+/**
+ * textFields reads an object of KEY to the text a person typed, and gives
+ * back what `parseValue` makes of each one — the rule `tdo add --set` and
+ * `tdo edit --set` already use, so a field typed into the inspector and the
+ * same field typed at a shell end up as the same stored value.
+ */
+function textFields(o: JSONObject, key: string): Record<string, JSONValue> {
+  const out: Record<string, JSONValue> = {};
+  for (const [k, v] of Object.entries(fields(o, key))) {
+    if (typeof v !== 'string') {
+      return abort(`${key}.${k} must be a string`);
+    }
+    out[k] = parseValue(v);
+  }
+  return out;
+}
+
 function fields(o: JSONObject, key: string): Record<string, JSONValue> {
   if (!present(o, key)) {
     return {};
@@ -406,6 +424,14 @@ export class API {
    *
    * `flagged` is here rather than in Edit because flagging is its own
    * operation in the shared layer, and the inspector sends one request.
+   *
+   * `set` carries JSON values, which is what an agent writing the API has.
+   * `set_text` carries the text a person typed into a box, read by the same
+   * `parseValue` that reads `tdo edit --set KEY=VALUE`: the inspector's
+   * custom-field rows are text, and deciding in the page whether `3` is a
+   * number or a string would be a second implementation of that rule, which
+   * would answer differently the first time either changed. The two merge,
+   * with `set` winning a key they share.
    */
   handleEdit: Handler = async (r) => {
     let t = await this.task(r);
@@ -417,6 +443,7 @@ export class API {
       'estimate',
       'priority',
       'set',
+      'set_text',
       'unset',
       'flagged',
     ]);
@@ -427,7 +454,7 @@ export class API {
       tags: optStrings(o, 'tags'),
       untag: reqStrings(o, 'untag'),
       priority: optInt(o, 'priority'),
-      set: fields(o, 'set'),
+      set: { ...textFields(o, 'set_text'), ...fields(o, 'set') },
       unset: reqStrings(o, 'unset'),
     });
     const estimate = optString(o, 'estimate');
@@ -658,6 +685,31 @@ export class API {
   };
 
   /**
+   * handleRenameTag takes the JSON of `PATCH /api/tags/{name}`:
+   * `{"name": "..."}`, the spelling the tag is to have. It is `tdo tag
+   * rename <from> <to>`, and the store does the work: every task carrying
+   * the old tag carries the new one afterwards, the destination keeps its own
+   * status when it already has one, and a rename that only changes the case
+   * restyles the tag rather than making a second one.
+   *
+   * The reply is the renamed tag, read back from the store rather than echoed
+   * from the request, because the stored spelling is the one the page has to
+   * show — a rename into an existing tag's case takes that tag's spelling.
+   */
+  handleRenameTag: Handler = async (r) => {
+    const from = tagName(r);
+    const o = body(r, ['name']);
+    const to = reqString(o, 'name').trim();
+    if (to === '') {
+      throw usagef('a tag needs a name');
+    }
+    await this.st.renameTag(from, to, this.now());
+    const key = tagKey(to);
+    const tags = (await this.st.tags()).filter((g) => tagKey(g.name) === key);
+    return { tags: tags.map(tagJSON), count: tags.length };
+  };
+
+  /**
    * task reads the {id} of the route. The id is taken as an exact one rather
    * than a prefix: a prefix is for a person typing, and the page always has
    * the whole thing.
@@ -775,6 +827,19 @@ function perspectiveName(r: Req): string {
   const name = (r.params['name'] ?? '').trim();
   if (name === '') {
     throw usagef('a perspective needs a name');
+  }
+  return name;
+}
+
+/**
+ * tagName reads the {name} of the route. `tagPath` refuses an empty segment,
+ * but a name of nothing but spaces can reach a handler, and no tag is filed
+ * under one.
+ */
+function tagName(r: Req): string {
+  const name = (r.params['name'] ?? '').trim();
+  if (name === '') {
+    throw usagef('a tag needs a name');
   }
   return name;
 }

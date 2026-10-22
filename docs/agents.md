@@ -849,6 +849,23 @@ flag — and posts it as one `POST /api/tasks`. Opened from a day of the
 Forecast it arrives with that day's due date filled in, and from inside a
 project with that project selected.
 
+The inspector is the whole of one item, and that includes the open fields of
+§ *Your own fields, from an agent*: a **Fields** block lists every key the
+task carries beyond the fixed shape, one row per field, and a row added there
+is typed by the same rule `--set k=v` is typed by — the page sends the text
+and the server reads it with the same parser, so `3` is a number in both and
+`3.0.1` a string in both. `priority` is not in the block; it has a control of
+its own above it.
+
+A container is an item too, so a project has a note, dates, tags and fields
+like anything else — and the one row a project's own list leaves out is the
+project. Opening one therefore draws what is written on it above the items:
+its note, whatever dates, flags and fields it carries, its tags, and a way
+into its inspector. Renaming is where the name is: a double click edits a
+project's or a folder's name in the Projects tree, a tag's name in the Tags
+perspective — which moves every task carrying it, exactly as `tdo tag rename`
+does — and a row's title or its tags in the outline.
+
 It is a front end and not a second implementation. Every read and every write
 goes through the same internal layer `tdo ls` and `tdo done` go through, and a
 task is rendered as the same object `--json` renders, derived keys included

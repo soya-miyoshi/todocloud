@@ -455,6 +455,26 @@ input, textarea, select {
 }
 .inline:focus { outline: none; }
 
+/* --- what a container says about itself ----------------------------- */
+
+/* The block above a project's list. It reads as a heading rather than as a
+   row: no border of its own, a rule underneath to separate it from the
+   items, and the note at the size the note is read at in the inspector. */
+#about { padding: 10px 14px 12px; border-bottom: 1px solid var(--edge); }
+.about-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.about-head .type { color: var(--dim); }
+.about-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
+/* Pushed to the far end, where the inspector is. */
+.about-open { margin-left: auto; border: 0; background: none; padding: 2px 0; font-size: 12px; color: var(--accent); cursor: pointer; }
+.about-note { font-size: 14px; color: var(--ink); white-space: pre-wrap; overflow-wrap: break-word; }
+.about-note.empty { color: var(--dim); font-style: italic; }
+/* The same two-column shape as #facts in the inspector, so a field reads
+   the same way in both places. */
+.about-fields { font-size: 12px; color: var(--dim); margin: 8px 0 0; }
+.about-fields dt { float: left; clear: left; width: 8.5em; }
+.about-fields dd { margin: 0 0 3px 8.5em; overflow-wrap: anywhere; }
+.about-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+
 /* --- the outline --------------------------------------------------- */
 
 /* Dragging a row files it somewhere else. The row being carried fades; the
@@ -887,6 +907,30 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 #inspector textarea[name="title"] { min-height: 0; }
 #inspector .actions button.danger:hover { color: var(--over); border-color: var(--over); }
 #no-selection { color: var(--dim); }
+
+/* A task's own fields. The `fieldset` is drawn as a block of the inspector
+   rather than as a box: a border around three rows of boxes is one border
+   too many, so only the rule above the legend survives. The key is narrower
+   than the value because a key is a word and a value is anything. */
+#fields { border: 0; border-top: 1px solid var(--edge); margin: 14px 0 0; padding: 10px 0 0; }
+#fields legend { padding: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
+.field-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.field-row input { min-width: 0; color: var(--ink); font-size: 14px; }
+.field-row .field-key { flex: 2; }
+.field-row .field-value { flex: 3; }
+/* The remove button keeps the touch target the rest of the app's icons have
+   and does not stretch with the row. */
+.field-row .field-drop { flex: 0 0 auto; }
+#field-add {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--raised);
+  padding: 5px 9px;
+  font-size: 12px;
+  color: var(--dim);
+  cursor: pointer;
+}
+#field-add:hover { color: var(--ink); }
 
 #facts { font-size: 12px; color: var(--dim); margin: 14px 0 0; }
 #facts dt { float: left; clear: left; width: 8.5em; }

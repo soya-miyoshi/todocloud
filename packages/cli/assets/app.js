@@ -993,6 +993,7 @@ function navRow(label, count, isCurrent, onClick, options = {}) {
     button.append(el('span', { className: 'count', textContent: String(count) }));
   }
   if (options.id) button.dataset.id = options.id;
+  if (options.tag) button.dataset.tag = options.tag;
   if (options.perspective) button.dataset.perspective = options.perspective;
   if (options.disclosure === undefined) {
     return el('li', {}, button);
@@ -1323,13 +1324,80 @@ function treeRows() {
 // tagRows is the Tags perspective: the tags themselves, each leading to its
 // items. A tag that is on hold or dropped holds its items back, so it reads
 // as inactive here too; `tdo tag unhold <tag>` is how it comes back.
+//
+// `tag` puts the name on the row so a double click can rename it, the way
+// `id` does for a folder or a project in the Projects tree. A tag has no id
+// — the name is what it is filed under — so the two cannot share one key.
 function tagRows() {
   return (state.tags || []).map((g) => navRow(
     g.name,
     g.count,
     false,
     () => select({ kind: 'tag', key: g.name }),
-    { held: g.status && g.status !== 'active', mark: el('span', { textContent: '#' }) }));
+    { held: g.status && g.status !== 'active', mark: el('span', { textContent: '#' }), tag: g.name }));
+}
+
+// renderAbout draws what the container itself says, above its list. It is
+// the answer to a question the outline could not be asked before: a project
+// has a note, dates, tags and its own fields like anything else, and inside
+// the project none of that was on screen — the row carrying it is the one
+// row the list leaves out.
+//
+// It is a reader and not a second inspector: the note is drawn, not typed
+// into, and the button goes to the pane where everything about the project
+// can be changed. A container with nothing written on it still gets the
+// block, because the button is the point as much as the note is.
+function renderAbout(t) {
+  const about = $('#about');
+  about.hidden = t === undefined;
+  if (t === undefined) {
+    about.replaceChildren();
+    return;
+  }
+
+  const kids = [];
+  kids.push(el('div', { className: 'about-head' }, [
+    el('span', { className: 'type' }, typeIcon(t)),
+    el('span', { className: 'about-kind', textContent: t.kind }),
+    el('button', {
+      type: 'button',
+      className: 'about-open',
+      textContent: 'Inspector \u2192',
+      onclick: () => selectItem(t.id),
+    }),
+  ]));
+
+  // The note is this project's description, and a blank one says so rather
+  // than leaving a gap whose meaning has to be guessed.
+  kids.push(t.note
+    ? el('div', { className: 'about-note', textContent: t.note })
+    : el('div', { className: 'about-note empty', textContent: 'No note on this ' + t.kind + '.' }));
+
+  // Then everything else written on it: the two dates, the tags, the
+  // structure flags that only a container has, and its own fields. A line
+  // is drawn only when it has something to say — a list of dashes is not
+  // worth the room it takes on a phone.
+  const rows = [];
+  if (t.due_at) rows.push(['due', shortDate(t.due_at)]);
+  if (t.defer_at) rows.push(['defer', shortDate(t.defer_at)]);
+  if (t.status !== 'active') rows.push(['status', t.status.replace('_', ' ')]);
+  if (t.sequential) rows.push(['order', 'sequential']);
+  if (t.completed_by_children) rows.push(['completes', 'with its last action']);
+  if (t.next_review_at) rows.push(['next review', t.next_review_at.slice(0, 10)]);
+  for (const [key, value] of customFields(t)) rows.push([key, value]);
+
+  if (rows.length) {
+    const dl = el('dl', { className: 'about-fields' });
+    for (const [key, value] of rows) {
+      dl.append(el('dt', { textContent: key }), el('dd', { textContent: value }));
+    }
+    kids.push(dl);
+  }
+  if ((t.tags || []).length) {
+    kids.push(el('div', { className: 'about-tags' }, (t.tags || []).map(tagChip)));
+  }
+
+  about.replaceChildren(...kids);
 }
 
 function renderList() {
@@ -1342,6 +1410,11 @@ function renderList() {
   // nobody wants, because the thing being looked for is almost never in the
   // list already on screen. So the whole store is searched, and clearing the
   // box puts the view back exactly as it was.
+  // A container's own description belongs to the container's view and to no
+  // other: a search and the Projects tree are lists of items from all over
+  // the tree, and there is nothing whose heading this would be.
+  renderAbout(view.kind === 'project' && !query ? byID.get(view.key) : undefined);
+
   if (query) {
     const found = searchResults();
     $('#list-title').textContent = `Search \u00b7 ${found.length}`;
@@ -1553,6 +1626,72 @@ function facts(t) {
   return list;
 }
 
+// --- a task's own fields -------------------------------------------------
+
+// The keys the task shape owns: the required fields of the model and the
+// four derived ones. Everything else on a task object is a field somebody
+// set, which is what the inspector's Fields block edits. The list is the
+// `reserved` set of `packages/core/src/task.ts`, and `priority` is
+// deliberately not in it there or here — it is an ordinary open field with a
+// control of its own above, so the Fields block must not show it twice.
+const RESERVED_KEYS = new Set([
+  'id', 'kind', 'title', 'parent_id', 'position', 'status', 'flagged',
+  'sequential', 'completed_by_children', 'defer_at', 'due_at',
+  'estimated_minutes', 'note', 'repeat', 'series_id', 'review_interval',
+  'last_reviewed_at', 'created_at', 'updated_at', 'completed_at',
+  'dropped_at', 'deleted_at', 'tags', 'done', 'available', 'blocked_by',
+  'next_review_at', 'priority',
+]);
+
+// customFields lists what a task carries beyond the shape, sorted the way
+// `--json` sorts its keys so the rows do not move about between renders.
+function customFields(t) {
+  return Object.keys(t)
+    .filter((k) => !RESERVED_KEYS.has(k))
+    .sort()
+    .map((k) => [k, fieldText(t[k])]);
+}
+
+// fieldText is a stored value as a line of text to type into. A string is
+// itself; everything else is its JSON, which is the spelling `--set` reads
+// back — `3`, `true`, `null`, `{"rounds":2}`.
+//
+// The round trip is not quite the identity: the *string* "3" comes back as
+// the number 3, because that is what `--set ref=3` means. It only matters
+// for a value that is sent again, and a row is only sent when its text
+// changed, so a field nobody touched keeps the type it has.
+function fieldText(v) {
+  return typeof v === 'string' ? v : JSON.stringify(v);
+}
+
+// fieldRow is one key/value pair. The inputs carry no `name`: they live
+// inside #detail, and a field called "title" would otherwise shadow the
+// title box in `form.elements`.
+function fieldRow(key, value) {
+  const row = el('div', { className: 'field-row' });
+  const name = el('input', { type: 'text', className: 'field-key', value: key, placeholder: 'key' });
+  name.setAttribute('aria-label', 'field name');
+  const val = el('input', { type: 'text', className: 'field-value', value, placeholder: 'value' });
+  val.setAttribute('aria-label', key ? `value of ${key}` : 'field value');
+  // Removing a field is its own button because an empty value is a value:
+  // `--set note2=` stores the empty string, so a blanked box cannot mean
+  // "take this field off".
+  const drop = el('button', {
+    type: 'button',
+    className: 'icon field-drop',
+    textContent: '\u2715',
+    onclick: () => { row.remove(); saveNow(); },
+  });
+  drop.setAttribute('aria-label', key ? `remove field ${key}` : 'remove field');
+  row.append(name, val, drop);
+  return row;
+}
+
+function renderFields(t) {
+  const rows = customFields(t).map(([k, v]) => fieldRow(k, v));
+  $('#field-rows').replaceChildren(...rows);
+}
+
 function renderInspector() {
   const form = $('#detail');
   const t = selected ? byID.get(selected) : null;
@@ -1597,6 +1736,7 @@ function fillInspector(form, t) {
     el('option', { value: '', textContent: t.kind === 'task' ? '(inbox)' : '(top level)' }),
     ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
   form.elements.parent_id.value = t.parent_id || '';
+  renderFields(t);
   grow(form.elements.title);
   grow(form.elements.note);
 }
@@ -1846,12 +1986,29 @@ function commitTitle(t) {
   };
 }
 
+// Renaming a tag moves every task carrying it, which is what `tdo tag
+// rename` does and why the store does the work rather than the page walking
+// the tasks itself. The name is the only thing a tag is filed under, so an
+// empty one is refused here rather than sent.
+function commitTagName(name) {
+  return (next) => {
+    if (!next.trim()) throw new Error('a tag must have a name');
+    return api('PATCH', `/api/tags/${encodeURIComponent(name)}`, { name: next.trim() });
+  };
+}
+
 $('#items').addEventListener('dblclick', (event) => {
-  // A folder or a project in the Projects tree, which is a nav row rather
-  // than an item row.
+  // A folder or a project in the Projects tree, or a tag in the Tags
+  // perspective — both are nav rows rather than item rows.
   const name = event.target.closest('.nav-row .name');
   if (name) {
-    const container = byID.get(name.closest('.nav-row').dataset.id || '');
+    const row = name.closest('.nav-row');
+    const tag = row.dataset.tag;
+    if (tag) {
+      editInPlace(name, `name of tag ${tag}`, tag, commitTagName(tag));
+      return;
+    }
+    const container = byID.get(row.dataset.id || '');
     if (container) editInPlace(name, `title of ${container.title}`, container.title, commitTitle(container));
     return;
   }
@@ -2077,12 +2234,39 @@ function readInspector(form) {
     due_at: form.elements.due_at.value,
     status: form.elements.status.value,
     parent_id: form.elements.parent_id.value,
+    // The rows as typed. Which of them is a change and which key has gone
+    // is `writeInspector`'s to work out, because only it has the item the
+    // edit belongs to.
+    fields: [...$('#field-rows').querySelectorAll('.field-row')].map((row) => [
+      row.querySelector('.field-key').value.trim(),
+      row.querySelector('.field-value').value,
+    ]),
   };
 }
 
+// fieldEdit turns the rows into the `set_text` and `unset` of one PATCH: a
+// row whose text differs from what is stored is sent, a key that no longer
+// has a row is unset, and a key that was renamed is both. A row with no key
+// is one being typed and is left alone — it is not an instruction yet.
+function fieldEdit(rows, t) {
+  const before = new Map(customFields(t));
+  const set_text = {};
+  const kept = new Set();
+  for (const [key, value] of rows) {
+    if (key === '') continue;
+    kept.add(key);
+    if (before.get(key) !== value) set_text[key] = value;
+  }
+  const unset = [...before.keys()].filter((key) => !kept.has(key));
+  return { set_text, unset };
+}
+
 async function writeInspector(edited, t) {
-  const { defer_at, due_at, status, parent_id, ...edit } = edited;
+  const { defer_at, due_at, status, parent_id, fields, ...edit } = edited;
   if (!edit.title.trim()) return;        // an empty title is refused by the store
+  const { set_text, unset } = fieldEdit(fields, t);
+  if (Object.keys(set_text).length) edit.set_text = set_text;
+  if (unset.length) edit.unset = unset;
   try {
     say('saving…');
     await api('PATCH', `/api/tasks/${t.id}`, edit);
@@ -2141,6 +2325,15 @@ $('#detail').onsubmit = (event) => {
 $('#complete').onclick = () => {
   const t = byID.get(selected);
   if (t) complete(t);
+};
+
+// A new field is an empty row rather than a prompt: the key and the value
+// are two things to type, and a row is where they are typed everywhere else
+// in this block. Nothing is sent until the key has something in it.
+$('#field-add').onclick = () => {
+  const row = fieldRow('', '');
+  $('#field-rows').append(row);
+  row.querySelector('.field-key').focus();
 };
 
 $('#remove').onclick = () => {

@@ -615,3 +615,134 @@ test("a reorder without the write token is refused", async (t) => {
   const res = await h.send("POST", `/api/tasks/${two}/reorder`, { anchor: one, where: "before" }, "", "application/json");
   assert.equal(res.status, 403, res.text);
 });
+
+// --- a tag's name --------------------------------------------------------
+
+// The endpoint exists for the same reason the perspective one does: moving
+// every task from one tag to another is the store's job, and a page that
+// walked the tasks itself would be a second implementation of `tdo tag
+// rename`.
+test("renaming a tag moves every task carrying it", async (t) => {
+  const h = await Harness.start(t);
+  const first = await h.add({ title: "mow the lawn", tags: ["home"] });
+  const second = await h.add({ title: "fix the gate", tags: ["home", "errand"] });
+
+  const res = await h.do("PATCH", "/api/tags/home", { name: "house" });
+  assert.equal(res.status, 200, res.text);
+  const renamed = list(res.payload, "tags") as Record<string, unknown>[];
+  assert.deepEqual(renamed, [{ name: "house", status: "active", count: 2 }]);
+
+  assert.deepEqual((await h.find(first))["tags"], ["house"]);
+  assert.deepEqual((await h.find(second))["tags"], ["errand", "house"]);
+});
+
+// A tag keeps the status it already had, so renaming one into it does not
+// quietly take a hold off.
+test("renaming into an existing tag keeps that tag's status", async (t) => {
+  const h = await Harness.start(t);
+  await h.add({ title: "call the plumber", tags: ["phone"] });
+  await h.st.setTagStatus("waiting", "on_hold", pinnedNow);
+
+  const res = await h.do("PATCH", "/api/tags/phone", { name: "waiting" });
+  assert.equal(res.status, 200, res.text);
+  const renamed = list(res.payload, "tags") as Record<string, unknown>[];
+  assert.equal(renamed[0]?.["status"], "on_hold");
+});
+
+// A tag is typed, so a name may hold a space or a `#`; the page encodes it
+// and `tagPath` decodes it.
+test("a tag name survives the round trip through the URL", async (t) => {
+  const h = await Harness.start(t);
+  await h.add({ title: "read the spec", tags: ["at work #now"] });
+  const res = await h.do("PATCH", `/api/tags/${encodeURIComponent("at work #now")}`, {
+    name: "at the office",
+  });
+  assert.equal(res.status, 200, res.text);
+  assert.equal((list(res.payload, "tags")[0] as Record<string, unknown>)["name"], "at the office");
+});
+
+test("renaming a tag needs a destination and a tag that exists", async (t) => {
+  const h = await Harness.start(t);
+  await h.add({ title: "mow the lawn", tags: ["home"] });
+
+  const blank = await h.do("PATCH", "/api/tags/home", { name: "   " });
+  assert.equal(blank.status, 400, blank.text);
+  assert.equal(errorCode(blank), "usage");
+
+  const unknown = await h.do("PATCH", "/api/tags/nowhere", { name: "somewhere" });
+  assert.equal(unknown.status, 404, unknown.text);
+
+  // Nothing was renamed by either refusal.
+  const { payload } = await h.send("GET", "/api/state", undefined, h.srv.token, "");
+  const tags = list(payload, "tags") as Record<string, unknown>[];
+  assert.deepEqual(tags.map((g) => g["name"]), ["home"]);
+});
+
+test("renaming a tag without the write token is refused", async (t) => {
+  const h = await Harness.start(t);
+  await h.add({ title: "mow the lawn", tags: ["home"] });
+  const res = await h.send("PATCH", "/api/tags/home", { name: "house" }, "", "application/json");
+  assert.equal(res.status, 403, res.text);
+  const { payload } = await h.send("GET", "/api/state", undefined, h.srv.token, "");
+  assert.equal((list(payload, "tags")[0] as Record<string, unknown>)["name"], "home");
+});
+
+// --- a task's own fields -------------------------------------------------
+
+// `set_text` is what the inspector's field rows send: the text a person
+// typed, typed by the same `parseValue` that reads `tdo edit --set KEY=VALUE`
+// — so a field typed into a browser and the same field typed at a shell end
+// up as the same stored value, rather than as a number in one and a string
+// in the other.
+test("set_text types a value the way --set types it", async (t) => {
+  const h = await Harness.start(t);
+  const taskID = await h.add({ title: "review the contract" });
+
+  const res = await h.do("PATCH", `/api/tasks/${taskID}`, {
+    set_text: {
+      client: "acme",
+      estimate: "3",
+      ref: "3.0.1",
+      billable: "true",
+      plan: '{"rounds":2}',
+      blank: "",
+    },
+  });
+  assert.equal(res.status, 200, res.text);
+
+  const after = await h.find(taskID);
+  assert.equal(after["client"], "acme");
+  assert.equal(after["estimate"], 3);
+  assert.equal(after["ref"], "3.0.1");
+  assert.equal(after["billable"], true);
+  assert.deepEqual(after["plan"], { rounds: 2 });
+  assert.equal(after["blank"], "");
+});
+
+// `set` carries JSON and wins the keys the two share, so a caller that has
+// a value does not have to spell it as text to send it.
+test("set wins over set_text on a key they share", async (t) => {
+  const h = await Harness.start(t);
+  const taskID = await h.add({ title: "review the contract" });
+  const res = await h.do("PATCH", `/api/tasks/${taskID}`, {
+    set: { estimate: 7 },
+    set_text: { estimate: "3", client: "acme" },
+  });
+  assert.equal(res.status, 200, res.text);
+  const after = await h.find(taskID);
+  assert.equal(after["estimate"], 7);
+  assert.equal(after["client"], "acme");
+});
+
+test("set_text refuses a value that is not a string and a reserved key", async (t) => {
+  const h = await Harness.start(t);
+  const taskID = await h.add({ title: "review the contract" });
+
+  const typed = await h.do("PATCH", `/api/tasks/${taskID}`, { set_text: { estimate: 3 } });
+  assert.equal(typed.status, 400, typed.text);
+  assert.equal(errorCode(typed), "usage");
+
+  const reserved = await h.do("PATCH", `/api/tasks/${taskID}`, { set_text: { status: "done" } });
+  assert.equal(reserved.status, 400, reserved.text);
+  assert.equal((await h.find(taskID))["status"], "active");
+});

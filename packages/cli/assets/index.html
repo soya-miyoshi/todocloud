@@ -82,6 +82,13 @@
       </form>
       <!-- The Forecast's week, filled by app.js and empty everywhere else. -->
       <div id="week" hidden></div>
+      <!-- What the container itself says. A project is a row like any other
+           — it has a note, dates, tags and its own fields — and inside it
+           that row is not on screen, so everything written on the project
+           was only readable by selecting it somewhere else. This block is
+           the project reading as the heading of its own list. Filled by
+           app.js, and hidden in every view that is not a container's. -->
+      <div id="about" hidden></div>
       <ol id="items" class="rows"></ol>
       <p id="empty" hidden>Nothing here.</p>
     </div>
@@ -154,6 +161,17 @@
           </label>
         </div>
         <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
+        <!-- A task's own fields (§ "Your own fields, from an agent"): the
+             open map `--set k=v` writes, which until now only a terminal
+             could see. One row per field, key and value both text, and the
+             value is typed by the same rule `--set` types it — the page
+             sends the text and the server parses it, so there is no second
+             copy of that rule here. The rows are built by app.js. -->
+        <fieldset id="fields">
+          <legend>Fields</legend>
+          <div id="field-rows"></div>
+          <button type="button" id="field-add">Add field</button>
+        </fieldset>
         <dl id="facts"></dl>
         <div class="actions">
           <button type="button" id="complete">Complete</button>

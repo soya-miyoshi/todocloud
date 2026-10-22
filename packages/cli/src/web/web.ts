@@ -84,6 +84,7 @@ import {
   messageOf,
   statusOf,
   perspectivePath,
+  tagPath,
   taskPath,
 } from '@todocloud/core/webapi/http';
 
@@ -310,6 +311,11 @@ export class Server {
       this.write('POST', taskPath('date'), this.api.handleDate),
       this.write('POST', taskPath('move'), this.api.handleMove),
       this.write('POST', taskPath('reorder'), this.api.handleReorder),
+      // Renaming a tag is a write over many tasks at once, so it carries
+      // the token like every other write. There is no endpoint for a tag's
+      // status or for removing one: `tdo tag hold`/`rm` are the CLI's, and
+      // the page has no control for either.
+      this.write('PATCH', tagPath(), this.api.handleRenameTag),
       // A saved perspective is run by the store, not by the page: see
       // `handleRunPerspective`. Reading one is a read; saving and removing
       // one are writes and carry the token like every other write.

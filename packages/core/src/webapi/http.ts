@@ -165,6 +165,34 @@ export function perspectivePath(): PathMatch {
 }
 
 /**
+ * tagPath matches `/api/tags/{name}`, capturing the name with its
+ * percent-encoding undone.
+ *
+ * Same argument as `perspectivePath`: a tag is typed, so it may hold a space
+ * or a `/`, the caller encodes it and this decodes it after the split. A
+ * name that is not valid percent-encoding is not this route's path, which is
+ * a 404 rather than a 400.
+ */
+export function tagPath(): PathMatch {
+  return (pathname) => {
+    const parts = pathname.split('/');
+    // '', 'api', 'tags', name
+    if (parts.length !== 4 || parts[1] !== 'api' || parts[2] !== 'tags') {
+      return undefined;
+    }
+    const raw = parts[3] ?? '';
+    if (raw === '') {
+      return undefined;
+    }
+    try {
+      return { name: decodeURIComponent(raw) };
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+/**
  * taskPath matches `/api/tasks/{id}` and `/api/tasks/{id}/<tail>`, capturing
  * the id. It does not validate the id: an id the store does not know and an
  * id that is not an id are different answers, and the handler gives both.

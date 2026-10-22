@@ -42,6 +42,7 @@ import {
   messageOf,
   statusOf,
   perspectivePath,
+  tagPath,
   taskPath,
 } from '@todocloud/core/webapi/http';
 
@@ -93,6 +94,7 @@ export class Router {
       // filter here too — in this front end that is Turso answering over
       // `fetch` rather than SQLite, which is exactly why the page must not
       // try to evaluate it itself.
+      { method: 'PATCH', match: tagPath(), handler: this.api.handleRenameTag },
       { method: 'GET', match: perspectivePath(), handler: this.api.handleRunPerspective },
       { method: 'POST', match: exact('/api/perspectives'), handler: this.api.handleSavePerspective },
       { method: 'DELETE', match: perspectivePath(), handler: this.api.handleRemovePerspective },
