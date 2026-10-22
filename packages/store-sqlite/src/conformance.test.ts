@@ -33,7 +33,17 @@ runMigrations({
     const s = open(join(dir, 'tasks.db'));
     t.after(async () => {
       await s.close();
-      rmSync(dir, { recursive: true, force: true });
+      // Windows refuses to remove a file that still has a handle open, and a
+      // SQLite handle can outlive the store that owned it for a moment. POSIX
+      // never notices. Retry, and on Windows only, leave the directory behind
+      // rather than fail a green test in its own teardown (see testsupport.ts).
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+      } catch (err) {
+        if (process.platform !== 'win32') {
+          throw err;
+        }
+      }
     });
     return s;
   },
