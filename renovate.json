@@ -1,0 +1,64 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommitsDisabled"
+  ],
+  "timezone": "Asia/Tokyo",
+  "schedule": ["before 9am on monday"],
+  "prConcurrentLimit": 3,
+
+  "enabledManagers": ["npm", "mise", "github-actions"],
+
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
+
+  "packageRules": [
+    {
+      "description": "Minor and patch bumps carry themselves: npm test, bun test and the binary build all run on the PR, and a green run is the whole review. Majors are excluded here and handled below.",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Majors stay manual. The @types/node 24 to 26 bump needed a source change (assert.match stopped taking an optional message), which is exactly the class of break a green-tick automerge would have hidden until the next unrelated PR.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "addLabels": ["needs-review"]
+    },
+    {
+      "description": "The engines floor is a decision, not a version to chase. '>=24' is where node:sqlite became stable, and it is deliberately below the one version the tree is developed against; mise.toml carries that pin and Renovate may move it.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["engines"],
+      "enabled": false
+    },
+    {
+      "description": "A new direct dependency is CLAUDE.md section 4 territory, so the rule that matters is that there are none to update. Grouped and never automerged so that a PR touching this line is conspicuous.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["dependencies"],
+      "automerge": false,
+      "addLabels": ["needs-review"]
+    }
+  ],
+
+  "npmrc": "registry=https://npm.flatt.tech/\n",
+  "hostRules": [
+    {
+      "description": "Version lookups go to the public registry; the Takumi Guard proxy is an install-path concern and anonymous mode has no token to give Renovate. If the proxy serves metadata fine, this block can go.",
+      "matchHost": "registry.npmjs.org",
+      "hostType": "npm"
+    }
+  ],
+
+  "vulnerabilityAlerts": {
+    "automerge": true,
+    "schedule": ["at any time"],
+    "labels": ["security"]
+  },
+
+  "ignorePaths": ["**/node_modules/**", "dist-bin/**"]
+}
