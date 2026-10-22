@@ -124,6 +124,13 @@
    attribute means hidden; this makes it mean that whatever else is said. */
 [hidden] { display: none !important; }
 
+/* The root carries the page's background as well as the body, and it is the
+   one that paints the area a `100dvh` body does not cover — the few pixels
+   `dvh` rounds away, and whatever a browser leaves under an installed app.
+   Without it that band is the browser's own default (black in dark mode),
+   which reads as the layout stopping short of the bottom of the screen. */
+html { background: var(--bg); }
+
 body {
   margin: 0;
   font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -132,8 +139,19 @@ body {
   height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right)
-           env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* Three insets, not four. Installed to a home screen the page reaches
+     under the notch and the home indicator (`viewport-fit=cover`), and the
+     top and the sides have to be paid back here — there is nothing else
+     between the edge and a navbar. The bottom must not be: a pane is a
+     column with a scrolling body and a bar at the end of it, and an inset
+     paid here stops that column short of the bottom of the screen, leaving
+     a band of page background under it with nothing in it. The home
+     indicator sits over a few millimetres of a list that scrolls, which is
+     what it is designed to do. What is paid back instead is the padding
+     *inside* the things that end at the bottom: a pane's scrolling body,
+     which already keeps room under its last row, and a toolbar, whose
+     contents would otherwise sit under the indicator. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
 }
 
 #app { display: flex; height: 100%; min-height: 0; }
@@ -172,7 +190,9 @@ body {
   overscroll-behavior-y: contain;
   overscroll-behavior-x: none;
   -webkit-overflow-scrolling: touch;
-  padding: 10px 12px 28px;
+  /* The last line pays the home indicator back for the body, which does
+     not: see the note there. */
+  padding: 10px 12px calc(28px + env(safe-area-inset-bottom));
 }
 
 /* The navigation bar: a translucent strip with a title in the middle and at
@@ -217,6 +237,11 @@ body {
   background: var(--panel);
   color: var(--dim);
   font-size: 12px;
+  /* A toolbar is the last thing in its pane, so it is what the home
+     indicator would sit on top of. The bar keeps reaching the bottom of the
+     screen — its background is what should be under the indicator — and its
+     contents move up out of the way. */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 button.icon {
@@ -1046,8 +1071,9 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   .tile { min-height: 62px; }
 
   /* Room under the last row for the floating button, which would otherwise
-     sit on top of it — and the last row of a list is a row you complete. */
-  .pane-body { padding-bottom: 96px; }
+     sit on top of it — and the last row of a list is a row you complete.
+     Plus the home indicator, as above. */
+  .pane-body { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 
   /* Touch targets. A 19px glyph with 8px around it is a 35px target, which
      is under the 44px a thumb actually needs and was being missed —
@@ -1088,7 +1114,8 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 
 #perspective-editor,
 #capture-editor,
-#settings-editor {
+#settings-editor,
+#prefs-editor {
   width: min(560px, calc(100vw - 24px));
   /* `dvh`, as the body uses, so a dialog is not sized against a viewport
      that includes browser chrome which is not there. */
@@ -1102,10 +1129,12 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 }
 #perspective-editor::backdrop,
 #capture-editor::backdrop,
-#settings-editor::backdrop { background: rgba(0, 0, 0, 0.42); }
+#settings-editor::backdrop,
+#prefs-editor::backdrop { background: rgba(0, 0, 0, 0.42); }
 #perspective-form,
 #capture-form,
-#settings-form { display: flex; flex-direction: column; max-height: inherit; }
+#settings-form,
+#prefs-form { display: flex; flex-direction: column; max-height: inherit; }
 
 .dialog-head {
   display: flex;
@@ -1166,12 +1195,18 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
    scroll away. */
 @media (max-width: 559px) {
   #perspective-editor,
-  #capture-editor {
+  #capture-editor,
+  #settings-editor,
+  #prefs-editor {
     width: calc(100vw - 16px);
     max-height: min(92dvh, 760px);
     margin: 8px auto auto;
   }
 }
+/* A dialog that reaches most of the way down the screen ends where the home
+   indicator is, and the body is the part that scrolls. The inset goes on its
+   last line for the same reason it goes on a pane's. */
+.dialog-body { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
 
 #perspective-form .actions,
 #capture-form .actions {
