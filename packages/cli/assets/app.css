@@ -205,13 +205,16 @@ body {
   background: var(--panel);
 }
 
-#sidebar { width: 264px; flex: none; border-right: 1px solid var(--edge); background: var(--bg); }
+#sidebar { width: var(--sidebar-w, 208px); flex: none; border-right: 1px solid var(--edge); background: var(--bg); }
 #list { flex: 1; min-width: 0; }
 /* The inspector's width is a preference, not a constant: app.js cycles
    `data-inspector` on the root and remembers it, and the three steps are
    here because a width belongs in the stylesheet. 320px is what it always
    was and stays the default. */
 #inspector { width: var(--inspector-w, 320px); flex: none; border-left: 1px solid var(--edge); }
+:root[data-sidebar="small"] { --sidebar-w: 150px; }
+:root[data-sidebar="medium"] { --sidebar-w: 264px; }
+:root[data-sidebar="wide"] { --sidebar-w: 340px; }
 :root[data-inspector="medium"] { --inspector-w: 440px; }
 :root[data-inspector="wide"] { --inspector-w: 600px; }
 
@@ -1079,7 +1082,7 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   body[data-pane="inspector"] #inspector { display: flex; }
 
   button.back { display: flex; }
-  #keys, #store, #inspector-width { display: none; }
+  #keys, #store, #inspector-width, #sidebar-width { display: none; }
   /* `.navbar > *:last-child` below pushes the last control to the right, and
      the width button is now that child on the inspector's bar even though it
      is hidden here. The status line is what has to be pushed instead. */
@@ -1318,3 +1321,7 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 .navbar h2 .linklike:disabled { cursor: default; }
 .navbar h2 .linklike:not(:disabled):hover { text-decoration: underline; }
 .navbar h2 .linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+ul.tile-list { list-style: none; margin: 0; padding: 4px 0; }
+
+#sidebar .tile:focus-visible, #sidebar .nav-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

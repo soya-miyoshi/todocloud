@@ -101,18 +101,33 @@ function remember(key, value) {
   }
 }
 
+// Whether the Projects and Tags lists under their tiles are open. A
+// preference of this browser, like which folders are open: Projects starts
+// open, Tags starts shut.
+const TileOpenKey = 'todocloud.tile.open.';
+const tileOpenDefault = { projects: true, tags: false };
+const tileOpen = {
+  projects: remembered(TileOpenKey + 'projects', tileOpenDefault.projects ? '1' : '0') === '1',
+  tags: remembered(TileOpenKey + 'tags', tileOpenDefault.tags ? '1' : '0') === '1',
+};
+
+// Vim-style navigation of the sidebar (see `sideKeys`). `sideMode` is whether
+// the keys go to the sidebar, and `sideKey` is the row they are on: the
+// sidebar is rebuilt by every render, so the row is found again by its key.
+let sideMode = false;
+let sideKey = '';
+
+function toggleTile(key) {
+  tileOpen[key] = !tileOpen[key];
+  remember(TileOpenKey + key, tileOpen[key] ? '1' : '0');
+  renderHome();
+}
+
 function toggleExpanded(id) {
   if (expanded.has(id)) expanded.delete(id);
   else expanded.add(id);
   saveExpanded();
   renderHome();
-}
-
-// shownInSidebar hides what is inside a closed folder, at any depth: a
-// folder shut two levels up hides everything under it, not just its
-// children.
-function shownInSidebar(t) {
-  return parentsOf(t).every((p) => expanded.has(p.id));
 }
 
 // $ is the furniture of the page, by id, and it refuses to answer null.
@@ -486,7 +501,7 @@ const PERSPECTIVES = [
     // list of projects. That tree used to live under the tiles on Home; it
     // is a perspective like any other now, so it opens in the outline and
     // Home is only perspectives.
-    key: 'projects', label: 'Projects', tint: 'sky', glyph: '▣', rows: 'tree',
+    key: 'projects', label: 'Projects', tint: 'sky', glyph: '▣', rows: 'tree', wide: true,
     pick: (t) => t.kind === 'project' && isOpen(t),
   },
   {
@@ -496,7 +511,7 @@ const PERSPECTIVES = [
     // tag list of its own below the tiles. `rows` says the outline shows
     // something other than tasks here; `pick` still has to exist, because
     // every tile asks its spec for a count.
-    key: 'tags', label: 'Tags', tint: 'purple', glyph: '#', rows: 'tags',
+    key: 'tags', label: 'Tags', tint: 'purple', glyph: '#', rows: 'tags', wide: true,
     pick: () => false,
   },
   {
@@ -805,6 +820,9 @@ function openContainer(t) {
   if (saveTimer) saveNow();
   view = { kind: 'project', key: t.id };
   selected = t.id;
+  // Opening a project unfolds it in the sidebar: the tree under it is the
+  // point of opening it.
+  if (!expanded.has(t.id)) { expanded.add(t.id); saveExpanded(); }
   showPane(compact() ? 'outline' : 'inspector');
   render();
 }
@@ -1241,6 +1259,7 @@ function navRow(label, count, isCurrent, onClick, options = {}) {
     button.append(el('span', { className: 'count', textContent: String(count) }));
   }
   if (options.id) button.dataset.id = options.id;
+  if (options.key) button.dataset.key = options.key;
   if (options.tag) button.dataset.tag = options.tag;
   if (options.perspective) button.dataset.perspective = options.perspective;
   if (options.disclosure === undefined) {
@@ -1286,10 +1305,17 @@ function renderHome() {
       type: 'button',
       className: 'tile',
       // The Forecast opens on today; every other perspective has one list.
-      onclick: () => select({ kind: spec.key, key: spec.key === 'due' ? 'today' : '' }),
+      // Projects is a tree in the sidebar rather than a list in the outline:
+      // the outline is the one pane whose contents change with every click,
+      // and a list of projects that turned into a list of tasks under the
+      // pointer was the hardest thing in it to aim at.
+      onclick: spec.rows
+        ? () => toggleTile(spec.key)
+        : () => select({ kind: spec.key, key: spec.key === 'due' ? 'today' : '' }),
     });
     tile.style.setProperty('--tint', `var(--${spec.tint})`);
-    tile.setAttribute('aria-current', view.kind === spec.key ? 'true' : 'false');
+    tile.setAttribute('aria-current', view.kind === spec.key || (spec.key === 'projects' && view.kind === 'project') ? 'true' : 'false');
+    if (spec.rows) tile.setAttribute('aria-expanded', tileOpen[spec.key] ? 'true' : 'false');
     // The square carries the count for a perspective that is a queue of work
     // and the perspective's own glyph for one that is a way into the tree —
     // which is what OmniFocus shows, numbers on Forecast, Inbox, Flagged and
@@ -1302,20 +1328,27 @@ function renderHome() {
     glyph.setAttribute('aria-hidden', 'true');
     tile.append(glyph, el('span', { className: 'name', textContent: spec.label }));
     tile.setAttribute('aria-label', `${spec.label}, ${n}`);
+    tile.dataset.key = spec.key;
     const cell = el('li', { className: spec.wide ? 'wide' : (narrow++ % 2 === 0 ? 'col1' : 'col2') }, tile);
     if (spec.key === 'due') cell.append(forecastStrip());
+    // The list sits directly under its own tile, so opening Projects shows
+    // the projects where the word Projects is.
+    if (spec.rows && tileOpen[spec.key]) {
+      cell.append(el('ul', { className: 'rows tile-list' }, spec.rows === 'tree' ? treeRows() : tagRows()));
+    }
     return cell;
   }));
 
   $('#others').replaceChildren(
     ...OTHERS.map((spec) => navRow(spec.label, state.tasks.filter(spec.pick).length,
-      view.kind === spec.key, () => select({ kind: spec.key, key: '' }))),
+      view.kind === spec.key, () => select({ kind: spec.key, key: '' }), { key: spec.key })),
     ...(state.perspectives || []).map((p) => navRow(
       p.name,
       savedView.name === p.name ? savedView.tasks.length : null,
       view.kind === 'saved' && view.key === p.name,
       () => openSaved(p.name),
       { mark: el('span', { textContent: '⌕' }), perspective: p.name })));
+  restoreSide();
 }
 
 // The week under Due, which is the one thing on OmniFocus's Home that is a
@@ -1571,36 +1604,39 @@ function blockedTitle(blocked) {
   return `blocked: ${blocked.rule}`;
 }
 
-// treeRows is the container tree: folders holding projects, a folder's
-// contents hidden until it is opened. It used to be a list under the tiles
-// on Home, and moved here when Projects became a perspective; what it draws
-// is unchanged, including the disclosure triangles and the folders that are
-// shut to begin with.
+// treeRows is the Projects list in the sidebar: every open project, flat —
+// folders are not shown, because nobody here files projects into them — and
+// under a project that is expanded, all of its tasks at every depth, so the
+// whole hierarchy of a project is readable without opening it. A project
+// opens (expands) when it is clicked; the triangle folds it again.
 function treeRows() {
-  const containers = state.tasks.filter((t) => isContainer(t) && isOpen(t));
-  return containers.filter(shownInSidebar).map((t) => {
-    // Only a folder holds other containers (§3.1), so only a folder has
-    // anything to disclose; a project's contents are tasks, which this list
-    // does not show. `null` is a spacer of the triangle's width, so the
-    // names still line up.
-    const holds = t.kind === 'folder' && containers.some((x) => x.parent_id === t.id);
+  const rows = [];
+  for (const p of state.tasks.filter((t) => t.kind === 'project' && isOpen(t))) {
+    const kids = state.tasks.filter((x) => x.id !== p.id && x.kind === 'task' && isOpen(x) && inSubtree(x, p.id));
+    const open = expanded.has(p.id);
     const row = navRow(
-      t.title,
-      state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && isOpen(x) && x.kind === 'task').length,
-      false,
-      () => openContainer(t),
-      {
-        depth: parentsOf(t).length,
-        mark: typeIcon(t),
-        id: t.id,
-        disclosure: holds ? { id: t.id, label: t.title, isOpen: expanded.has(t.id) } : null,
-      });
-    // The button, not the `li`: the `li` holds the disclosure triangle as
-    // well, and a drag that started on the triangle would be a drag of the
-    // control rather than of the folder.
-    draggable(row.querySelector('.nav-row'), t, t);
-    return row;
-  });
+      p.title,
+      kids.length,
+      view.kind === 'project' && view.key === p.id,
+      // The row is its own disclosure: a click opens the project, and a click
+      // on the project that is already open folds it. No triangle, so the
+      // name starts where every other row's does and the tasks under it are
+      // the only thing indented.
+      () => (view.kind === 'project' && view.key === p.id ? toggleExpanded(p.id) : openContainer(p)),
+      { id: p.id });
+    // The button, not the `li`: a drag that started on the triangle would be
+    // a drag of the control rather than of the project.
+    draggable(row.querySelector('.nav-row'), p, p);
+    rows.push(row);
+    if (!open) continue;
+    for (const x of kids) {
+      const depth = parentsOf(x).filter((q) => q.id !== p.id && inSubtree(q, p.id)).length + 1;
+      const child = navRow(x.title, null, selected === x.id, () => selectItem(x.id), { depth, id: x.id });
+      draggable(child.querySelector('.nav-row'), x, x);
+      rows.push(child);
+    }
+  }
+  return rows;
 }
 
 // tagRows is the Tags perspective: the tags themselves, each leading to its
@@ -1614,7 +1650,7 @@ function tagRows() {
   return (state.tags || []).map((g) => navRow(
     g.name,
     g.count,
-    false,
+    view.kind === 'tag' && view.key === g.name,
     () => select({ kind: 'tag', key: g.name }),
     { held: g.status && g.status !== 'active', mark: el('span', { textContent: '#' }), tag: g.name }));
 }
@@ -2341,7 +2377,7 @@ function commitTagName(name) {
   };
 }
 
-$('#items').addEventListener('dblclick', (event) => {
+const onOutlineDblclick = (event) => {
   // A folder or a project in the Projects tree, or a tag in the Tags
   // perspective — both are nav rows rather than item rows.
   const name = closestOf(event, '.nav-row .name');
@@ -2378,7 +2414,11 @@ $('#items').addEventListener('dblclick', (event) => {
   if (title) {
     editInPlace(title, `title of ${t.title}`, t.title, commitTitle(t));
   }
-});
+};
+$('#items').addEventListener('dblclick', onOutlineDblclick);
+// The Projects and Tags lists live under their tiles in the sidebar, so renaming a folder in place has
+// to work there as well.
+$('#tiles').addEventListener('dblclick', onOutlineDblclick);
 
 
 
@@ -2904,14 +2944,154 @@ $('#show-other').onclick = (event) => {
 
 // --- keyboard ----------------------------------------------------------
 
+// --- the sidebar, by keyboard -----------------------------------------
+
+// `h` puts the keys on the sidebar, on the row for what is open, and from
+// there it is vim's tree: j/k move, l opens (and, on an open project or tile,
+// steps into it), h folds (and, on a task, steps out to its project). Escape,
+// or opening something that is not a container, hands the keys back to the
+// outline. The mouse hands them back too: a click is never half in this mode.
+const sideKeyOf = (b) => (b.dataset.key ? `k:${b.dataset.key}`
+  : b.dataset.id ? `i:${b.dataset.id}`
+    : b.dataset.tag ? `g:${b.dataset.tag}`
+      : b.dataset.perspective ? `p:${b.dataset.perspective}` : '');
+
+function sideButtons() {
+  return /** @type {HTMLElement[]} */ ([...$('#sidebar').querySelectorAll('.tile, .nav-row')])
+    .filter((b) => b.offsetParent !== null);
+}
+
+function focusSide(b) {
+  if (!b) return;
+  sideKey = sideKeyOf(b);
+  b.focus();
+  b.scrollIntoView({ block: 'nearest' });
+}
+
+function restoreSide() {
+  if (sideMode) focusSide(sideButtons().find((b) => sideKeyOf(b) === sideKey));
+}
+
+function leaveSide() {
+  sideMode = false;
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+}
+
+document.addEventListener('pointerdown', () => { sideMode = false; });
+
+// editSelected shows an item in the inspector and puts the cursor in its
+// title, so the fields can be walked with Tab. Escape in a field blurs it,
+// and `h` is then the way back to the sidebar.
+function editSelected(t) {
+  sideMode = false;
+  if (t.kind === 'task') selectItem(t.id);
+  else openContainer(t);
+  showPane('inspector');
+  const title = $form('#detail').elements.namedItem('title');
+  if (title instanceof HTMLElement) title.focus();
+}
+
+function sideKeys(event) {
+  const all = sideButtons();
+  if (!all.length) return false;
+  if (!sideMode) {
+    if (event.key !== 'h') return false;
+    sideMode = true;
+    focusSide((view.kind === 'project'
+      ? all.find((b) => b.dataset.id === view.key)
+      : all.find((b) => b.dataset.key === view.kind)) || all[0]);
+    event.preventDefault();
+    return true;
+  }
+  const at = all.indexOf(/** @type {HTMLElement} */ (document.activeElement));
+  if (event.key === 'Escape') { leaveSide(); return true; }
+  if (at < 0) { focusSide(all[0]); event.preventDefault(); return true; }
+  const cur = all[at];
+  const t = cur.dataset.id ? byID.get(cur.dataset.id) : undefined;
+  const isTile = cur.classList.contains('tile');
+  const spec = isTile ? specOf(cur.dataset.key || '') : undefined;
+  const folds = spec ? Boolean(spec.rows) : (t !== undefined && t.kind === 'project');
+  const open = spec ? Boolean(spec.rows && tileOpen[spec.key]) : (t !== undefined && expanded.has(t.id));
+  switch (event.key) {
+    case 'j':
+    case 'ArrowDown':
+      focusSide(all[Math.min(at + 1, all.length - 1)]);
+      break;
+    case 'k':
+    case 'ArrowUp':
+      focusSide(all[Math.max(at - 1, 0)]);
+      break;
+    case 'l':
+    case 'ArrowRight':
+      if (folds && open) {
+        // Into the first row under it: inside the tile's own cell for a
+        // tile, a task for a project.
+        const next = all[at + 1];
+        const inside = isTile
+          ? Boolean(next && cur.closest('li')?.contains(next))
+          : Boolean(next && next.dataset.id && byID.get(next.dataset.id)?.kind === 'task');
+        if (inside) focusSide(next);
+      } else if (t && t.kind === 'task') {
+        editSelected(t);
+      } else {
+        cur.click();
+        if (!folds) leaveSide();
+      }
+      break;
+    case 'Enter':
+      // Open it and go straight to its fields: Tab walks them from here.
+      if (t) editSelected(t);
+      else { cur.click(); leaveSide(); }
+      break;
+    case 'h':
+    case 'ArrowLeft':
+      if (folds && open) cur.click();
+      else if (t && t.kind === 'task') {
+        const up = parentsOf(t).find((p) => p.kind === 'project');
+        if (up) focusSide(all.find((b) => b.dataset.id === up.id));
+      } else if (cur.dataset.tag) focusSide(all.find((b) => b.dataset.key === 'tags'));
+      break;
+    case ' ':
+      return true;
+    default:
+      return false;
+  }
+  event.preventDefault();
+  return true;
+}
+
+// escapeByJJ is vim's `jj`: a second j typed within 300ms of the first, in a
+// text field, takes the first one back out and counts as Escape. The price is
+// that "jj" cannot be typed quickly in a field; typing the second one after a
+// pause, or with the first already followed by something else, is unaffected.
+let lastJ = 0;
+
+function escapeByJJ(event) {
+  const field = event.target;
+  if (event.key !== 'j' || !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) {
+    lastJ = 0;
+    return false;
+  }
+  const now = Date.now();
+  const at = field.selectionStart;
+  const quick = now - lastJ < 300 && at !== null && at === field.selectionEnd && at > 0 && field.value[at - 1] === 'j';
+  lastJ = quick ? 0 : now;
+  if (!quick || at === null) return false;
+  event.preventDefault();
+  field.setRangeText('', at - 1, at, 'end');
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+}
+
 const typing = (node) => node && /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName);
 
 document.addEventListener('keydown', (event) => {
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   if (typing(event.target)) {
-    if (event.key === 'Escape') nodeOf(event).blur();
+    if (event.key === 'Escape' || escapeByJJ(event)) nodeOf(event).blur();
     return;
   }
+  if (sideKeys(event)) return;
   const items = currentItems();
   const at = items.findIndex((t) => t.id === selected);
 
@@ -3126,6 +3306,39 @@ if (widthArrow) {
     inspectorWidths[(inspectorWidths.indexOf(inspectorWidth) + 1) % inspectorWidths.length]);
 }
 
+// --- how wide the sidebar is -----------------------------------------
+
+// The inspector's steps again, for the other side: the sidebar was a fixed
+// 264px, which is more than the perspectives need and less than a deep
+// Projects tree does. Same mechanism — `data-sidebar` on the root, widths in
+// app.css, the choice in localStorage.
+const SidebarWidthKey = 'todocloud.sidebar.width';
+const sidebarWidths = ['small', 'narrow', 'medium', 'wide'];
+
+function applySidebarWidth(width) {
+  if (width === 'narrow') document.documentElement.removeAttribute('data-sidebar');
+  else document.documentElement.setAttribute('data-sidebar', width);
+  const button = maybe('#sidebar-width');
+  if (button) button.title = `Sidebar width: ${width}`;
+}
+
+let sidebarWidth = sidebarWidths.includes(remembered(SidebarWidthKey, 'narrow'))
+  ? remembered(SidebarWidthKey, 'narrow')
+  : 'narrow';
+
+function setSidebarWidth(next) {
+  sidebarWidth = sidebarWidths.includes(next) ? next : 'narrow';
+  remember(SidebarWidthKey, sidebarWidth);
+  applySidebarWidth(sidebarWidth);
+}
+
+setSidebarWidth(sidebarWidth);
+const sidebarArrow = maybe('#sidebar-width');
+if (sidebarArrow) {
+  sidebarArrow.onclick = () => setSidebarWidth(
+    sidebarWidths[(sidebarWidths.indexOf(sidebarWidth) + 1) % sidebarWidths.length]);
+}
+
 // --- the settings dialog ----------------------------------------------
 
 // The gear at the bottom left of Home. What is in it is everything this
@@ -3145,6 +3358,7 @@ const prefsEditor = $dialog('#prefs-editor');
 function openPrefs() {
   $select('#prefs-theme').value = theme;
   $select('#prefs-inspector').value = inspectorWidth;
+  $select('#prefs-sidebar').value = sidebarWidth;
   $select('#prefs-forecast').value = forecastOrder;
   $input('#prefs-project-done').checked = projectDoneShown;
   $input('#prefs-forecast-done').checked = forecastDoneShown;
@@ -3155,6 +3369,7 @@ if (prefsEditor) {
   $('#prefs').onclick = openPrefs;
   $('#prefs-close').onclick = () => prefsEditor.close();
   $select('#prefs-theme').onchange = (event) => setTheme(/** @type {HTMLInputElement} */ (event.target).value);
+  $select('#prefs-sidebar').onchange = (event) => setSidebarWidth(/** @type {HTMLInputElement} */ (event.target).value);
   $select('#prefs-inspector').onchange = (event) => setInspectorWidth(/** @type {HTMLInputElement} */ (event.target).value);
   $select('#prefs-forecast').onchange = (event) => setForecastOrder(/** @type {HTMLInputElement} */ (event.target).value);
   $input('#prefs-project-done').onchange = () => toggleProjectDone();

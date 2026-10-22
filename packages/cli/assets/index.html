@@ -35,6 +35,7 @@
   <nav id="sidebar" aria-label="Perspectives">
     <header class="navbar">
       <h1>tdo</h1>
+      <button type="button" id="sidebar-width" class="icon" aria-label="Sidebar width" title="Sidebar width">&#x21d4;</button>
       <button type="button" id="reload" class="icon" aria-label="Reload">&#x21bb;</button>
     </header>
 
@@ -101,6 +102,7 @@
       <span class="status" role="status" aria-live="polite"></span>
       <span id="keys">
         <span><kbd>j</kbd><kbd>k</kbd> move</span>
+        <span><kbd>h</kbd><kbd>l</kbd> sidebar</span>
         <span><kbd>space</kbd> complete</span>
         <span><kbd>f</kbd> flag</span>
         <span><kbd>n</kbd> capture</span>
@@ -405,6 +407,14 @@
             <option value="auto">auto</option>
             <option value="light">light</option>
             <option value="dark">dark</option>
+          </select>
+        </label>
+        <label>Sidebar width
+          <select id="prefs-sidebar" name="sidebar">
+            <option value="small">small</option>
+            <option value="narrow">narrow</option>
+            <option value="medium">medium</option>
+            <option value="wide">wide</option>
           </select>
         </label>
         <label>Inspector width
