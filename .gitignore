@@ -77,3 +77,11 @@ dist/
 # target, each named like the release archive it becomes.
 dist-bin/
 *.tsbuildinfo
+# `bun test` writes a lockfile of its own if one is not there. Nothing reads
+# it: every workflow installs with `npm ci`, including the job that then runs
+# `bun test`, because npm is what links the workspace. A second lockfile over
+# the same tree would only be a thing to drift — and it records the registry
+# the install came through, which is a per-developer choice, not a fact about
+# the project. package-lock.json is the lockfile here.
+bun.lock
+bun.lockb
