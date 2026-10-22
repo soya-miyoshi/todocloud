@@ -31,7 +31,11 @@ service_account*.json
 gcp-*.json
 client_secret*.json
 .netrc
-.npmrc
+# .npmrc holds no credential here: the root one is the Takumi Guard registry
+# proxy in anonymous mode, committed on purpose. Any other .npmrc may carry an
+# auth token, so they stay ignored.
+**/.npmrc
+!/.npmrc
 *.token
 *token.txt
 secrets.*
