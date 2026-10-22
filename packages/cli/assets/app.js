@@ -2979,6 +2979,30 @@ function leaveSide() {
 
 document.addEventListener('pointerdown', () => { sideMode = false; });
 
+// peekSide moves to a row and shows what it is, so j and k browse: a project
+// becomes the open list and the inspector's subject, a task is shown in the
+// inspector under its project, and a perspective opens. A project is only
+// shown, not unfolded — walking down the list must not unfold every one —
+// and the Projects and Tags tiles, which only fold, are left alone.
+function peekSide(b) {
+  focusSide(b);
+  const t = b.dataset.id ? byID.get(b.dataset.id) : undefined;
+  if (saveTimer) saveNow();
+  if (t && t.kind === 'project') {
+    view = { kind: 'project', key: t.id };
+    selected = t.id;
+    render();
+  } else if (t) {
+    const root = parentsOf(t).find((p) => p.kind === 'project');
+    if (root && !(view.kind === 'project' && view.key === root.id)) view = { kind: 'project', key: root.id };
+    selected = t.id;
+    render();
+  } else {
+    const spec = b.classList.contains('tile') ? specOf(b.dataset.key || '') : undefined;
+    if (!spec || !spec.rows) b.click();
+  }
+}
+
 // editSelected shows an item in the inspector and puts the cursor in its
 // title, so the fields can be walked with Tab. Escape in a field blurs it,
 // and `h` is then the way back to the sidebar.
@@ -3015,11 +3039,11 @@ function sideKeys(event) {
   switch (event.key) {
     case 'j':
     case 'ArrowDown':
-      focusSide(all[Math.min(at + 1, all.length - 1)]);
+      peekSide(all[Math.min(at + 1, all.length - 1)]);
       break;
     case 'k':
     case 'ArrowUp':
-      focusSide(all[Math.max(at - 1, 0)]);
+      peekSide(all[Math.max(at - 1, 0)]);
       break;
     case 'l':
     case 'ArrowRight':
@@ -3048,7 +3072,7 @@ function sideKeys(event) {
       if (folds && open) cur.click();
       else if (t && t.kind === 'task') {
         const up = parentsOf(t).find((p) => p.kind === 'project');
-        if (up) focusSide(all.find((b) => b.dataset.id === up.id));
+        if (up) peekSide(all.find((b) => b.dataset.id === up.id));
       } else if (cur.dataset.tag) focusSide(all.find((b) => b.dataset.key === 'tags'));
       break;
     case ' ':
@@ -3061,9 +3085,11 @@ function sideKeys(event) {
 }
 
 // escapeByJJ is vim's `jj`: a second j typed within 300ms of the first, in a
-// text field, takes the first one back out and counts as Escape. The price is
-// that "jj" cannot be typed quickly in a field; typing the second one after a
-// pause, or with the first already followed by something else, is unaffected.
+// text field, takes the first one back out and counts as Escape. In the
+// inspector's fields it also hands the keys to the sidebar, on the project
+// the item belongs to. The price is that "jj" cannot be typed quickly in a
+// field; with a pause between the two, or anything else in between, they are
+// ordinary letters.
 let lastJ = 0;
 
 function escapeByJJ(event) {
@@ -3080,6 +3106,15 @@ function escapeByJJ(event) {
   event.preventDefault();
   field.setRangeText('', at - 1, at, 'end');
   field.dispatchEvent(new Event('input', { bubbles: true }));
+  if (field.closest('#detail')) {
+    // Blurred first, so the save that a blur triggers has run before the
+    // sidebar's row is looked for.
+    field.blur();
+    const t = byID.get(selected || '');
+    const home = t && (t.kind === 'project' ? t : parentsOf(t).find((p) => p.kind === 'project'));
+    const row = home && sideButtons().find((b) => b.dataset.id === home.id);
+    if (row) { sideMode = true; focusSide(row); }
+  }
   return true;
 }
 

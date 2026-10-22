@@ -197,6 +197,8 @@ listing; `--json` output never refreshes it.
 perspectives on the left, the items in the middle, one item's details on the
 right.
 
+![The viewer: Projects open in the sidebar, one task selected and shown in the inspector](docs/screenshots/viewer.png)
+
 ```sh
 tdo serve                  # http://127.0.0.1:7373/
 tdo serve --port 8080      # somewhere else
@@ -204,8 +206,30 @@ tdo serve --port 0         # any free port; it prints the one it got
 ```
 
 It reads and writes through the same code the commands do, so completing
-something in the browser is `tdo done`, repeat and all. Four things worth
+something in the browser is `tdo done`, repeat and all. A few things worth
 knowing:
+
+- **The sidebar is the whole map, and you can drive it from the keyboard.**
+  Click *Projects* and every open project is listed directly under it; click a
+  project to open it, and its tasks unfold beneath it at every depth, so you
+  can see the shape of a project without leaving the list you are on. Folders
+  are a CLI concept and are not shown there. *Tags* works the same way and
+  starts shut. Both lists remember whether they were open, and the sidebar's
+  width (`small` to `wide`) is the `⇔` button at its top or *Settings*.
+
+  ![The sidebar with a task focused from the keyboard](docs/screenshots/sidebar-keyboard.png)
+
+  | Key | Does |
+  |---|---|
+  | `h` | move the keys to the sidebar, on the row for what is open |
+  | `j` `k` | move down and up (`↓` `↑` work too) |
+  | `l` | open the row; on an open project or tile, step into it; on a task, show it in the inspector with the cursor in its title |
+  | `h` (in the sidebar) | fold an open project or tile; on a task, go back to its project |
+  | `Enter` | open the row and put the cursor in the inspector's title, so `Tab` walks the fields |
+  | `Esc`, or `jj` typed quickly in a field | leave a field or the sidebar |
+
+  Outside the sidebar `j` `k` move through the list, `space` completes,
+  `f` flags, `n` captures and `/` searches.
 
 - **It installs on a phone.** The page is a progressive web app: open it from
   your phone and use the browser's *Add to Home Screen* to get a full-screen
@@ -213,7 +237,11 @@ knowing:
   not a copy of your list: nothing is cached, so there is no offline mode and
   nothing stale to mistake for the truth. Out of range it is simply a page
   that cannot load.
-- **It is built for the phone it installs on.** It opens on the Forecast — a
+- **It is built for the phone it installs on.**
+
+  <img src="docs/screenshots/phone.png" alt="The Forecast on a phone" width="260">
+
+  It opens on the Forecast — a
   week of day columns, today first and carrying whatever is already overdue —
   and shows one pane at a time. The back chevron, your phone's own back
   gesture and a swipe across the pane all mean the same thing, and the address
