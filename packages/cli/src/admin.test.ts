@@ -255,7 +255,14 @@ test('config set creates the file and the next command reads what it wrote', asy
   assert.match(res.stdout, /\(added\)/);
   assert.ok(fs.readFileSync(file, 'utf8').includes('libsql://example.turso.io'));
   // Mode 0600: a config file is the one place a token may ever live.
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  //
+  // Not a question Windows can answer: it has no POSIX mode, reports 0666 for
+  // anything that is not read-only, and the protection there is the ACL on
+  // the user's profile directory. The other permission assertions in this
+  // tree are guarded the same way (`config.test.ts`, `shortref.test.ts`).
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  }
 
   // Setting it again changes nothing and says so.
   const again = await runIn(env, '', 'config', 'set', 'turso.url', 'libsql://example.turso.io');

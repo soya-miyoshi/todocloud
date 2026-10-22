@@ -84,7 +84,11 @@ function sourceOf(published: string): string {
 
 /** publishedOf is sourceOf backwards. */
 function publishedOf(source: string): string {
-  return '/' + path.relative(packagesDir, source).replace(/\.ts$/, '.js');
+  // A served path has forward slashes whatever the machine computing it uses,
+  // so the separator is normalised rather than taken from `path`: on Windows
+  // this answered `/core\src\exit.js`, and every module in the worker's
+  // precache list read as missing.
+  return '/' + path.relative(packagesDir, source).split(path.sep).join('/').replace(/\.ts$/, '.js');
 }
 
 /**
