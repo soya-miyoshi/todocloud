@@ -33,7 +33,10 @@ function refuses(fn: () => unknown, want: string, label?: string): void {
     fn();
   } catch (err) {
     assert.ok(isInvalid(err), `${label ?? want}: not an ErrInvalid: ${err}`);
-    assert.match((err as Error).message, new RegExp(want), label);
+    // `label ?? want`, not `label`: @types/node 26 types the message as a
+    // required string here, and the other asserts in this helper already fall
+    // back to the pattern when the caller passed no label.
+    assert.match((err as Error).message, new RegExp(want), label ?? want);
     // The message is the sentinel's, then the detail, which is what
     // `fmt.Errorf("%w: %s", ErrInvalid, …)` produced.
     assert.ok((err as Error).message.startsWith(`${ErrInvalid.message}: `));

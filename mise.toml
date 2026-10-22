@@ -6,7 +6,7 @@
 # because `node --build-sea` needed the NODE_SEA_FUSE sentinel that only the
 # official builds carry; the shipped executable is built by Bun now, so that
 # constraint is gone and this is a plain pin.
-node = "26.12.0"
+node = "26.12.1"
 
 # The shipped executable is built with `bun build --compile`
 # (scripts/build-binary.mjs). Pinned, rather than left to whatever `bun` is on
