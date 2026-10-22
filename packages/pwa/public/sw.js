@@ -37,9 +37,9 @@
 //     from going stale: after each shell response is served from the cache, a
 //     fresh one is fetched and written over it, so the next launch runs the
 //     current build. A stale shell is a real hazard — the import map in the
-//     page and the emitted modules have to agree — which is why the version
-//     below changes with every build and `activate` deletes every cache that
-//     is not this one.
+//     page and the emitted modules have to agree — which is why the name
+//     below carries the commit and `activate` deletes every cache that is
+//     not this one.
 //
 // A worker is registered only in a secure context, which is what a browser
 // requires. `app.js` does that registration, with `updateViaCache: 'none'`,
@@ -47,11 +47,24 @@
 'use strict';
 
 /**
- * CACHE is the cache name, and the version in it is the whole invalidation
- * strategy: a new build is a new cache, and activate deletes the rest.
- * Bump it when the shell changes.
+ * CACHE is the cache name, and it is the whole invalidation strategy: a new
+ * name is a new cache, `install` fills it from the allow-list below and
+ * `activate` deletes every other one, so a deploy cannot leave a browser
+ * holding half of one build and half of another.
+ *
+ * It therefore has to change with every deploy, and nothing a person has to
+ * remember can be trusted to do that. `scripts/stamp-cache.mjs` replaces
+ * this line with the commit on the way out (see `.github/workflows/pwa.yml`),
+ * so the deployed name is `tdo-shell-<sha>` — the identity of the build, and
+ * the only thing the name has to be. There is no version to bump by hand and
+ * no second concept beside the commit.
+ *
+ * The literal here is what a local build runs under, which is why it is a
+ * word rather than a number: served from `packages/pwa/dist` by hand, every
+ * build is the same cache, and that is the right answer for a directory you
+ * are rebuilding on purpose.
  */
-const CACHE = 'tdo-shell-v3';
+const CACHE = 'tdo-shell-local';
 
 /**
  * SHELL is the allow-list. These are the only URLs this worker will ever put

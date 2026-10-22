@@ -8,7 +8,7 @@
 // The Go tests got one platform per run from the build tags. The port
 // dispatches on `process.platform` instead, so `forTest.setPlatform` picks the
 // branch and every test here runs on macOS and on Linux alike.
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -68,6 +68,29 @@ interface Fake {
   argv(): string[] | null;
   /** stdin returns everything written to the child's standard input. */
   stdin(): string;
+}
+
+/**
+ * isWindows guards the tests that run the stand-in child.
+ *
+ * The stand-in is a `#!/bin/sh` script put at the front of PATH, which is
+ * what makes the read, write and delete paths testable without touching
+ * anybody's keychain. Windows has no `/bin/sh` and does not take a script as
+ * an executable, so those spawns are an ENOENT there and the test fails for a
+ * reason that is not about this module. There is nothing lost: the keyring's
+ * Windows branch has no backend at all — `Backend()` is `BackendNone` and
+ * `Available()` is false — and the tests that assert exactly that do not
+ * spawn anything and run everywhere.
+ */
+const isWindows = process.platform === "win32";
+
+/** shellTest is `test`, skipped where the stand-in child cannot run. */
+function shellTest(name: string, fn: (t: Hooks & TestContext) => void): void {
+  test(
+    name,
+    { skip: isWindows ? "the stand-in child is a /bin/sh script" : false },
+    fn,
+  );
 }
 
 /**
@@ -321,7 +344,7 @@ test("the linux write passes the secret on stdin only", () => {
 
 // --- the shared front door ---------------------------------------------
 
-test("an unknown account is rejected before any child runs", (t) => {
+shellTest("an unknown account is rejected before any child runs", (t) => {
   const fake = installFake(t, "darwin", forTest.securityBin);
   // An account name shaped like a flag must never reach a child's argv.
   const hostile = "-w";
@@ -331,7 +354,7 @@ test("an unknown account is rejected before any child runs", (t) => {
   assert.equal(fake.argv(), null, "a rejected account still ran a child");
 });
 
-test("Set refuses an empty token", (t) => {
+shellTest("Set refuses an empty token", (t) => {
   installFake(t, "darwin", forTest.securityBin);
   assert.throws(
     () => Store(AccountTursoToken, new Secret("")),
@@ -403,7 +426,7 @@ test("ManualInstructions answers for the running platform", (t) => {
 
 // --- darwin, against a fake `security` ---------------------------------
 
-test("Get reads the value the child prints", (t) => {
+shellTest("Get reads the value the child prints", (t) => {
   const cases: Array<[name: string, stdout: string, want: string]> = [
     ["unix terminator", `${sentinelKeyringToken}\n`, sentinelKeyringToken],
     ["windows terminator", `${sentinelKeyringToken}\r\n`, sentinelKeyringToken],
@@ -429,7 +452,7 @@ test("Get reads the value the child prints", (t) => {
   }
 });
 
-test("the read argv never carries a secret", (t) => {
+shellTest("the read argv never carries a secret", (t) => {
   const fake = installFake(t, "darwin", forTest.securityBin, {
     stdout: `${sentinelKeyringToken}\n`,
   });
@@ -444,7 +467,7 @@ test("the read argv never carries a secret", (t) => {
   ]);
 });
 
-test("Get reports a missing entry as an absence", (t) => {
+shellTest("Get reports a missing entry as an absence", (t) => {
   const cases: Array<[name: string, scripted: Scripted]> = [
     ["the documented not-found status", { exitCode: forTest.notFoundExitCode }],
     // An item that exists with an empty password is not a usable credential;
@@ -465,7 +488,7 @@ test("Get reports a missing entry as an absence", (t) => {
 // This is the test that matters most here: on a read the child's stdout *is*
 // the token, so an error built from a failed read may report the status and
 // stderr and nothing else.
-test("a genuine read failure is reported without the child's stdout", (t) => {
+shellTest("a genuine read failure is reported without the child's stdout", (t) => {
   installFake(t, "darwin", forTest.securityBin, {
     stdout: sentinelKeyringToken,
     stderr: "SecKeychainSearchCopyNext: the keychain is locked",
@@ -487,7 +510,7 @@ test("a genuine read failure is reported without the child's stdout", (t) => {
 // This test and the next cover the two remaining shapes of a child failure:
 // one that says nothing, and one that never ran at all. Neither may fall back
 // to quoting stdout.
-test("a read failure without stderr still reports the status", (t) => {
+shellTest("a read failure without stderr still reports the status", (t) => {
   installFake(t, "darwin", forTest.securityBin, {
     stdout: sentinelKeyringToken,
     exitCode: 2,
@@ -523,7 +546,7 @@ test("a read failure when the binary cannot be executed", (t) => {
   );
 });
 
-test("Set sends the secret on stdin and not in argv", (t) => {
+shellTest("Set sends the secret on stdin and not in argv", (t) => {
   const fake = installFake(t, "darwin", forTest.securityBin);
   Store(AccountTursoToken, new Secret(sentinelKeyringToken));
 
@@ -545,7 +568,7 @@ test("Set sends the secret on stdin and not in argv", (t) => {
   );
 });
 
-test("Set refuses a value it cannot pass safely", (t) => {
+shellTest("Set refuses a value it cannot pass safely", (t) => {
   const fake = installFake(t, "darwin", forTest.securityBin);
   assert.throws(
     () => Store(AccountTursoToken, new Secret("TOKEN GOES HERE with spaces")),
@@ -560,7 +583,7 @@ test("Set refuses a value it cannot pass safely", (t) => {
 
 // A child that echoes its input back on stderr is the one way a write could
 // disclose the token through an error.
-test("Set scrubs the value out of a failed child's diagnostics", (t) => {
+shellTest("Set scrubs the value out of a failed child's diagnostics", (t) => {
   installFake(t, "darwin", forTest.securityBin, {
     stderr: `add-generic-password: rejected ${sentinelKeyringToken}`,
     exitCode: 1,
@@ -577,7 +600,7 @@ test("Set scrubs the value out of a failed child's diagnostics", (t) => {
   );
 });
 
-test("Delete outcomes", (t) => {
+shellTest("Delete outcomes", (t) => {
   t.test("success", (sub) => {
     const fake = installFake(sub, "darwin", forTest.securityBin);
     Delete(AccountTursoToken);
@@ -614,7 +637,7 @@ test("Delete outcomes", (t) => {
   });
 });
 
-test("the keychain backend is detected from PATH", (t) => {
+shellTest("the keychain backend is detected from PATH", (t) => {
   installFake(t, "darwin", forTest.securityBin);
   assert.equal(Backend(), BackendKeychain);
   assert.ok(Available());
@@ -622,13 +645,13 @@ test("the keychain backend is detected from PATH", (t) => {
 
 // --- linux, against a fake `secret-tool` -------------------------------
 
-test("the secret-tool backend is detected from PATH", (t) => {
+shellTest("the secret-tool backend is detected from PATH", (t) => {
   installFake(t, "linux", forTest.secretToolBin);
   assert.equal(Backend(), BackendSecretTool);
   assert.ok(Available());
 });
 
-test("the linux read returns the looked-up value", (t) => {
+shellTest("the linux read returns the looked-up value", (t) => {
   const fake = installFake(t, "linux", forTest.secretToolBin, {
     stdout: `${sentinelKeyringToken}\n`,
   });
@@ -647,14 +670,14 @@ test("the linux read returns the looked-up value", (t) => {
 // `secret-tool lookup` reports a missing item with a non-zero status and
 // nothing on either stream, which only linuxGet distinguishes. The Go suite
 // could never reach this branch from a macOS run.
-test("the linux read reads a silent non-zero exit as an absence", (t) => {
+shellTest("the linux read reads a silent non-zero exit as an absence", (t) => {
   installFake(t, "linux", forTest.secretToolBin, { exitCode: 1 });
   const { value, present } = Get(AccountD1Token);
   assert.equal(present, false);
   assert.ok(value.empty());
 });
 
-test("the linux read reports a failure that says something on stderr", (t) => {
+shellTest("the linux read reports a failure that says something on stderr", (t) => {
   installFake(t, "linux", forTest.secretToolBin, {
     stdout: sentinelKeyringToken,
     stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY",
@@ -671,7 +694,7 @@ test("the linux read reports a failure that says something on stderr", (t) => {
   );
 });
 
-test("the linux write sends the secret on stdin and not in argv", (t) => {
+shellTest("the linux write sends the secret on stdin and not in argv", (t) => {
   const fake = installFake(t, "linux", forTest.secretToolBin);
   Store(AccountD1Token, new Secret(sentinelKeyringToken));
 
@@ -691,7 +714,7 @@ test("the linux write sends the secret on stdin and not in argv", (t) => {
   assert.equal(fake.stdin(), sentinelKeyringToken);
 });
 
-test("the linux write scrubs a failed child's diagnostics", (t) => {
+shellTest("the linux write scrubs a failed child's diagnostics", (t) => {
   installFake(t, "linux", forTest.secretToolBin, {
     stderr: `secret-tool: rejected ${sentinelKeyringToken}`,
     exitCode: 1,
@@ -707,7 +730,7 @@ test("the linux write scrubs a failed child's diagnostics", (t) => {
   );
 });
 
-test("the linux delete clears whether or not anything matched", (t) => {
+shellTest("the linux delete clears whether or not anything matched", (t) => {
   const fake = installFake(t, "linux", forTest.secretToolBin);
   Delete(AccountTursoToken);
   assert.deepEqual(fake.argv(), [

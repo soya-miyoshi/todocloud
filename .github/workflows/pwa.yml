@@ -91,25 +91,20 @@ jobs:
       # after this one still opens the old shell, with the import map and the
       # emitted modules from two different builds for that window.
       #
-      # So the name is stamped with the commit rather than bumped by hand.
-      # `const CACHE = 'tdo-shell-v2'` in the source stays what it is and
-      # remains the version a local build runs under; this edits the copy in
-      # `dist/` only, on its way out. Bumping the literal by hand still works
-      # and still means something — it is the shell format's version — but
-      # forgetting to is no longer a half-broken deploy.
+      # So the name is the commit: `scripts/stamp-cache.mjs` replaces the
+      # literal in the built copy with `tdo-shell-<sha>`, which is already
+      # different for every deploy, so there is no version for anyone to
+      # remember to bump. The source keeps a fixed `tdo-shell-local`, which
+      # is what a hand-built `dist/` runs under.
+      #
+      # It is a script with a test (`scripts/stamp-cache.test.mjs`) rather
+      # than a `sed` here. The `sed` had `tdo-shell-v2` written into both its
+      # guard and its substitution, so editing that literal in the source —
+      # which its own comment said was allowed — refused the deploy instead.
+      # A build step that only runs on the runner is a build step nobody can
+      # check.
       - name: Stamp the cache name with the commit
-        run: |
-          cd packages/pwa/dist
-          # Matched exactly, and the result checked: a silent no-op here puts
-          # every future deploy back on the two-launch path, which is the bug
-          # this step exists to remove and is invisible from the outside.
-          before=$(grep -c "^const CACHE = 'tdo-shell-v2';$" sw.js)
-          if [ "$before" != "1" ]; then
-            echo "sw.js no longer has the one CACHE line this step rewrites; update this workflow" >&2
-            exit 1
-          fi
-          sed -i "s|^const CACHE = 'tdo-shell-v2';$|const CACHE = 'tdo-shell-v2-${GITHUB_SHA}';|" sw.js
-          grep -n "^const CACHE = " sw.js
+        run: node scripts/stamp-cache.mjs packages/pwa/dist/sw.js "$GITHUB_SHA"
 
       # `sw.js`'s precache list is written by hand and `addAll` rejects as a
       # unit, so a single path in it that the build does not produce means no

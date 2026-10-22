@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "echo 'no build step: Node 24 runs TypeScript directly (MIGRATION.md)' && npm run typecheck",
-    "test": "node --test --experimental-strip-types \"packages/*/src/**/*.test.ts\"",
+    "test": "node --test --experimental-strip-types \"packages/*/src/**/*.test.ts\" \"scripts/*.test.mjs\"",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc -p packages/cli/assets/tsconfig.json && tsc -p packages/cli/assets/tsconfig.sw.json"
   },
   "devDependencies": {

@@ -31,7 +31,26 @@ export const idB2 = '01J3BBCDEFGHJKMNPQRSTVWXY0';
 export function tempDir(t: TestContext): string {
   const dir = mkdtempSync(join(tmpdir(), 'todocloud-sqlite-'));
   t.after(() => {
-    rmSync(dir, { recursive: true, force: true });
+    // `after` hooks run in the order they were registered, and this one is
+    // registered before the store that will open a file in here — the
+    // caller cannot do it the other way around, since it needs the
+    // directory to open the store in. On a POSIX system that is fine: a
+    // file is unlinked while it is open and goes when the handle does. On
+    // Windows an open file cannot be removed at all, so the directory of a
+    // store that has not been closed yet is an EPERM, and the test that
+    // passed fails in its own teardown.
+    //
+    // The retries cover a handle that is closing; after them, a leftover
+    // directory under the OS temp is not worth failing a green test over,
+    // and it is not what any of these tests is about. Everywhere else the
+    // failure still stands.
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    } catch (err) {
+      if (process.platform !== 'win32') {
+        throw err;
+      }
+    }
   });
   return dir;
 }
