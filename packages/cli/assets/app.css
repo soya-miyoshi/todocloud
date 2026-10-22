@@ -170,12 +170,6 @@ body {
      is the layout viewport itself, whatever it is measured as. */
   position: fixed;
   inset: 0;
-  /* `inset: 0` alone still came up short at the bottom of an installed iOS
-     app (a black band under the toolbar), so the height is stated as well.
-     In standalone `vh` is the whole screen, home-indicator area included;
-     `lvh` says the same where it is understood and wins there. */
-  height: 100vh;
-  height: 100lvh;
   overflow: hidden;
   /* The vertical axis only. `overscroll-behavior: none` here also turned off
      the horizontal one, and on a trackpad that axis *is* the browser's
