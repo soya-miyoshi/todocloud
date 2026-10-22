@@ -115,6 +115,33 @@
     --flag: #ff9500;
 }
 
+/* The two insets the layout pays by hand, and when they are zero.
+   `viewport-fit=cover` is what lets a pane reach the top and the bottom of
+   the screen, and it is also what makes the notch and the home indicator the
+   page's problem rather than the browser's — but only when the page owns
+   those edges, which is when it is installed. In a browser tab it does not:
+   Safari's own status band is above the viewport and its toolbar below it, a
+   `100dvh` body already stops short of both, and `env(safe-area-inset-*)`
+   reports the *device's* insets all the same. Paying them there is paying
+   twice — the navigation bar's title ends up level with the Dynamic Island
+   and the toolbar at the bottom grows by a home indicator that is not over
+   it. So the top and the bottom are tokens, zero by default and the real
+   inset once a display mode says the page reaches the edge.
+   The sides are not in here: a notch in landscape is under the page in a tab
+   as much as in an installed app, so those stay `env()` where they are
+   used. */
+:root {
+  --safe-top: 0px;
+  --safe-bottom: 0px;
+}
+
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  :root {
+    --safe-top: env(safe-area-inset-top);
+    --safe-bottom: env(safe-area-inset-bottom);
+  }
+}
+
 * { box-sizing: border-box; }
 
 /* `hidden` is a `display: none` in the browser's own stylesheet, and any
@@ -193,7 +220,7 @@ body {
   -webkit-overflow-scrolling: touch;
   /* The last line pays the home indicator back for the body, which does
      not: see the note there. */
-  padding: 10px 12px calc(28px + env(safe-area-inset-bottom));
+  padding: 10px 12px calc(28px + var(--safe-bottom));
 }
 
 /* The navigation bar: a translucent strip with a title in the middle and at
@@ -206,8 +233,9 @@ body {
   min-height: 46px;
   /* The top inset is the navigation bar's, not the body's: see the note
      there. The bar grows by it and its background goes under the status
-     bar, so there is no band of another colour above it. */
-  padding: env(safe-area-inset-top) 10px 0;
+     bar, so there is no band of another colour above it. Zero in a browser
+     tab, where the top of the screen is the browser's: see `--safe-top`. */
+  padding: var(--safe-top) 10px 0;
   border-bottom: 1px solid var(--hair);
   background: var(--panel);
 }
@@ -245,7 +273,7 @@ body {
      indicator would sit on top of. The bar keeps reaching the bottom of the
      screen — its background is what should be under the indicator — and its
      contents move up out of the way. */
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--safe-bottom);
 }
 
 button.icon {
@@ -755,7 +783,7 @@ input, textarea, select {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(22px + env(safe-area-inset-bottom));
+  bottom: calc(22px + var(--safe-bottom));
   z-index: 7;
   max-width: min(72vw, 420px);
   padding: 9px 14px;
@@ -839,7 +867,7 @@ input, textarea, select {
 #fab-wrap {
   position: fixed;
   right: calc(16px + env(safe-area-inset-right));
-  bottom: calc(16px + env(safe-area-inset-bottom));
+  bottom: calc(16px + var(--safe-bottom));
   z-index: 6;
   display: flex;
   flex-direction: column;
@@ -1077,14 +1105,17 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   /* Room under the last row for the floating button, which would otherwise
      sit on top of it — and the last row of a list is a row you complete.
      Plus the home indicator, as above. */
-  .pane-body { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .pane-body { padding-bottom: calc(96px + var(--safe-bottom)); }
 
   /* Touch targets. A 19px glyph with 8px around it is a 35px target, which
      is under the 44px a thumb actually needs and was being missed —
      particularly the back chevron, which sits in the corner where the hand
      is least accurate. The bars grow with them so nothing is cramped. */
   .navbar { min-height: 54px; }
-  .toolbar { min-height: 50px; }
+  /* The bar is as tall as the 44px control in it and no taller: installed,
+     it pays the home indicator on top of that, and 50px plus an inset was a
+     footer half of which was empty. */
+  .toolbar { min-height: 44px; }
   button.icon {
     font-size: 22px;
     padding: 10px;
@@ -1103,11 +1134,14 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   #list > .toolbar { display: none; }
 }
 
-/* An installed viewer has no reload button of its own in the browser chrome,
-   so the one in Home's navigation bar is the only way to force a refresh. */
-@media (display-mode: standalone) {
-  .navbar { padding-top: 2px; }
-}
+/* No `@media (display-mode: standalone)` block for the navigation bar here.
+   There was one, and it set `padding-top: 2px` — written when the body paid
+   the top inset and the bar only needed a couple of pixels off the notch.
+   Once the inset moved into the bar that rule cancelled it in the one mode
+   that needs it: the whole layout rose by a notch in the installed app and
+   the Dynamic Island came down on the title. The inset lives in
+   `--safe-top`, which is already zero in a browser tab, so nothing has to be
+   undone per mode. */
 
 /* --- the perspective editor ----------------------------------------
 
@@ -1204,15 +1238,15 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   #prefs-editor {
     width: calc(100vw - 16px);
     max-height: min(92dvh, 760px);
-    /* Clear of the status bar, which the page now goes under: the body pays
-       no top inset any more, so a dialog pinned near the top has to. */
-    margin: calc(8px + env(safe-area-inset-top)) auto auto;
+    /* Clear of the status bar, which an installed page goes under: the body
+       pays no top inset any more, so a dialog pinned near the top has to. */
+    margin: calc(8px + var(--safe-top)) auto auto;
   }
 }
 /* A dialog that reaches most of the way down the screen ends where the home
    indicator is, and the body is the part that scrolls. The inset goes on its
    last line for the same reason it goes on a pane's. */
-.dialog-body { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+.dialog-body { padding-bottom: calc(12px + var(--safe-bottom)); }
 
 #perspective-form .actions,
 #capture-form .actions {
