@@ -1664,14 +1664,24 @@ function fieldText(v) {
   return typeof v === 'string' ? v : JSON.stringify(v);
 }
 
-// fieldRow is one key/value pair. The inputs carry no `name`: they live
-// inside #detail, and a field called "title" would otherwise shadow the
-// title box in `form.elements`.
+// fieldRow is one key/value pair, shaped like the labelled boxes above it:
+// the key is the small caps line a field's name is drawn in everywhere in
+// this pane — TAGS, DEFER, NOTE — and the value is a box that wraps and
+// grows with what is in it, the way the note does. A field holds whatever
+// `--set` can store, which includes a paragraph and a line of JSON long
+// enough to need two lines, and neither of those is readable in a box that
+// scrolls sideways.
+//
+// The boxes carry no `name`: they live inside #detail, and a field called
+// "title" would otherwise shadow the title box in `form.elements`.
 function fieldRow(key, value) {
   const row = el('div', { className: 'field-row' });
   const name = el('input', { type: 'text', className: 'field-key', value: key, placeholder: 'key' });
   name.setAttribute('aria-label', 'field name');
-  const val = el('input', { type: 'text', className: 'field-value', value, placeholder: 'value' });
+  // A textarea rather than an input, for the wrapping. Enter is left alone
+  // here, unlike in the title: a field value may genuinely have lines in it,
+  // and the save is on the way out of the box either way.
+  const val = el('textarea', { className: 'field-value', rows: 1, value, placeholder: 'value' });
   val.setAttribute('aria-label', key ? `value of ${key}` : 'field value');
   // Removing a field is its own button because an empty value is a value:
   // `--set note2=` stores the empty string, so a blanked box cannot mean
@@ -1683,13 +1693,17 @@ function fieldRow(key, value) {
     onclick: () => { row.remove(); saveNow(); },
   });
   drop.setAttribute('aria-label', key ? `remove field ${key}` : 'remove field');
-  row.append(name, val, drop);
+  row.append(el('div', { className: 'field-head' }, [name, drop]), val);
   return row;
 }
 
 function renderFields(t) {
   const rows = customFields(t).map(([k, v]) => fieldRow(k, v));
   $('#field-rows').replaceChildren(...rows);
+  // `grow` reads `scrollHeight`, which is 0 for a box that is not in the
+  // document yet, so the height is set after the rows are in place rather
+  // than inside `fieldRow`.
+  for (const row of rows) grow(row.querySelector('.field-value'));
 }
 
 function renderInspector() {
@@ -2333,6 +2347,7 @@ $('#complete').onclick = () => {
 $('#field-add').onclick = () => {
   const row = fieldRow('', '');
   $('#field-rows').append(row);
+  grow(row.querySelector('.field-value'));
   row.querySelector('.field-key').focus();
 };
 

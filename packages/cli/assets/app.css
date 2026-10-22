@@ -914,12 +914,49 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
    than the value because a key is a word and a value is anything. */
 #fields { border: 0; border-top: 1px solid var(--edge); margin: 14px 0 0; padding: 10px 0 0; }
 #fields legend { padding: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
-.field-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
-.field-row input { min-width: 0; color: var(--ink); font-size: 14px; }
-.field-row .field-key { flex: 2; }
-.field-row .field-value { flex: 3; }
-/* The remove button keeps the touch target the rest of the app's icons have
-   and does not stretch with the row. */
+/* One field reads like one labelled box above it: the key on the small caps
+   line a field's name is drawn in everywhere in this pane, the value in a
+   box beneath it that wraps and grows. Stacked rather than side by side,
+   because a value is anything — a paragraph, a line of JSON — and half the
+   width of a 320px pane is not enough to read one in. */
+.field-row { margin-bottom: 9px; }
+.field-head { display: flex; gap: 6px; align-items: center; }
+/* The key is an editable label: the size, the caps and the colour of a
+   TAGS or a DEFER, so the block does not read as a different kind of thing
+   from the rest of the inspector. It is still a box — the border appears on
+   hover and focus — because a name that can be typed into should look it
+   once you are near it. */
+.field-row .field-key {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  padding: 2px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+.field-row .field-key:hover { border-color: var(--edge); }
+.field-row .field-key:focus { border-color: var(--edge); color: var(--ink); }
+/* The value, the way the note is: it wraps, it has no scrollbar of its own
+   — app.js sets the height to its contents — and a line of JSON with
+   nowhere to break still stays inside the pane. */
+.field-row .field-value {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+/* The inspector's textareas have a three-line floor, which belongs to the
+   note. A field starts at one line and grows from there. */
+#inspector textarea.field-value { min-height: 0; }
+/* The remove button keeps the touch target the rest of the app's icons
+   have, and stays beside the key rather than stretching with it. */
 .field-row .field-drop { flex: 0 0 auto; }
 #field-add {
   border: 1px solid var(--edge);
