@@ -139,19 +139,20 @@ body {
   height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
-  /* Three insets, not four. Installed to a home screen the page reaches
-     under the notch and the home indicator (`viewport-fit=cover`), and the
-     top and the sides have to be paid back here — there is nothing else
-     between the edge and a navbar. The bottom must not be: a pane is a
-     column with a scrolling body and a bar at the end of it, and an inset
-     paid here stops that column short of the bottom of the screen, leaving
-     a band of page background under it with nothing in it. The home
-     indicator sits over a few millimetres of a list that scrolls, which is
-     what it is designed to do. What is paid back instead is the padding
-     *inside* the things that end at the bottom: a pane's scrolling body,
-     which already keeps room under its last row, and a toolbar, whose
-     contents would otherwise sit under the indicator. */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  /* The sides only.
+     Installed to a home screen the page reaches under the notch and the home
+     indicator (`viewport-fit=cover`), and those two bands have to be paid
+     for somewhere. Not here: the body's background is the colour *behind*
+     the panes — black in the dark palette — so an inset paid here is a black
+     band above the navigation bar and another below the list, which is what
+     it looked like. A pane is a column from the top of the screen to the
+     bottom of it, and it should reach both.
+     So each inset is paid *inside* the thing that meets that edge, which
+     keeps its own background under the band: `.navbar` at the top, a
+     `.toolbar` and a pane's scrolling body at the bottom. The status bar
+     then sits on the navigation bar's own colour and the home indicator over
+     a few millimetres of a list that scrolls, which is what it is for. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
 }
 
 #app { display: flex; height: 100%; min-height: 0; }
@@ -203,7 +204,10 @@ body {
   align-items: center;
   gap: 8px;
   min-height: 46px;
-  padding: 0 10px;
+  /* The top inset is the navigation bar's, not the body's: see the note
+     there. The bar grows by it and its background goes under the status
+     bar, so there is no band of another colour above it. */
+  padding: env(safe-area-inset-top) 10px 0;
   border-bottom: 1px solid var(--hair);
   background: var(--panel);
 }
@@ -1200,7 +1204,9 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   #prefs-editor {
     width: calc(100vw - 16px);
     max-height: min(92dvh, 760px);
-    margin: 8px auto auto;
+    /* Clear of the status bar, which the page now goes under: the body pays
+       no top inset any more, so a dialog pinned near the top has to. */
+    margin: calc(8px + env(safe-area-inset-top)) auto auto;
   }
 }
 /* A dialog that reaches most of the way down the screen ends where the home

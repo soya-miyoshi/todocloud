@@ -227,7 +227,21 @@ export async function newHarness(
     } else {
       process.env['TODOCLOUD_STATE_DIR'] = previousState;
     }
-    fs.rmSync(dir, { recursive: true, force: true });
+    // The store this harness opened is closed by an `after` hook of its own,
+    // and `after` hooks run in the order they were registered — this one
+    // first, because the directory has to exist before the store can be
+    // opened in it. POSIX unlinks an open file and lets the handle finish;
+    // Windows refuses to remove one at all, so a test that passed failed in
+    // its own teardown with EBUSY. The retries cover a handle that is
+    // closing; after them, a leftover directory under the OS temp is not
+    // worth failing a green test over, and only on Windows is it tolerated.
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    } catch (err) {
+      if (process.platform !== 'win32') {
+        throw err;
+      }
+    }
   });
 
   const h = new Harness(dir, db, {

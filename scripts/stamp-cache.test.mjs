@@ -5,11 +5,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { stamp } from './stamp-cache.mjs';
 
@@ -18,7 +18,9 @@ import { stamp } from './stamp-cache.mjs';
 // to a secret scanner (CLAUDE.md §1.3), and the scanner is right to say so.
 const sha = 'deadbeef'.repeat(5);
 const worker = new URL('../packages/pwa/public/sw.js', import.meta.url);
-const script = new URL('./stamp-cache.mjs', import.meta.url);
+// `fileURLToPath`, not `.pathname`: on Windows the pathname of a file URL is
+// `/C:/…`, which node cannot resolve as a module path.
+const script = fileURLToPath(new URL('./stamp-cache.mjs', import.meta.url));
 
 test('the real worker is stamped with the commit', () => {
   const out = stamp(readFileSync(worker, 'utf8'), sha);
@@ -63,7 +65,7 @@ test('the command writes the file and reports what it wrote', () => {
   const dir = mkdtempSync(join(tmpdir(), 'stamp-cache-'));
   const file = join(dir, 'sw.js');
   writeFileSync(file, "const CACHE = 'tdo-shell-local';\n");
-  const out = execFileSync(process.execPath, [script.pathname, file, sha], {
+  const out = execFileSync(process.execPath, [script, file, sha], {
     encoding: 'utf8',
   });
   assert.match(out, new RegExp(`tdo-shell-${sha}`));
@@ -75,7 +77,7 @@ test('the command fails loudly rather than leaving the file alone', () => {
   const file = join(dir, 'sw.js');
   writeFileSync(file, '// nothing to stamp\n');
   assert.throws(
-    () => execFileSync(process.execPath, [script.pathname, file, sha], { stdio: 'pipe' }),
+    () => execFileSync(process.execPath, [script, file, sha], { stdio: 'pipe' }),
     /exactly one/u,
   );
   assert.equal(readFileSync(file, 'utf8'), '// nothing to stamp\n');

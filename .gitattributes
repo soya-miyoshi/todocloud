@@ -1,0 +1,16 @@
+# Checked out with LF everywhere, including on Windows.
+#
+# Two of this repository's tests are about the bytes of a file rather than its
+# lines: the PWA shell's Content-Security-Policy carries the sha256 of the
+# inline import map, which is computed from the file and compared with the
+# literal in it, and the service worker's precache list is parsed out of
+# `sw.js` by matching the line that ends it. Git's default on Windows rewrites
+# every LF in the working tree to CRLF, which changes that digest and that
+# match, so both tests failed there and nowhere else — for a reason that has
+# nothing to do with what they are checking.
+#
+# Nothing here is written for a Windows editor that needs CRLF, and the one
+# thing that genuinely must not be rewritten is a binary.
+* text=auto eol=lf
+*.png binary
+*.ico binary
