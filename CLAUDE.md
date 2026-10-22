@@ -112,6 +112,23 @@ replaced it, and the two Go bugs it deliberately does not carry over.
 - `tsc` is clean under `--strict` before every commit, including
   `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Tests:
   `npm test` must pass with no network access.
+- **`npm run lint` looks for a function that calls itself with its own
+  arguments**, which is a stack overflow on the first call and shipped from
+  here once: `messageOf(err)` inside `messageOf`, which crashed the installed
+  PWA on load. No JavaScript linter has that rule — Sonar's S2190 is
+  Java/C#/C only and Biome has nothing equivalent — so
+  `scripts/check-recursion.mjs` is it, over the AST of the `typescript` this
+  repository already depends on. It adds no dependency, `npm test` runs it
+  over every tracked file, and `make check` includes it.
+- **`npm run probe` loads the viewer in a real browser** and fails on
+  anything thrown while the page loads or while its panes and dialogs are
+  driven. That is the tier `app.js` otherwise has none of: the type checker
+  cannot see a runtime error and no test in this tree executes a line of it.
+  It needs `playwright`, which is **not** a dependency of this project — the
+  script says so and exits 0 when it is absent — so it is a thing to run
+  before touching the viewer (`npm i -D playwright && npx playwright install
+  chromium`), not something CI does today. Making it a CI job means adding
+  that dependency, which is §4's kind of question.
 - **The viewer's `app.js` and `sw.js` are checked too.** They are
   hand-written browser JavaScript and stay that way — they are served as
   they are — but `packages/cli/assets/tsconfig.json` (and `tsconfig.sw.json`

@@ -1,6 +1,6 @@
 BINARY := tdo
 
-.PHONY: build install uninstall test typecheck scan scan-history \
+.PHONY: build install uninstall test typecheck lint probe scan scan-history \
         hooks clean check binary icons
 
 build: ## Type-check and build the TypeScript workspace
@@ -9,8 +9,16 @@ build: ## Type-check and build the TypeScript workspace
 test: ## Run tests (no network access required)
 	npm test
 
-typecheck: ## Type-check without emitting
-	npx tsc --build --force
+typecheck: ## Type-check without emitting (the packages, and the viewer's own scripts)
+	npm run typecheck
+
+lint: ## Look for a function that calls itself with its own arguments
+	node scripts/check-recursion.mjs
+
+probe: ## Load the viewer in a real browser and report anything it throws
+	@# Needs a browser, which is not a dependency of this project: it says so
+	@# and exits 0 when there is none. See the header of the script.
+	node scripts/probe-page.mjs
 
 binary: ## Build the single executable into ./dist-bin (add ARGS=--all to cross-compile)
 	@# Needs the bun pinned in mise.toml; the script smoke-tests what it built.
@@ -34,7 +42,7 @@ scan-history: ## Scan the full git history for credentials (what CI runs)
 hooks: ## Install the pre-commit hook (run once after cloning)
 	./scripts/install-hooks.sh
 
-check: typecheck test scan ## Everything that must pass before a commit
+check: typecheck lint test scan ## Everything that must pass before a commit
 
 clean:
 	rm -rf dist dist-bin node_modules/.cache
