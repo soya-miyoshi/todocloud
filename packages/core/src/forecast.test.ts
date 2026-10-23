@@ -31,7 +31,9 @@ import {
 
 // Mid-morning, so that "due at midnight today" is already in the past and the
 // calendar-day rule has something to say that an hourly one would get wrong.
-const now = parseTime('2026-10-22T10:00:00Z');
+// 10:00 on the 22nd *in whatever zone the suite runs in*: today is the reader's
+// calendar day, so a pinned instant in UTC would be another day somewhere.
+const now = new Date(2026, 9, 22, 10, 0, 0);
 
 function make(title: string, opts: { defer?: string; due?: string } = {}): Task {
   const t = newTask(`id-${title}`, KindTask, title, now);
@@ -223,4 +225,16 @@ test('a day lists its deadlines and its releases once each, in order', () => {
   // The deadline first, then what is merely released, and the task that is
   // both is one row rather than two.
   assert.deepEqual(titles(got), ['Due and released', 'Only released']);
+});
+
+test('a passed defer date keeps a held task on today, and only that one', () => {
+  const held = make('held', { defer: '2026-10-20T00:00:00Z' });
+  const free = make('free', { defer: '2026-10-20T00:00:00Z' });
+  const today = forecastDay('today', now) as ForecastDay;
+  const later = forecastDay('d1', now) as ForecastDay;
+  const ids = new Set([held.id]);
+  assert.deepEqual(startsOn([held, free], today, now, ids).map((t) => t.title), ['held']);
+  assert.deepEqual(startsOn([held, free], today, now).map((t) => t.title), []);
+  assert.deepEqual(startsOn([held, free], later, now, ids).map((t) => t.title), []);
+  assert.deepEqual(forecastOn([held, free], today, 'defer', now, ids).map((t) => t.title), ['held']);
 });

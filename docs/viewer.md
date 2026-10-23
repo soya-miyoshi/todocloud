@@ -30,8 +30,11 @@ knowing:
   in the sidebar's Projects list, a project that is open shows them (marked ◷,
   with how many items wait for each) before its tasks. The settings page also
   has *Count blocked tasks in the calendar*, which decides whether the week's
-  day numbers (and the day each one opens) include tasks that are waiting on
-  something.
+  day numbers include tasks that are waiting on something. It changes the
+  numbers only: a day, once opened, lists its blocked tasks either way.
+  Choosing an event in the sidebar lists the items it is holding in the
+  outline, as a project lists what is in it, with the event itself in the
+  inspector (`#/event/<id>`).
   Tapping a row opens the event in the inspector — its full title, note,
   expected date, project and the items waiting for it, all editable except the
   waiting items — and the button there says it occurred (the Events

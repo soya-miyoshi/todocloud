@@ -14,12 +14,17 @@ import { forecastCommand } from './forecast.ts';
 import { listCommand } from './list.ts';
 import { doneCommand } from './mark.ts';
 import { newHarness } from './testsupport.ts';
+import { today } from '@todocloud/core/forecast';
 
 const commands: readonly CommandFactory[] = [addCommand, listCommand, doneCommand, forecastCommand];
 
-/** day returns a date-only string this many days from today, in UTC. */
+/**
+ * day returns a date-only string this many days from today. Today is the one
+ * the command itself uses — the calendar day in the machine's own zone — so
+ * the test follows the zone it runs in instead of assuming one.
+ */
 function day(offset: number): string {
-  return new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  return new Date(today(new Date()).getTime() + offset * 86_400_000).toISOString().slice(0, 10);
 }
 
 test('forecast lists deferred and due tasks, which ls would not all show', async (t: TestContext) => {

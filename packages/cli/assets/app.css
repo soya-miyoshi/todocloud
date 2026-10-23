@@ -799,6 +799,7 @@ input, textarea, select {
   border-radius: 8px;
   cursor: pointer;
 }
+.weekbar .seg.small { font-size: 12px; padding: 3px 7px; min-height: 26px; border-radius: 7px; }
 .weekbar .seg[aria-pressed="true"] { background: var(--select); color: var(--accent); font-weight: 600; }
 
 /* The fold at the end of the Forecast. A row like any other, so that the

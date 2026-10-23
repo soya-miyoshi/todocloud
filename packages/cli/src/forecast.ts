@@ -136,6 +136,15 @@ export function forecastCommand(a: App): Command {
           }),
         );
         const now = new Date();
+        // What something other than its own defer date is blocking: a task in
+        // this set keeps its place in Today after the defer date has passed.
+        const heldAv = await availabilityOf(a, st, open);
+        const held = new Set(
+          open.filter((t) => {
+            const x = heldAv.get(t.id);
+            return x !== undefined && !x.available && x.rule !== 'deferred';
+          }).map((t) => t.id),
+        );
         // The week is the viewer's own shape, and both of these are read from
         // the same `open` listing as the flat list below: one query, three
         // presentations of it.
@@ -144,11 +153,11 @@ export function forecastCommand(a: App): Command {
           if (day === undefined) {
             return;
           }
-          await printDay(a, st, day, forecastOn(open, day, order, now), now);
+          await printDay(a, st, day, forecastOn(open, day, order, now, held), now);
           return;
         }
         if (span > 0) {
-          await printWeek(a, st, open, order, now, span, compact);
+          await printWeek(a, st, open, order, now, span, compact, held);
           return;
         }
 
@@ -267,11 +276,12 @@ async function printWeek(
   now: Date,
   span: number,
   compact: boolean,
+  held: ReadonlySet<string>,
 ): Promise<void> {
   const days = forecastDays(now, span);
   const listed: Task[] = [];
   const sections = days.map((day) => {
-    const tasks = forecastOn(open, day, order, now);
+    const tasks = forecastOn(open, day, order, now, held);
     listed.push(...tasks);
     return { day, tasks };
   });
@@ -286,7 +296,7 @@ async function printWeek(
         tasks: views(tasks, av),
         count: tasks.length,
         due: dueOn(open, day, now).length,
-        starting: startsOn(open, day, now).length,
+        starting: startsOn(open, day, now, held).length,
         past_due: tasks.filter((t) => pastDue(t, now)).length,
       })),
       count: listed.length,

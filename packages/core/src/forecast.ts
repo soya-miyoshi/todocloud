@@ -32,7 +32,19 @@ export const ForecastHorizonDays = 7;
 const msPerDay = 86_400_000;
 
 /**
- * calendarDays counts whole calendar days from `now` to `at`, in UTC. It is a
+ * today is the calendar day `now` falls on *where the program runs* — the
+ * browser's zone in the viewer, the process's in the CLI — written as that
+ * day at 00:00:00Z so it compares with a stored date. Dates are stored as
+ * UTC midnights, but "today" is the reader's: at 01:00 in Tokyo it is already
+ * tomorrow, and counting the day in UTC kept the Forecast on yesterday until
+ * breakfast. The zone is whatever the runtime reports, never a constant.
+ */
+export function today(now: Date): Date {
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+}
+
+/**
+ * calendarDays counts whole calendar days from `now` to `at`. `at` is read in UTC and `now` in the local zone (see `today`). It is a
  * calendar question and not an hourly one: an item due at midnight this
  * morning is still due today, an hour overdue, and calling that "yesterday" is
  * how a list starts lying to its reader. UTC is the same frame `--due
@@ -40,7 +52,7 @@ const msPerDay = 86_400_000;
  */
 export function calendarDays(at: Date, now: Date): number {
   const a = Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate());
-  const n = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const n = today(now).getTime();
   return Math.round((a - n) / msPerDay);
 }
 
@@ -204,14 +216,14 @@ export const ForecastMaxDays = 60;
 export function forecastDays(now: Date, count: number = ForecastWeekDays): ForecastDay[] {
   const days: ForecastDay[] = [];
   for (let i = 0; i < count; i += 1) {
-    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) + i * msPerDay);
-    const today = i === 0;
+    const date = new Date(today(now).getTime() + i * msPerDay);
+    const isToday = i === 0;
     days.push({
-      key: today ? 'today' : `d${i}`,
-      label: today ? 'Today' : (WEEKDAYS[date.getUTCDay()] as string),
+      key: isToday ? 'today' : `d${i}`,
+      label: isToday ? 'Today' : (WEEKDAYS[date.getUTCDay()] as string),
       date,
-      today,
-      dueMatch: today ? (d: number): boolean => d <= 0 : (d: number): boolean => d === i,
+      today: isToday,
+      dueMatch: isToday ? (d: number): boolean => d <= 0 : (d: number): boolean => d === i,
       startMatch: (d: number): boolean => d === i,
     });
   }
@@ -241,16 +253,34 @@ export function dueOn(tasks: readonly Task[], day: ForecastDay, now: Date): Task
   );
 }
 
+/** noneHeld is `held` when the caller has not asked what is blocking what. */
+const noneHeld: ReadonlySet<string> = new Set();
+
 /**
  * startsOn is the other half: what becomes available that day. It is counted
  * apart from the deadlines, because a deadline and a release are not the same
  * news — a day showing "5" that turns out to be five things that merely became
  * available reads as pressure that is not there, and the one real deadline
  * hides inside it.
+ *
+ * A defer date that has passed belongs to no day, with one exception: a task in
+ * `held` — one something other than its own defer date is still blocking. An
+ * available one is on Next from then on; a blocked one is on no list that says
+ * "now", so its date would vanish the moment it came. Today keeps it until
+ * what blocks it goes. `held` is the ids; core cannot compute availability.
  */
-export function startsOn(tasks: readonly Task[], day: ForecastDay, now: Date): Task[] {
+export function startsOn(
+  tasks: readonly Task[],
+  day: ForecastDay,
+  now: Date,
+  held: ReadonlySet<string> = noneHeld,
+): Task[] {
   return tasks.filter(
-    (t) => inForecast(t) && t.deferAt !== undefined && day.startMatch(calendarDays(t.deferAt, now)),
+    (t) =>
+      inForecast(t) &&
+      t.deferAt !== undefined &&
+      (day.startMatch(calendarDays(t.deferAt, now)) ||
+        (day.today && calendarDays(t.deferAt, now) < 0 && held.has(t.id))),
   );
 }
 
@@ -264,10 +294,11 @@ export function forecastOn(
   day: ForecastDay,
   order: ForecastOrder,
   now: Date,
+  held: ReadonlySet<string> = noneHeld,
 ): Task[] {
   const items = dueOn(tasks, day, now);
   const seen = new Set(items.map((t) => t.id));
-  for (const t of startsOn(tasks, day, now)) {
+  for (const t of startsOn(tasks, day, now, held)) {
     if (!seen.has(t.id)) {
       items.push(t);
     }

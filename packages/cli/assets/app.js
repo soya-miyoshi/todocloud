@@ -428,6 +428,16 @@ const clock = () => new Date(state.now ?? 0);
 // this overdue", which is about the moment and not about the day.
 const passed = (stamp) => Boolean(stamp) && new Date(stamp) <= clock();
 
+// localToday is the day it is *in this browser's zone*, as that day at
+// 00:00:00Z, so it compares with a stored date (which is a UTC midnight).
+// The zone is the user agent's own and is never written down: at 01:00 in
+// Tokyo it is already tomorrow, and counting the day in UTC kept the Forecast
+// on yesterday until breakfast.
+/** @param {Date} d */
+function localToday(d) {
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+}
+
 // calendarDays counts whole days between two dates, not elapsed hours: an
 // item due at midnight this morning is still due *today*, an hour overdue,
 // and calling that "Yesterday" is how a list starts lying to its reader.
@@ -441,7 +451,7 @@ function calendarDays(stamp) {
   const a = new Date(stamp);
   const b = clock();
   const at = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
-  const now = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
+  const now = localToday(b).getTime();
   return Math.round((at - now) / 86400000);
 }
 
@@ -700,8 +710,10 @@ const forecastHides = (t) => forecastBlocked === 'hide' && hasBlocker(t);
 
 // Whether the week's calendar counts a task something is blocking. Its own
 // switch, apart from `forecastBlocked`: a day can keep its blocked tasks out
-// of the number while the Forecast list still shows them dimmed. The day's
-// rows follow the count, since a day that says 2 must open on two.
+// of the number while the Forecast list still shows them dimmed, and the
+// other way round: the number follows this switch and the list follows the
+// Blocked one. It changes the number and nothing else: the day, when opened, lists every task that
+// belongs to it, blocked or not — a task that is waiting is still due then.
 const CalendarBlockedKey = 'tdo.calendar.blocked';
 let calendarCountsBlocked = remembered(CalendarBlockedKey, '') !== 'skip';
 const calendarSkips = (t) => !calendarCountsBlocked && hasBlocker(t);
@@ -711,6 +723,11 @@ function setCalendarCountsBlocked(on) {
   calendarCountsBlocked = on;
   remember(CalendarBlockedKey, on ? 'count' : 'skip');
   render();
+}
+
+// The bar's switch for the same setting: shown (dimmed) or hidden.
+function toggleForecastBlocked() {
+  setForecastBlocked(forecastBlocked === 'hide' ? 'dim' : 'hide');
 }
 
 /** @param {string} mode */
@@ -866,6 +883,15 @@ function currentItems() {
     const keep = (t) => (projectDoneShown ? t.status !== 'dropped' : isOpen(t));
     return state.tasks.filter((t) => t.id !== root.id && inSubtree(t, root.id) && keep(t));
   }
+  if (view.kind === 'event') {
+    // What the event is holding, the way a project lists what is in it. Only
+    // the items still open: one that is done no longer waits for anything.
+    const e = eventByID(view.key);
+    return (e ? e.waiting || [] : []).flatMap((id) => {
+      const t = byID.get(id);
+      return t && isOpen(t) ? [t] : [];
+    });
+  }
   if (view.kind === 'tag') {
     return state.tasks.filter((t) => isOpen(t) && (t.tags || []).some((g) => g.toLowerCase() === view.key.toLowerCase()));
   }
@@ -895,6 +921,10 @@ function viewTitle() {
   if (view.kind === 'project') {
     const root = byID.get(view.key);
     return root ? root.title : 'Project';
+  }
+  if (view.kind === 'event') {
+    const e = eventByID(view.key);
+    return e ? e.title : 'Event';
   }
   if (view.kind === 'tag') return view.key;
   if (view.kind === 'saved') return view.key;
@@ -1002,6 +1032,17 @@ const compact = () => window.matchMedia('(max-width: 859px)').matches;
 // between. Compact, one pane is up and the list is the one that was asked
 // for — a tap on a project means "show me what is in it" — so the inspector
 // is selected and waits behind the `i` button.
+// openEvent is the same for an event: the outline lists what it is holding and
+// the inspector is the event itself.
+/** @param {EventItem} e */
+function openEvent(e) {
+  if (saveTimer) saveNow();
+  view = { kind: 'event', key: e.id };
+  selected = e.id;
+  showPane(compact() ? 'outline' : 'inspector');
+  render();
+}
+
 function openContainer(t) {
   if (saveTimer) saveNow();
   view = { kind: 'project', key: t.id };
@@ -1074,7 +1115,7 @@ const settingsHash = '#/settings';
 // The word each kind of view is called in an address. A perspective that is
 // not listed is called by its own key (`/inbox`, `/flagged`, …), which is
 // what makes those addresses read the way they do.
-const VIEW_WORDS = { due: 'forecast', project: 'project', tag: 'tag', saved: 'perspective' };
+const VIEW_WORDS = { due: 'forecast', project: 'project', event: 'event', tag: 'tag', saved: 'perspective' };
 
 /** pathFor is the address of a view, without the item. */
 function pathFor(v) {
@@ -1206,6 +1247,9 @@ function parseHash(hash) {
     // project that has been deleted must not open as an empty outline
     // titled "Project".
     return byID.has(key) ? { pane: 'outline', view: { kind: 'project', key }, id } : undefined;
+  }
+  if (word === 'event') {
+    return eventByID(key) ? { pane: 'outline', view: { kind: 'event', key }, id } : undefined;
   }
   if (word === 'tag') {
     const known = (state.tags || []).some((g) => g.name.toLowerCase() === key.toLowerCase());
@@ -1574,7 +1618,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // deadline that has passed belongs to today, a defer date that has passed is
 // nothing but availability and belongs to no day at all.
 function forecastDays() {
-  const today = clock();
+  const today = localToday(clock());
   const cells = [{
     key: 'today',
     label: 'Today',
@@ -1625,11 +1669,20 @@ const forecastCell = (key) => forecastDays().find((c) => c.key === key);
 // Tasks only, here as in the perspective itself: the day's number has to be
 // the number of rows the day opens, and a project with a due date was in
 // both the count and the list.
-const dueOn = (cell) => state.tasks.filter(
-  (t) => t.kind === 'task' && t.due_at && isOpen(t) && !forecastHides(t) && !calendarSkips(t) && cell.dueMatch(calendarDays(t.due_at)));
+// `counted` is the cell's number. It answers to the calendar setting alone,
+// whether or not the list below shows blocked tasks (`forecastHides`); the
+// day's rows answer to the list's switch and not to the calendar setting.
+const dueOn = (cell, counted = false) => state.tasks.filter(
+  (t) => t.kind === 'task' && t.due_at && isOpen(t) && !(counted ? calendarSkips(t) : forecastHides(t)) && cell.dueMatch(calendarDays(t.due_at)));
 
-const startsOn = (cell) => state.tasks.filter(
-  (t) => t.kind === 'task' && t.defer_at && isOpen(t) && !forecastHides(t) && !calendarSkips(t) && cell.startMatch(calendarDays(t.defer_at)));
+// A defer date that has passed belongs to no day — except for a task something
+// is still blocking. An available one is on Next from then on; a blocked one is
+// on no list that says "now", so its date would otherwise vanish the moment it
+// came. Today keeps it, dimmed like any blocked task, until what blocks it goes.
+const startsOn = (cell, counted = false) => state.tasks.filter(
+  (t) => t.kind === 'task' && t.defer_at && isOpen(t) && !(counted ? calendarSkips(t) : forecastHides(t))
+    && (cell.startMatch(calendarDays(t.defer_at))
+      || (cell.today && calendarDays(t.defer_at) < 0 && hasBlocker(t))));
 
 // completedOn is the day as a record rather than a plan: what was finished
 // on it. Not counted on the cell and not in any badge — a day's number means
@@ -1687,10 +1740,10 @@ function forecastStrip() {
 // sometimes a control is worse than one that is always one.
 function weekCells() {
   return forecastDays().map((c) => {
-    const due = dueOn(c);
+    const due = dueOn(c, true);
     // Counted apart from the deadlines and never twice: an item that is both
     // due and released on the same day is one row, not two.
-    const starting = startsOn(c).filter((t) => !due.some((x) => x.id === t.id));
+    const starting = startsOn(c, true).filter((t) => !due.some((x) => x.id === t.id));
     const cell = el('button', {
       type: 'button',
       className: 'day',
@@ -1765,9 +1818,10 @@ function dateCell(t) {
     else if (dueSoon(t)) due.classList.add('soon');
     cell.append(due);
   }
-  // A defer date in the past has nothing left to say, so it goes away once
-  // it passes — the manual is explicit about that.
-  if (t.defer_at && !passed(t.defer_at)) {
+  // A defer date stays on the row after it passes. It is when the task was
+  // meant to start, which is still what the Forecast is sorted and read by:
+  // a row that drops it once the day comes looks like a task with no date.
+  if (t.defer_at) {
     cell.append(el('span', { className: 'defer', textContent: `↓ ${shortDate(t.defer_at)}` }));
   }
   return cell.childNodes.length ? cell : null;
@@ -2007,8 +2061,8 @@ function sidebarEventRows() {
   const rows = shown.map((e) => navRow(
     e.title,
     (e.waiting || []).length || null,
-    selected === e.id,
-    () => selectItem(e.id),
+    view.kind === 'event' && view.key === e.id,
+    () => openEvent(e),
     { held: e.status !== 'pending', mark: el('span', { textContent: '\u25f7' }), id: e.id }));
   return rows;
 }
@@ -2183,6 +2237,19 @@ function renderList() {
 
 // --- the Forecast's week -------------------------------------------------
 
+// weekToggle is one of the small switches on the Forecast's bar: a name, and
+// whether what it names is shown now.
+/**
+ * @param {string} label
+ * @param {boolean} on
+ * @param {() => void} onclick
+ */
+function weekToggle(label, on, onclick) {
+  const button = el('button', { type: 'button', className: 'seg small', textContent: label, onclick });
+  button.setAttribute('aria-pressed', on ? 'true' : 'false');
+  return button;
+}
+
 // The week, at the top of the Forecast and nowhere else: seven days from
 // today, each a column with its weekday, its date and what it holds. It is
 // the shape of the week that is the information — which is why an empty day
@@ -2219,21 +2286,16 @@ function renderWeek() {
   all.setAttribute('aria-pressed', view.key === 'all' ? 'true' : 'false');
   row.append(all);
 
-  // And, on a day, whether what was finished on it is shown. Only on a day:
-  // the toggle does nothing to the `all` list (see `forecastDoneShown`), and
-  // a control that is live on one tab of a bar and inert on the other is a
-  // control that teaches the wrong thing. It says which state it is in
-  // rather than what it would do, like the project's own toggle.
+  // Two small switches for what the list leaves out, each named for what it
+  // adds and lit while it is shown, like the buttons beside them. Completed
+  // is on a day only: it does nothing to the `all` list (see
+  // `forecastDoneShown`), and a control that is live on one tab of a bar and
+  // inert on the other teaches the wrong thing. Blocked is on both, since
+  // `forecastHides` takes those tasks out of the day and of the whole list.
   if (view.key && view.key !== 'all') {
-    const done = el('button', {
-      type: 'button',
-      className: 'seg',
-      textContent: forecastDoneShown ? 'Completed: shown' : 'Completed: hidden',
-      onclick: toggleForecastDone,
-    });
-    done.setAttribute('aria-pressed', forecastDoneShown ? 'true' : 'false');
-    row.append(done);
+    row.append(weekToggle('Completed', forecastDoneShown, toggleForecastDone));
   }
+  row.append(weekToggle('Blocked', forecastBlocked !== 'hide', toggleForecastBlocked));
 
   row.append(el('span', { className: 'spacer' }), el('span', { className: 'label', textContent: 'Sort' }));
   // Two words, the one in force marked: a menu to pick between two things is
@@ -3024,7 +3086,7 @@ document.addEventListener('keydown', (event) => {
 
 /** dayValue is a forecast day as the `yyyy-mm-dd` a date input takes. */
 function dayValue(cell) {
-  const at = clock();
+  const at = localToday(clock());
   const days = forecastDays().findIndex((c) => c.key === cell.key);
   at.setUTCDate(at.getUTCDate() + Math.max(days, 0));
   return at.toISOString().slice(0, 10);
