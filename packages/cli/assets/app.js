@@ -490,8 +490,8 @@ const PERSPECTIVES = [
     // `forecastOrder`), so an item that has only a defer date has to be in
     // it, or the default order is over a list the date is missing from.
     key: 'due', label: 'Forecast', tint: 'salmon', glyph: '◷', wide: true,
-    pick: (t) => t.kind === 'task' && isOpen(t) && (t.due_at || t.defer_at) && !forecastHides(t),
-    badge: (items) => items.filter(forecastBadgeMatches).length,
+    pick: forecastPicks,
+    badge: () => forecastBadgeCount(),
   },
   {
     key: 'inbox', label: 'Inbox', tint: 'slate', glyph: '▤', wide: true,
@@ -697,7 +697,7 @@ function setForecastBlocked(mode) {
  */
 
 /** @type {BadgeRule} */
-const forecastBadgeDefault = { mode: 'all', skipBlocked: false, dueOn: true, dueDays: 0, defer: 'any', flagged: false };
+const forecastBadgeDefault = { mode: 'all', skipBlocked: true, dueOn: true, dueDays: 0, defer: 'any', flagged: false };
 const badgeDueDays = [0, 1, 2, 3, 7];
 const badgeDeferStates = ['any', 'deferred', 'started'];
 
@@ -708,7 +708,7 @@ function loadForecastBadge() {
     if (!raw || typeof raw !== 'object') return { ...forecastBadgeDefault };
     return {
       mode: raw.mode === 'any' ? 'any' : 'all',
-      skipBlocked: raw.skipBlocked === true,
+      skipBlocked: typeof raw.skipBlocked === 'boolean' ? raw.skipBlocked : forecastBadgeDefault.skipBlocked,
       dueOn: typeof raw.dueOn === 'boolean' ? raw.dueOn : forecastBadgeDefault.dueOn,
       dueDays: badgeDueDays.includes(raw.dueDays) ? raw.dueDays : forecastBadgeDefault.dueDays,
       defer: badgeDeferStates.includes(raw.defer) ? raw.defer : forecastBadgeDefault.defer,
@@ -743,11 +743,24 @@ function forecastBadgeMatches(t) {
   return r.mode === 'any' ? checks.some(Boolean) : checks.every(Boolean);
 }
 
+// The Forecast's rows, and the number counted from them. The Forecast tile
+// and the icon on the home screen both come through here, so they cannot
+// disagree: the icon is the tile's number, nothing wider.
+/** @param {Task} t */
+function forecastPicks(t) {
+  return t.kind === 'task' && isOpen(t) && Boolean(t.due_at || t.defer_at) && !forecastHides(t);
+}
+
+function forecastBadgeCount() {
+  return state.tasks.filter(forecastPicks).filter(forecastBadgeMatches).length;
+}
+
 /** @param {Partial<BadgeRule>} patch */
 function setForecastBadge(patch) {
   forecastBadge = { ...forecastBadge, ...patch };
   remember(ForecastBadgeKey, JSON.stringify(forecastBadge));
   render();
+  updateBadge();
 }
 
 function toggleProjectDone() {
@@ -1359,10 +1372,8 @@ document.addEventListener('touchcancel', () => {
 
 // --- the badge on the app icon ------------------------------------------
 
-// What a glance at the home screen should say: how many tasks have a due or
-// defer date that has arrived (`arrived`). That is wider than the number on
-// the Forecast tile, which counts only what is late — the icon is "look at
-// the app", the tile is "this is overdue".
+// What a glance at the home screen should say: the number on the Forecast
+// tile, from the same function under the same badge settings.
 //
 // Both calls are guarded and both are allowed to fail. The API does not
 // exist in every browser, and on iOS it exists but answers only an installed
@@ -1371,7 +1382,7 @@ document.addEventListener('touchcancel', () => {
 // the list is on screen either way.
 function updateBadge() {
   if (!('setAppBadge' in navigator)) return;
-  const n = state.tasks.filter(arrived).length;
+  const n = forecastBadgeCount();
   const call = n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge();
   if (call && typeof call.catch === 'function') call.catch(() => {});
 }
