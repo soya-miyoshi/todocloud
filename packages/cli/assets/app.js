@@ -102,14 +102,20 @@ function remember(key, value) {
   }
 }
 
-// Whether the Projects and Tags lists under their tiles are open. A
+// Whether the Projects, Tags and Events lists under their tiles are open. A
 // preference of this browser, like which folders are open: Projects starts
 // open, Tags starts shut.
 const TileOpenKey = 'todocloud.tile.open.';
-const tileOpenDefault = { projects: true, tags: false };
+// Every tile with `rows` unfolds its list under itself rather than opening
+// one in the outline.
+/** @param {{rows?: string, key: string}} spec */
+const unfolds = (spec) => Boolean(spec.rows);
+
+const tileOpenDefault = { projects: true, tags: false, events: false };
 const tileOpen = {
   projects: remembered(TileOpenKey + 'projects', tileOpenDefault.projects ? '1' : '0') === '1',
   tags: remembered(TileOpenKey + 'tags', tileOpenDefault.tags ? '1' : '0') === '1',
+  events: remembered(TileOpenKey + 'events', tileOpenDefault.events ? '1' : '0') === '1',
 };
 
 // Vim-style navigation of the sidebar (see `sideKeys`). `sideMode` is whether
@@ -1501,13 +1507,13 @@ function renderHome() {
       // the outline is the one pane whose contents change with every click,
       // and a list of projects that turned into a list of tasks under the
       // pointer was the hardest thing in it to aim at.
-      onclick: spec.rows
+      onclick: unfolds(spec)
         ? () => toggleTile(spec.key)
         : () => select({ kind: spec.key, key: spec.key === 'due' ? 'today' : '' }),
     });
     tile.style.setProperty('--tint', `var(--${spec.tint})`);
     tile.setAttribute('aria-current', view.kind === spec.key || (spec.key === 'projects' && view.kind === 'project') ? 'true' : 'false');
-    if (spec.rows) tile.setAttribute('aria-expanded', tileOpen[spec.key] ? 'true' : 'false');
+    if (unfolds(spec)) tile.setAttribute('aria-expanded', tileOpen[spec.key] ? 'true' : 'false');
     // The square carries the count for a perspective that is a queue of work
     // and the perspective's own glyph for one that is a way into the tree —
     // which is what OmniFocus shows, numbers on Forecast, Inbox, Flagged and
@@ -1525,8 +1531,8 @@ function renderHome() {
     if (spec.key === 'due') cell.append(forecastStrip());
     // The list sits directly under its own tile, so opening Projects shows
     // the projects where the word Projects is.
-    if (spec.rows && tileOpen[spec.key]) {
-      cell.append(el('ul', { className: 'rows tile-list' }, spec.rows === 'tree' ? treeRows() : tagRows()));
+    if (unfolds(spec) && tileOpen[spec.key]) {
+      cell.append(el('ul', { className: 'rows tile-list' }, spec.rows === 'tree' ? treeRows() : spec.rows === 'events' ? sidebarEventRows() : tagRows()));
     }
     return cell;
   }));
@@ -1955,8 +1961,8 @@ function eventHeading(text) {
 }
 
 // Whether the Events list also shows what occurred or was cancelled. Off by
-// default: the list is for what is still to come, and the occurred ones are
-// one tap away. This browser's, like the other list preferences.
+// default: the list is for what is still to come. This browser's, like the
+// other list preferences.
 const EventsShowOccurredKey = 'tdo.events.occurred';
 let eventsShowOccurred = remembered(EventsShowOccurredKey, '') === 'shown';
 
@@ -1970,13 +1976,12 @@ function setEventsShowOccurred(on) {
 // eventRows is the Events perspective: what is being waited for, then — when
 // `eventsShowOccurred` is on, under their own caption so the list stays about
 // what is still to come — the events that occurred or were cancelled, each
-// with its undo. When it is off, a row at the bottom says how many are
-// hidden and turns them on.
+// with its undo. Whether they are listed is a setting, like which projects
+// are.
 function eventRows() {
   const all = state.events || [];
   const pending = all.filter((e) => e.status === 'pending');
-  const finished = all.filter((e) => e.status !== 'pending');
-  const done = (eventsShowOccurred ? finished : [])
+  const done = (eventsShowOccurred ? all.filter((e) => e.status !== 'pending') : [])
     .sort((a, b) => (b.occurred_at || b.updated_at || '').localeCompare(a.occurred_at || a.updated_at || ''));
   const rows = [];
   if (pending.length === 0) {
@@ -1988,14 +1993,23 @@ function eventRows() {
   if (done.length) {
     rows.push(eventHeading('Occurred'), ...done.map((e) => eventRow(e, true)));
   }
-  if (finished.length) {
-    rows.push(el('li', { className: 'group-head' }, [el('button', {
-      type: 'button',
-      className: 'disclose',
-      textContent: eventsShowOccurred ? 'Hide occurred' : `Show occurred (${finished.length})`,
-      onclick: () => setEventsShowOccurred(!eventsShowOccurred),
-    })]));
-  }
+  return rows;
+}
+
+// sidebarEventRows is the same list under the Events tile, as plain rows like
+// the Projects list beside it: a name and how many items wait for it, and a tap
+// opens the event in the inspector. There is no circle here on purpose — the
+// sidebar is for finding things, and that an event occurred is said on the
+// event itself, where the Occurred button is.
+function sidebarEventRows() {
+  const all = state.events || [];
+  const shown = eventsShowOccurred ? all : all.filter((e) => e.status === 'pending');
+  const rows = shown.map((e) => navRow(
+    e.title,
+    (e.waiting || []).length || null,
+    selected === e.id,
+    () => selectItem(e.id),
+    { held: e.status !== 'pending', mark: el('span', { textContent: '\u25f7' }), id: e.id }));
   return rows;
 }
 
@@ -2198,7 +2212,9 @@ function renderWeek() {
     type: 'button',
     className: 'seg',
     textContent: 'All',
-    onclick: () => select({ kind: 'due', key: 'all' }),
+    // A second press goes back to today: the strip's days are the way to
+    // another day, and nothing else undid this one.
+    onclick: () => select({ kind: 'due', key: view.key === 'all' ? 'today' : 'all' }),
   });
   all.setAttribute('aria-pressed', view.key === 'all' ? 'true' : 'false');
   row.append(all);
@@ -3205,8 +3221,12 @@ eventForm.addEventListener('change', () => {
 });
 // Enter in the title commits it, as in the item's form: a title is one line of
 // text whatever it is drawn in.
+//
+// Not while an input method is composing: the Enter that accepts a conversion
+// is the IME's, and blurring on it ends the composition early, so the text is
+// committed and then inserted a second time.
 eventForm.elements.title.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
+  if (event.key === 'Enter' && !event.isComposing) {
     event.preventDefault();
     /** @type {HTMLElement} */ (event.target).blur();
   }
@@ -3557,8 +3577,8 @@ function sideKeys(event) {
   const t = cur.dataset.id ? byID.get(cur.dataset.id) : undefined;
   const isTile = cur.classList.contains('tile');
   const spec = isTile ? specOf(cur.dataset.key || '') : undefined;
-  const folds = spec ? Boolean(spec.rows) : (t !== undefined && t.kind === 'project');
-  const open = spec ? Boolean(spec.rows && tileOpen[spec.key]) : (t !== undefined && expanded.has(t.id));
+  const folds = spec ? unfolds(spec) : (t !== undefined && t.kind === 'project');
+  const open = spec ? Boolean(unfolds(spec) && tileOpen[spec.key]) : (t !== undefined && expanded.has(t.id));
   switch (event.key) {
     case 'j':
     case 'ArrowDown':

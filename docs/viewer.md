@@ -23,17 +23,20 @@ knowing:
   already late.
 - **Events are there too.** An event is something you are waiting for (a
   reply, a delivery); `tdo event` makes them. The *Events* tile, above Review,
-  lists what is pending; the ones that occurred stay out of it until *Show
-  occurred* (or the Events section of the settings page) turns them on, and
-  then they sit under their own caption. The settings page also has *Count
-  blocked tasks in the calendar*, which decides whether the week's day
-  numbers (and the day each one opens) include tasks that are waiting on
-  something. and a project's own view lists a project's own view lists the events that belong to it — filed there, or waited for by one of its tasks, even after they occurred — above its tasks; in the sidebar's Projects list, a project that is open shows them (marked ◷, with how many items wait for each) before its tasks.
+  unfolds its list under itself like Projects: what is pending, and the ones
+  that occurred only when the Events section of the settings page says so. A
+  project's own view lists the events that belong to it — filed there, or
+  waited for by one of its tasks, even after they occurred — above its tasks;
+  in the sidebar's Projects list, a project that is open shows them (marked ◷,
+  with how many items wait for each) before its tasks. The settings page also
+  has *Count blocked tasks in the calendar*, which decides whether the week's
+  day numbers (and the day each one opens) include tasks that are waiting on
+  something.
   Tapping a row opens the event in the inspector — its full title, note,
   expected date, project and the items waiting for it, all editable except the
-  waiting items — and the circle on a row, or the button there, says it
-  occurred. The circle is a toggle, so tapping the wrong one is undone by
-  tapping it again; the waiting items are released and held again with it, and
+  waiting items — and the button there says it occurred (the Events
+  list in the outline has a circle on each row as well). It is a toggle, so
+  tapping the wrong one is undone by tapping it again; the waiting items are released and held again with it, and
   the page says which. An item waiting for an event says so in its inspector.
   Making an event, and choosing what waits for it, stay with `tdo event`.
 - It listens on `127.0.0.1`. `tdo serve --addr 0.0.0.0` makes it reachable
