@@ -206,6 +206,20 @@ body {
 }
 
 #sidebar { width: var(--sidebar-w, 208px); flex: none; border-right: 1px solid var(--edge); background: var(--bg); }
+/* Home's list starts at the navigation bar's rule. The pane body's top
+   padding is for a list that wants air under the bar; here it put 10px
+   between the rule and the Forecast tile, which is also what left the week
+   under the tile 10px lower than the same week on the Forecast screen. */
+#sidebar .pane-body { padding-top: 0; }
+
+/* One background per screen. On a phone Home is a screen like the outline
+   and the inspector, so it takes their colour; it was the colour behind the
+   panes, which is black in the dark palette and made walking from Home into
+   a list look like changing apps. Beside the other panes the sidebar keeps
+   the darker column, and its own bars go with it rather than staying the
+   panel's lighter strip. */
+@media (max-width: 859px) { #sidebar { background: var(--panel); } }
+@media (min-width: 860px) { #sidebar .navbar, #sidebar .toolbar { background: var(--bg); } }
 #list { flex: 1; min-width: 0; }
 /* The inspector's width is a preference, not a constant: app.js cycles
    `data-inspector` on the root and remembers it, and the three steps are
@@ -347,7 +361,6 @@ input, textarea, select {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
-  border-top: 1px solid var(--hair);
 }
 
 .tiles > li { border-bottom: 1px solid var(--hair); min-width: 0; }
@@ -374,7 +387,11 @@ input, textarea, select {
   text-align: left;
 }
 .tile:hover .name { text-decoration: underline; }
-.tile[aria-current="true"] { background: var(--select); }
+/* Which perspective is open is only worth marking where the list stays on
+   screen beside the outline (see the wide layout below). On a phone Home is
+   a menu you walk out of, and a tinted band on the tile would sit directly
+   over the selected day of the week under it, the two merging into one
+   purple block. */
 
 /* The square holds the count for a perspective that is a queue and the
    perspective's glyph for one that is a way in. Both are white on the tint,
@@ -409,9 +426,10 @@ input, textarea, select {
 
 /* The week under Forecast on Home. It is the same seven cells the Forecast
    screen draws — same class, same builder — with only the padding that puts
-   it under the tile instead of under the navigation bar. A second set of
-   rules here is how the two pictures would start disagreeing. */
-.forecast { padding: 0 12px 12px; }
+   it under the tile instead of under the navigation bar. The gap below is a
+   margin and not padding, so the box is the size the Forecast screen draws.
+   A second set of rules here is how the two pictures would start disagreeing. */
+.forecast { margin-bottom: 12px; }
 
 /* In a wide window the sidebar is a column, not a phone's Home screen, and
    OmniFocus lists its perspectives there rather than tiling them. One
@@ -424,6 +442,7 @@ input, textarea, select {
   .tiles > li.col1 { border-right: 0; }
   .tile { min-height: 36px; padding: 4px 8px; border-radius: 8px; gap: 9px; }
   .tile:hover { background: var(--select); }
+  .tile[aria-current="true"] { background: var(--select); }
   .tile:hover .name { text-decoration: none; }
   .tile .glyph { width: 22px; height: 22px; border-radius: 6px; font-size: 12px; }
   .tile .name { font-size: 14px; font-weight: 500; }
@@ -744,7 +763,13 @@ input, textarea, select {
 /* The day being read. It is a filled tile rather than an underline because
    on a phone this row is the navigation, and the thing that says where you
    are has to survive being looked at through a thumb. */
-.week .day[aria-current="true"] { background: var(--select); }
+.week .day[aria-current="true"] {
+  background: var(--select);
+  /* A ring as well as a fill: the fill alone is the same tint as every other
+     selected row and, in the dark palette, close to the bar above it. */
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.week .day.late[aria-current="true"] { box-shadow: inset 0 0 0 1.5px var(--accent), inset 0 -2px 0 var(--over); }
 .week .day[aria-current="true"] .when,
 .week .day[aria-current="true"] .date { color: var(--accent); font-weight: 600; }
 
@@ -1336,3 +1361,21 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 ul.tile-list { list-style: none; margin: 0; padding: 4px 0; }
 
 #sidebar .tile:focus-visible, #sidebar .nav-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* --- Settings, a page ----------------------------------------------------
+   Not a pane of the three: it takes the whole window on either layout, and
+   `data-pane="settings"` is what puts it there. */
+#prefs-page { display: none; flex-direction: column; min-height: 0; background: var(--panel); flex: 1; }
+body[data-pane="settings"] #fab-wrap { display: none; }
+body[data-pane="settings"] #sidebar,
+body[data-pane="settings"] #list,
+body[data-pane="settings"] #inspector { display: none; }
+body[data-pane="settings"] #prefs-page { display: flex; }
+#prefs-page .navbar { background: var(--panel); }
+#prefs-page button.back { display: flex; }
+.prefs { display: grid; gap: 14px; max-width: 560px; width: 100%; margin: 0 auto; }
+.prefs > section { background: var(--raised); border: 1px solid var(--hair); border-radius: var(--radius); }
+.prefs h3 { margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); }
+.prefs label.check select { width: auto; }
+.prefs .actions button { font: inherit; }
+.prefs .actions { border: 0; margin: 0; padding: 0; }

@@ -479,7 +479,7 @@ const PERSPECTIVES = [
     // it, or the default order is over a list the date is missing from.
     key: 'due', label: 'Forecast', tint: 'salmon', glyph: '◷', wide: true,
     pick: (t) => t.kind === 'task' && isOpen(t) && (t.due_at || t.defer_at),
-    badge: (items) => items.filter(landed).length,
+    badge: (items) => items.filter(forecastBadgeMatches).length,
   },
   {
     key: 'inbox', label: 'Inbox', tint: 'slate', glyph: '▤', wide: true,
@@ -603,6 +603,101 @@ let forecastDoneShown = remembered(ForecastDoneKey, '') === 'shown';
 function toggleForecastDone() {
   forecastDoneShown = !forecastDoneShown;
   remember(ForecastDoneKey, forecastDoneShown ? 'shown' : 'hidden');
+  render();
+}
+
+// Which projects the Projects list shows, by status.
+//
+// A different question from `projectDoneShown` below, which is about the
+// completed actions inside one project. The list is where you pick what to
+// work on, so it starts with the projects that are still open (active and on
+// hold); a finished or dropped one is a switch away. Remembered per browser
+// like the rest.
+const ProjectsShowKey = 'tdo.projects.show';
+const projectStatuses = ['active', 'on_hold', 'done', 'dropped'];
+
+/** @returns {Record<string, boolean>} */
+function loadProjectsShow() {
+  const shown = { active: true, on_hold: true, done: false, dropped: false };
+  // The earlier setting was one switch for completed projects.
+  if (remembered('tdo.projects.completed', '') === 'shown') shown.done = true;
+  try {
+    const raw = JSON.parse(remembered(ProjectsShowKey, '') || 'null');
+    if (raw && typeof raw === 'object') {
+      for (const k of projectStatuses) if (typeof raw[k] === 'boolean') shown[k] = raw[k];
+    }
+  } catch { /* keep the defaults */ }
+  return shown;
+}
+
+let projectsShow = loadProjectsShow();
+
+/** @param {string} status @param {boolean} on */
+function setProjectsShow(status, on) {
+  projectsShow = { ...projectsShow, [status]: on };
+  remember(ProjectsShowKey, JSON.stringify(projectsShow));
+  render();
+}
+
+// What the number on the Forecast tile counts.
+//
+// The number was fixed to one reading of "needs a look": due today or
+// earlier (`landed`), which is still the default. Each part of the rule is a
+// setting now, combined with AND or OR; with none switched on the number is
+// the whole Forecast.
+//
+// This browser's, like the other preferences: what the badge counts is how
+// the list is read here, not a fact about the tasks.
+const ForecastBadgeKey = 'tdo.badge.forecast';
+
+/**
+ * @typedef {{mode: 'all' | 'any', dueOn: boolean, dueDays: number, defer: 'any' | 'deferred' | 'available', flagged: boolean}} BadgeRule
+ */
+
+/** @type {BadgeRule} */
+const forecastBadgeDefault = { mode: 'all', dueOn: true, dueDays: 0, defer: 'any', flagged: false };
+const badgeDueDays = [0, 1, 2, 3, 7];
+const badgeDeferStates = ['any', 'deferred', 'available'];
+
+/** @returns {BadgeRule} */
+function loadForecastBadge() {
+  try {
+    const raw = JSON.parse(remembered(ForecastBadgeKey, '') || 'null');
+    if (!raw || typeof raw !== 'object') return { ...forecastBadgeDefault };
+    return {
+      mode: raw.mode === 'any' ? 'any' : 'all',
+      dueOn: typeof raw.dueOn === 'boolean' ? raw.dueOn : forecastBadgeDefault.dueOn,
+      dueDays: badgeDueDays.includes(raw.dueDays) ? raw.dueDays : forecastBadgeDefault.dueDays,
+      defer: badgeDeferStates.includes(raw.defer) ? raw.defer : forecastBadgeDefault.defer,
+      flagged: typeof raw.flagged === 'boolean' ? raw.flagged : forecastBadgeDefault.flagged,
+    };
+  } catch {
+    return { ...forecastBadgeDefault };
+  }
+}
+
+let forecastBadge = loadForecastBadge();
+
+// Due within N days counts what is overdue as well. Deferred is a defer date
+// still ahead of us; a task with no defer date is available.
+function forecastBadgeMatches(t) {
+  const r = forecastBadge;
+  const deferred = Boolean(t.defer_at) && !passed(t.defer_at);
+  // Only the conditions that are switched on take part. None on is the whole
+  // Forecast, whichever way they are combined.
+  const checks = [];
+  if (r.dueOn) checks.push(Boolean(t.due_at) && calendarDays(t.due_at) <= r.dueDays);
+  if (r.defer === 'deferred') checks.push(deferred);
+  if (r.defer === 'available') checks.push(!deferred);
+  if (r.flagged) checks.push(Boolean(t.flagged));
+  if (checks.length === 0) return true;
+  return r.mode === 'any' ? checks.some(Boolean) : checks.every(Boolean);
+}
+
+/** @param {Partial<BadgeRule>} patch */
+function setForecastBadge(patch) {
+  forecastBadge = { ...forecastBadge, ...patch };
+  remember(ForecastBadgeKey, JSON.stringify(forecastBadge));
   render();
 }
 
@@ -787,6 +882,7 @@ async function openSaved(name) {
 // three are on screen and this attribute is ignored.
 function showPane(name) {
   document.body.dataset.pane = name;
+  if (name === 'settings') fillPrefs();
   if (!restoring) keepLocation(name);
 }
 
@@ -853,6 +949,7 @@ function selectItem(id) {
 //
 //     /                      the Forecast, today — where the app opens
 //     /home                  the perspectives
+//     /settings              the settings page
 //     /forecast/d3           one day of the week
 //     /forecast/all          the whole Forecast as one list
 //     /inbox /flagged /next /projects /tags /review /blocked /all /done
@@ -874,6 +971,7 @@ function selectItem(id) {
 // segment.
 const rootHash = '#/';           // the Forecast, today
 const homeHash = '#/home';
+const settingsHash = '#/settings';
 
 // The word each kind of view is called in an address. A perspective that is
 // not listed is called by its own key (`/inbox`, `/flagged`, …), which is
@@ -895,6 +993,7 @@ function pathFor(v) {
 
 function hashFor(pane) {
   if (pane === 'home') return homeHash;
+  if (pane === 'settings') return settingsHash;
   const at = pathFor(view);
   if (pane !== 'inspector' || !selected) return at;
   return `${at === rootHash ? '#' : at}/item/${encodeURIComponent(selected)}`;
@@ -947,7 +1046,7 @@ function keepLocation(pane) {
 // Home is depth 0 and the outline is 1, which is still true now that the app
 // opens on the outline: Home is the screen the back gesture arrives at, and
 // boot puts it under the first entry (see `adoptLocation`).
-const PANE_DEPTH = { home: 0, outline: 1, inspector: 2 };
+const PANE_DEPTH = { home: 0, outline: 1, inspector: 2, settings: 1 };
 const depthOfPane = (pane) => PANE_DEPTH[pane] ?? 0;
 let lastPane = 'home';
 
@@ -961,6 +1060,7 @@ function applyLocation() {
   // corrected to say so. An address bar that still names somewhere the app
   // is not is what makes the next back gesture surprising.
   if (!where) return goRoot();
+  if (where.pane === 'settings') return showRestored('settings');
   // `/home` is the one address with no view on it; the checker is as
   // entitled to know that as the reader is.
   if (where.pane === 'home' || where.view === undefined) return showRestored('home');
@@ -997,6 +1097,7 @@ function parseHash(hash) {
   if (parts.length > 2) return undefined;
   if (word === '') return { pane: 'outline', view: { kind: 'due', key: 'today' }, id };
   if (word === 'home') return parts.length === 1 ? { pane: 'home' } : undefined;
+  if (word === 'settings') return parts.length === 1 ? { pane: 'settings' } : undefined;
   if (word === 'forecast') {
     if (key === '' || key === 'today') return { pane: 'outline', view: { kind: 'due', key: 'today' }, id };
     if (key === 'all' || forecastCell(key)) return { pane: 'outline', view: { kind: 'due', key }, id };
@@ -1606,13 +1707,15 @@ function blockedTitle(blocked) {
 }
 
 // treeRows is the Projects list in the sidebar: every open project, flat —
+// filtered by status (`projectsShow`); finished ones are struck through —
 // folders are not shown, because nobody here files projects into them — and
 // under a project that is expanded, all of its tasks at every depth, so the
 // whole hierarchy of a project is readable without opening it. A project
 // opens (expands) when it is clicked; the triangle folds it again.
 function treeRows() {
   const rows = [];
-  for (const p of state.tasks.filter((t) => t.kind === 'project' && isOpen(t))) {
+  const listed = (t) => t.kind === 'project' && projectsShow[projectStatuses.includes(t.status) ? t.status : 'active'];
+  for (const p of state.tasks.filter(listed)) {
     const kids = state.tasks.filter((x) => x.id !== p.id && x.kind === 'task' && isOpen(x) && inSubtree(x, p.id));
     const open = expanded.has(p.id);
     const row = navRow(
@@ -1624,7 +1727,7 @@ function treeRows() {
       // name starts where every other row's does and the tasks under it are
       // the only thing indented.
       () => (view.kind === 'project' && view.key === p.id ? toggleExpanded(p.id) : openContainer(p)),
-      { id: p.id });
+      { id: p.id, held: isClosed(p) });
     // The button, not the `li`: a drag that started on the triangle would be
     // a drag of the control rather than of the project.
     draggable(row.querySelector('.nav-row'), p, p);
@@ -2910,11 +3013,23 @@ $('#others').addEventListener('dblclick', (event) => {
 
 // --- navigation ---------------------------------------------------------
 
-// The chevrons are `history.back()` and not a pane change, so that they
-// unwind the same stack the swipe and the system back button unwind. A
+// The inspector's chevron is `history.back()` and not a pane change, so that
+// it unwinds the same stack the swipe and the system back button unwind. A
 // viewer opened straight onto a deep hash has an entry behind it too: boot
 // puts Home in the history first (see the end of this file).
-$('#back').onclick = () => history.back();
+//
+// The outline's chevron is labelled Home and goes to Home. It used to be
+// `history.back()` as well, which is only Home when Home was the entry just
+// before: after Home → Forecast → Inbox it landed on the Forecast, a button
+// that said one place and went to another. Home is pushed as an entry of its
+// own, so the swipe and the system back still walk back through what was
+// opened.
+$('#back').onclick = () => {
+  try {
+    history.pushState(null, '', homeHash);
+  } catch { /* a history that cannot be written still shows Home */ }
+  showRestored('home');
+};
 $('#inspector-back').onclick = () => history.back();
 $('#to-inspector').onclick = () => {
   if (!selected) {
@@ -3389,32 +3504,53 @@ if (sidebarArrow) {
 // only ever read while it is open has no reason to hold a second copy of
 // anything, and that is also why each control writes through the same
 // setter those other controls call.
-const prefsEditor = $dialog('#prefs-editor');
-
-function openPrefs() {
+function fillPrefs() {
   $select('#prefs-theme').value = theme;
   $select('#prefs-inspector').value = inspectorWidth;
   $select('#prefs-sidebar').value = sidebarWidth;
   $select('#prefs-forecast').value = forecastOrder;
   $input('#prefs-project-done').checked = projectDoneShown;
   $input('#prefs-forecast-done').checked = forecastDoneShown;
-  prefsEditor.showModal();
+  for (const k of projectStatuses) $input(`#prefs-projects-${k}`).checked = projectsShow[k] === true;
+  $select('#prefs-badge-mode').value = forecastBadge.mode;
+  $input('#prefs-badge-due').checked = forecastBadge.dueOn;
+  $select('#prefs-badge-days').value = String(forecastBadge.dueDays);
+  $select('#prefs-badge-days').disabled = !forecastBadge.dueOn;
+  $select('#prefs-badge-defer').value = forecastBadge.defer;
+  $input('#prefs-badge-flagged').checked = forecastBadge.flagged;
 }
 
-if (prefsEditor) {
-  $('#prefs').onclick = openPrefs;
-  $('#prefs-close').onclick = () => prefsEditor.close();
-  $select('#prefs-theme').onchange = (event) => setTheme(/** @type {HTMLInputElement} */ (event.target).value);
+if (maybe('#prefs')) {
+  $('#prefs').onclick = () => showPane('settings');
+  $('#prefs-close').onclick = () => history.back();
+  $select('#prefs-badge-mode').onchange = (event) =>
+    setForecastBadge({ mode: /** @type {HTMLSelectElement} */ (event.target).value === 'any' ? 'any' : 'all' });
+$select('#prefs-theme').onchange = (event) => setTheme(/** @type {HTMLInputElement} */ (event.target).value);
   $select('#prefs-sidebar').onchange = (event) => setSidebarWidth(/** @type {HTMLInputElement} */ (event.target).value);
   $select('#prefs-inspector').onchange = (event) => setInspectorWidth(/** @type {HTMLInputElement} */ (event.target).value);
   $select('#prefs-forecast').onchange = (event) => setForecastOrder(/** @type {HTMLInputElement} */ (event.target).value);
   $input('#prefs-project-done').onchange = () => toggleProjectDone();
   $input('#prefs-forecast-done').onchange = () => toggleForecastDone();
+  for (const k of projectStatuses) {
+    $input(`#prefs-projects-${k}`).onchange = (event) =>
+      setProjectsShow(k, /** @type {HTMLInputElement} */ (event.target).checked);
+  }
+  $input('#prefs-badge-due').onchange = (event) => {
+    const on = /** @type {HTMLInputElement} */ (event.target).checked;
+    $select('#prefs-badge-days').disabled = !on;
+    setForecastBadge({ dueOn: on });
+  };
+  $select('#prefs-badge-days').onchange = (event) =>
+    setForecastBadge({ dueDays: Number(/** @type {HTMLSelectElement} */ (event.target).value) });
+  $select('#prefs-badge-defer').onchange = (event) => {
+    const value = /** @type {HTMLSelectElement} */ (event.target).value;
+    if (value === 'any' || value === 'deferred' || value === 'available') setForecastBadge({ defer: value });
+  };
+  $input('#prefs-badge-flagged').onchange = (event) =>
+    setForecastBadge({ flagged: /** @type {HTMLInputElement} */ (event.target).checked });
   // Where the database is is a question about the store and not about this
-  // browser, so it keeps the dialog it had. One modal at a time: the gear is
-  // the way to it now, so it closes behind the one it opens.
+  // browser, so it keeps the dialog it had.
   $('#prefs-server').onclick = () => {
-    prefsEditor.close();
     openSettings().catch((err) => say(messageOf(err), true));
   };
 }

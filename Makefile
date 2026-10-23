@@ -1,7 +1,7 @@
 BINARY := tdo
 
 .PHONY: build install uninstall test typecheck lint probe scan scan-history \
-        hooks clean check binary icons
+        hooks clean check binary icons serve dev-web
 
 build: ## Type-check and build the TypeScript workspace
 	npm run build
@@ -19,6 +19,13 @@ probe: ## Load the viewer in a real browser and report anything it throws
 	@# Needs a browser, which is not a dependency of this project: it says so
 	@# and exits 0 when there is none. See the header of the script.
 	node scripts/probe-page.mjs
+
+serve: ## Run the viewer from source against YOUR real store and keychain (ARGS= for serve flags)
+	@# Not scripts/dev-web.sh: nothing is redirected, so this is the real data.
+	node --experimental-strip-types packages/cli/src/main.ts serve $(ARGS)
+
+dev-web: ## Run the viewer from source against a throwaway, seeded store
+	./scripts/dev-web.sh
 
 binary: ## Build the single executable into ./dist-bin (add ARGS=--all to cross-compile)
 	@# Needs the bun pinned in mise.toml; the script smoke-tests what it built.
