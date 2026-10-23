@@ -11,6 +11,7 @@ import {
   type Store,
   isNotFound,
 } from '@todocloud/core/store';
+import { type EventItem, type EventLink, eventFromJSON } from '@todocloud/core/store/event';
 import { Filter } from '@todocloud/core/store/filter';
 import {
   Fields,
@@ -112,7 +113,7 @@ const csvJSONColumns: ReadonlySet<string> = new Set([KeyRepeat, KeyReviewInterva
 export function exportCommand(a: App): Command {
   return {
     name: 'export',
-    usage: 'write every item to stdout for backup or for another provider',
+    usage: 'write every item, event and saved query to stdout for backup or for another provider',
     store: 'read',
     flags: {
       csv: { type: 'boolean', usage: 'write CSV instead of JSON' },
@@ -141,6 +142,11 @@ export function exportCommand(a: App): Command {
       // provider. Leaving the saved queries out of both would lose them
       // silently. Reading them is a pure read like the rest of export.
       const perspectives = await st.perspectives();
+      // Events and the links from the tasks that wait for them are part of
+      // the list for the same reason: a backup that dropped them would turn a
+      // task waiting for a reply into a task that is free to do.
+      const events = await st.events();
+      const links = await st.waits();
 
       if (ctx.bool('csv')) {
         // CSV is a task table: a saved query has no row in it, and inventing
@@ -149,6 +155,11 @@ export function exportCommand(a: App): Command {
         if (perspectives.length > 0) {
           a.out.hintf(
             `tdo: note: ${perspectives.length} saved perspective(s) are not in a CSV export; use the JSON form to back them up`,
+          );
+        }
+        if (events.length > 0) {
+          a.out.hintf(
+            `tdo: note: ${events.length} event(s) and the tasks waiting for them are not in a CSV export; use the JSON form to back them up`,
           );
         }
         writeCSV(a.out.out, tasks);
@@ -171,6 +182,9 @@ export function exportCommand(a: App): Command {
         count: tasks.length,
         perspectives: perspectives.map(perspectiveJSON),
         perspective_count: perspectives.length,
+        events: events.map((e) => e.toJSON()),
+        event_count: events.length,
+        waits: links.map((l) => ({ task_id: l.taskID, event_id: l.eventID })),
       });
     },
   };
@@ -236,7 +250,7 @@ function csvCell(raw: JSONValue | undefined): string {
 export function importCommand(a: App): Command {
   return {
     name: 'import',
-    usage: 'add tasks from a file written by `tdo export`',
+    usage: 'add tasks, events and saved queries from a file written by `tdo export`',
     argsUsage: '<file>',
     store: 'write',
     flags: {
@@ -269,8 +283,10 @@ export function importCommand(a: App): Command {
       // The whole file is checked before anything is written. An import file
       // is untrusted input, and rejecting it halfway through would leave the
       // store holding part of it with no record of which part.
-      prepareImport(decoded, newIDs);
+      const taskIDs = prepareImport(decoded, newIDs);
       preparePerspectives(file.perspectives, new Date());
+      const eventIDs = prepareEvents(file.events, newIDs, taskIDs);
+      const waits = prepareWaits(file.waits, taskIDs, eventIDs);
       // A child cannot be stored before its parent, because the store checks
       // the containment rules of §3.1 as it writes. The file's own order is
       // kept otherwise, so an export imports exactly as it was taken.
@@ -327,18 +343,76 @@ export function importCommand(a: App): Command {
         savedP++;
       }
 
+      // Events follow the same rule: an id that is taken is the same event.
+      let savedE = 0;
+      let skippedE = 0;
+      for (const e of file.events) {
+        let taken = true;
+        try {
+          await st.getEvent(e.id);
+        } catch (err) {
+          if (!isNotFound(err)) {
+            throw err;
+          }
+          taken = false;
+        }
+        if (taken) {
+          skippedE++;
+          continue;
+        }
+        await st.addEvent(e);
+        savedE++;
+      }
+
+      // The links come last, when both ends are in the store. A link is added
+      // to what a task already waits for and never replaces it, and one whose
+      // task or event is not in the store is dropped rather than refused: a
+      // partial restore is still a restore.
+      let linked = 0;
+      if (waits.length > 0) {
+        const have = new Map<string, string[]>();
+        for (const l of await st.waits()) {
+          have.set(l.taskID, [...(have.get(l.taskID) ?? []), l.eventID]);
+        }
+        const byTask = new Map<string, string[]>();
+        for (const l of waits) {
+          byTask.set(l.taskID, [...(byTask.get(l.taskID) ?? []), l.eventID]);
+        }
+        for (const [taskID, wanted] of byTask) {
+          const current = have.get(taskID) ?? [];
+          const fresh = wanted.filter((e, i) => wanted.indexOf(e) === i && !current.includes(e));
+          if (fresh.length === 0) {
+            continue;
+          }
+          try {
+            await st.setWaits(taskID, [...current, ...fresh]);
+            linked += fresh.length;
+          } catch (err) {
+            if (!isNotFound(err)) {
+              throw err;
+            }
+          }
+        }
+      }
+
       if (a.out.json) {
         a.out.emit({
           imported,
           skipped,
           perspectives_imported: savedP,
           perspectives_skipped: skippedP,
+          events_imported: savedE,
+          events_skipped: skippedE,
+          waits_imported: linked,
         });
         return;
       }
       a.out.printf(`imported ${imported} task(s), skipped ${skipped}\n`);
       if (savedP + skippedP > 0) {
         a.out.printf(`imported ${savedP} perspective(s), skipped ${skippedP}\n`);
+      }
+      if (savedE + skippedE > 0) {
+        a.out.printf(`imported ${savedE} event(s), skipped ${skippedE}, linked ${linked}\n`);
       }
     },
   };
@@ -349,7 +423,13 @@ export function importCommand(a: App): Command {
  * It throws a usage error naming the offending task, so a bad file is
  * rejected as a whole rather than applied up to the point where it breaks.
  */
-function prepareImport(tasks: readonly (Task | undefined)[], newIDs: boolean): void {
+function prepareImport(
+  tasks: readonly (Task | undefined)[],
+  newIDs: boolean,
+): Map<string, string> {
+  // Where each task's id was and is now, so that a link written against the
+  // old id still finds its task after --new-ids.
+  const moved = new Map<string, string>();
   for (let i = 0; i < tasks.length; i++) {
     const t = tasks[i];
     // A JSON null in the tasks array decodes to nothing. Reading a field off
@@ -364,6 +444,7 @@ function prepareImport(tasks: readonly (Task | undefined)[], newIDs: boolean): v
     // user can edit by hand or a program can generate, so a made-up id is
     // rejected rather than stored. --new-ids is the way in for data from
     // another tool.
+    const was = id.Normalize(t.id);
     if (newIDs) {
       t.id = id.New();
     } else {
@@ -379,6 +460,7 @@ function prepareImport(tasks: readonly (Task | undefined)[], newIDs: boolean): v
         ) as Error;
       }
     }
+    moved.set(was, t.id);
     const invalid = t.validate();
     if (invalid !== undefined) {
       throw exit.usagef(
@@ -386,6 +468,61 @@ function prepareImport(tasks: readonly (Task | undefined)[], newIDs: boolean): v
       ) as Error;
     }
   }
+  return moved;
+}
+
+/**
+ * prepareEvents validates every event before the first write, for the reason
+ * prepareImport does it for tasks, and returns where each id was and is now.
+ */
+function prepareEvents(
+  events: readonly EventItem[],
+  newIDs: boolean,
+  taskIDs: ReadonlyMap<string, string>,
+): Map<string, string> {
+  const moved = new Map<string, string>();
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i] as EventItem;
+    const was = id.Normalize(e.id);
+    if (newIDs) {
+      e.id = id.New();
+    } else {
+      e.id = was;
+      if (!id.Valid(e.id)) {
+        throw exit.usagef(
+          new Error(
+            `event ${i + 1} has the id ${JSON.stringify(e.id)}, which is not a ULID; re-run with --new-ids to assign fresh ids`,
+          ),
+        ) as Error;
+      }
+    }
+    // The project it belongs to follows the project's new id, as a link does.
+    if (e.projectID !== '') {
+      const project = id.Normalize(e.projectID);
+      e.projectID = taskIDs.get(project) ?? project;
+    }
+    const invalid = e.validate();
+    if (invalid !== undefined) {
+      throw exit.usagef(new Error(`event ${i + 1} (${e.id}): ${invalid.message}`)) as Error;
+    }
+    moved.set(was, e.id);
+  }
+  return moved;
+}
+
+/** prepareWaits maps the links of a file onto the ids the import will use. */
+function prepareWaits(
+  links: readonly EventLink[],
+  taskIDs: ReadonlyMap<string, string>,
+  eventIDs: ReadonlyMap<string, string>,
+): EventLink[] {
+  return links.map((l) => {
+    const task = id.Normalize(l.taskID);
+    const event = id.Normalize(l.eventID);
+    // A task or an event that is not in the file keeps its id: it may be in
+    // the store already, which is the case for a link imported on its own.
+    return { taskID: taskIDs.get(task) ?? task, eventID: eventIDs.get(event) ?? event };
+  });
 }
 
 /**
@@ -396,6 +533,8 @@ function prepareImport(tasks: readonly (Task | undefined)[], newIDs: boolean): v
 interface ImportFile {
   tasks: (Task | undefined)[];
   perspectives: Perspective[];
+  events: EventItem[];
+  waits: EventLink[];
 }
 
 /**
@@ -419,7 +558,7 @@ function decodeImport(data: string): ImportFile {
       } catch (err) {
         throw new Error(`read tasks: ${asError(err).message}`);
       }
-      return { tasks: readTasks(raw), perspectives: [] };
+      return { tasks: readTasks(raw), perspectives: [], events: [], waits: [] };
     }
     case '{': {
       let raw: unknown;
@@ -435,10 +574,12 @@ function decodeImport(data: string): ImportFile {
       return {
         tasks: readTasks(envelope['tasks']),
         perspectives: readPerspectives(envelope['perspectives']),
+        events: readEvents(envelope['events']),
+        waits: readWaits(envelope['waits']),
       };
     }
     default:
-      return { tasks: decodeCSV(trimmed), perspectives: [] };
+      return { tasks: decodeCSV(trimmed), perspectives: [], events: [], waits: [] };
   }
 }
 
@@ -456,6 +597,47 @@ function readTasks(raw: unknown): (Task | undefined)[] {
     } catch (err) {
       throw new Error(`read tasks: ${asError(err).message}`);
     }
+  });
+}
+
+/** readEvents turns the decoded array into events. */
+function readEvents(raw: unknown): EventItem[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error('read tasks: the `events` value is not an array');
+  }
+  return raw.map((entry, i) => {
+    try {
+      return eventFromJSON(entry);
+    } catch (err) {
+      throw exit.usagef(new Error(`event ${i + 1}: ${asError(err).message}`)) as Error;
+    }
+  });
+}
+
+/** readWaits turns the decoded array into links. */
+function readWaits(raw: unknown): EventLink[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error('read tasks: the `waits` value is not an array');
+  }
+  return raw.map((entry, i) => {
+    const o = entry as Record<string, unknown> | null;
+    if (
+      typeof o !== 'object' ||
+      o === null ||
+      typeof o['task_id'] !== 'string' ||
+      typeof o['event_id'] !== 'string'
+    ) {
+      throw exit.usagef(
+        new Error(`link ${i + 1} must be {"task_id": …, "event_id": …}`),
+      ) as Error;
+    }
+    return { taskID: o['task_id'], eventID: o['event_id'] };
   });
 }
 

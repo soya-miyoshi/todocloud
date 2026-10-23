@@ -704,6 +704,8 @@ input, textarea, select {
 .item.late { box-shadow: inset 3px 0 0 var(--over); }
 .item.quiet .title { color: var(--dim); }
 .item.dated .title { color: var(--ink); }
+.item.waiting .title, .item.waiting.dated .title { color: var(--faint); }
+.item.waiting { opacity: 0.6; }
 .item.closed .title { text-decoration: line-through; }
 
 .item .dates { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
@@ -1379,3 +1381,87 @@ body[data-pane="settings"] #prefs-page { display: flex; }
 .prefs label.check select { width: auto; }
 .prefs .actions button { font: inherit; }
 .prefs .actions { border: 0; margin: 0; padding: 0; }
+
+/* What an item waits for, in the inspector above its facts: a card per event.
+   The title is the first line and opens the event, the state and the one
+   button that changes it are the second, so a long title has the whole width
+   and nothing is squeezed beside it. An event that has occurred is struck
+   through, the way a finished project is in the list. */
+#waiting { margin: 14px 0 0; }
+#waiting h3 { margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); }
+.waits { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.wait {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--raised);
+}
+.wait-title {
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 500;
+  color: var(--ink);
+  text-align: left;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+button.wait-title:hover { color: var(--accent); }
+.wait.occurred .wait-title { color: var(--dim); text-decoration: line-through; }
+.wait-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wait-state {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hair);
+  color: var(--dim);
+}
+.wait.pending .wait-state { background: color-mix(in srgb, var(--soon) 22%, transparent); color: var(--ink); }
+.wait.occurred .wait-state { background: color-mix(in srgb, var(--mint) 22%, transparent); color: var(--ink); }
+.wait.cancelled .wait-state { background: color-mix(in srgb, var(--over) 20%, transparent); color: var(--ink); }
+.wait-occurred {
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.wait-occurred:hover { background: var(--select); }
+
+/* A caption above a group of rows in a list: "Waiting for", "Occurred", "Tasks"
+   in a project's view and in the Events list. Quiet, like the Home groups. */
+.group-head {
+  list-style: none;
+  padding: 10px 4px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--dim);
+}
+
+/* The event in the inspector: the same fields, a heading over what is waiting
+   for it, and the actions at the bottom. The rows that wait are buttons that
+   open the item. */
+#event-detail { display: grid; gap: 10px; }
+.event-state { margin: 0; font-size: 12px; color: var(--dim); }
+.event-heading { margin: 8px 0 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); }
+.event-waiting { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.event-waiting .none { color: var(--dim); font-size: 13px; }
+.event-waiting .linklike { text-align: left; border: 0; background: none; color: var(--accent); padding: 4px 0; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.event-waiting .linklike:hover { text-decoration: underline; }
+#event-detail .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+#event-detail .actions button { font: inherit; }
+#event-detail .actions #event-occurred { background: var(--accent); border-color: var(--accent); color: #fff; }

@@ -21,6 +21,17 @@ knowing:
   project on it. Long titles wrap rather than being cut, and where the browser
   allows it the icon carries a badge: how many tasks are due today or are
   already late.
+- **Events are there too.** An event is something you are waiting for (a
+  reply, a delivery); `tdo event` makes them. *Other Perspectives → Events*
+  lists what is pending, with the ones that occurred under their own caption,
+  and a project's own view lists the events that belong to it — filed there, or waited for by one of its tasks, even after they occurred — above its tasks; in the sidebar's Projects list, a project that is open shows them (marked ◷, with how many items wait for each) before its tasks.
+  Tapping a row opens the event in the inspector — its full title, note,
+  expected date, project and the items waiting for it, all editable except the
+  waiting items — and the circle on a row, or the button there, says it
+  occurred. The circle is a toggle, so tapping the wrong one is undone by
+  tapping it again; the waiting items are released and held again with it, and
+  the page says which. An item waiting for an event says so in its inspector.
+  Making an event, and choosing what waits for it, stay with `tdo event`.
 - It listens on `127.0.0.1`. `tdo serve --addr 0.0.0.0` makes it reachable
   from your network, and says so when you do — anyone who can load the page
   can edit the list.

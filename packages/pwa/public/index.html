@@ -24,7 +24,7 @@
      contents); a browser refuses the map and names the expected hash in the
      console, so the failure is loud, but it is a manual step and there is no
      tooling here to do it. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-aR1yFRhexpUnYUTtNZ6PIuInXsFKSWEr/AYKvbgZkjM='; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src https: http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-61lU8+7TOZRtwaSI4mEFkSa4zRuO7+SB+b/kOttlcSs='; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src https: http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'">
 
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="mobile-web-app-capable" content="yes">
@@ -58,6 +58,7 @@
     "@todocloud/core/store": "/core/src/store/store.js",
     "@todocloud/core/store/availability": "/core/src/store/availability.js",
     "@todocloud/core/store/completion": "/core/src/store/completion.js",
+    "@todocloud/core/store/event": "/core/src/store/event.js",
     "@todocloud/core/store/filter": "/core/src/store/filter.js",
     "@todocloud/core/store/schema": "/core/src/store/schema.js",
     "@todocloud/core/store/version": "/core/src/store/version.js",
@@ -220,6 +221,13 @@
             <input id="prefs-forecast-done" type="checkbox">
             Show completed tasks on a day
           </label>
+          <label>Blocked tasks
+            <select id="prefs-forecast-blocked">
+              <option value="dim">shown, dimmed</option>
+              <option value="hide">hidden</option>
+              <option value="normal">shown normally</option>
+            </select>
+          </label>
         </section>
 
         <section class="dialog-body">
@@ -251,6 +259,10 @@
           <label class="check">
             <input id="prefs-badge-flagged" type="checkbox">
             Flagged
+          </label>
+          <label class="check">
+            <input id="prefs-badge-skip-blocked" type="checkbox">
+            Never count blocked tasks
           </label>
         </section>
 
@@ -344,12 +356,41 @@
           <div id="field-rows"></div>
           <button type="button" id="field-add">Add field</button>
         </fieldset>
+        <!-- What the item waits for, apart from the facts: it is the first thing to
+             know about why it is not available, and each event wants a row of
+             its own that can hold a long title. -->
+        <section id="waiting" hidden>
+          <h3>Waiting for</h3>
+          <ul class="waits"></ul>
+        </section>
         <dl id="facts"></dl>
         <div class="actions">
           <button type="button" id="complete">Complete</button>
           <button type="button" id="remove" class="danger">Remove</button>
         </div>
       </form>
+
+      <!-- An event, in the same pane an item opens in. It is not a task, so it
+           has a form of its own: what it is, where it stands, what is waiting
+           for it, and the two things that change how it stands. The title is a
+           textarea for the reason the item's is: a title that does not fit
+           wraps instead of scrolling sideways. -->
+      <form id="event-detail" hidden>
+        <label>Title <textarea name="title" rows="1"></textarea></label>
+        <label>Note <textarea name="note" rows="3"></textarea></label>
+        <div class="pair">
+          <label>Expected <input name="expected_at" type="date"></label>
+          <label>Project <select name="project_id"></select></label>
+        </div>
+        <p id="event-state" class="event-state"></p>
+        <h3 class="event-heading">Waiting for it</h3>
+        <ul id="event-waiting" class="event-waiting"></ul>
+        <div class="actions">
+          <button type="button" id="event-occurred"></button>
+          <button type="button" id="event-cancel">Cancel event</button>
+        </div>
+      </form>
+
     </div>
   </aside>
 

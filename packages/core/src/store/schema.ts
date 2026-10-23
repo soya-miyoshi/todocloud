@@ -29,7 +29,7 @@
  * Bumping it without appending the matching Step throws when this module is
  * first loaded, which any test in the tree will catch.
  */
-export const Version = 2;
+export const Version = 3;
 
 /**
  * MetaKey is the key the version lives under in the meta table. Every
@@ -133,6 +133,32 @@ const initialDDL: readonly string[] = [
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 )`,
+  // An event is something waited for rather than done, so it is a row of its
+  // own with a state of its own (pending, occurred or cancelled) and none of
+  // a task's columns. task_events says which task waits for which event;
+  // like tags, the join is a real table so that "what waits for this?" is an
+  // index lookup and not a scan. Neither foreign key is relied on: a remote
+  // connection may have them switched off, so the providers delete the links
+  // themselves.
+  `CREATE TABLE IF NOT EXISTS events (
+  id          TEXT PRIMARY KEY NOT NULL,
+  title       TEXT NOT NULL,
+  project_id  TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  note        TEXT,
+  expected_at TEXT,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  occurred_at TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+)`,
+  `CREATE INDEX IF NOT EXISTS events_status_idx ON events(status)`,
+  `CREATE INDEX IF NOT EXISTS events_project_idx ON events(project_id)`,
+  `CREATE TABLE IF NOT EXISTS task_events (
+  task_id  TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  PRIMARY KEY (task_id, event_id)
+)`,
+  `CREATE INDEX IF NOT EXISTS task_events_event_idx ON task_events(event_id)`,
   `CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -228,6 +254,31 @@ const ladder: readonly Step[] = [
 	                  strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
 	                  strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 	             FROM task_tags GROUP BY tag_key`,
+    ],
+  },
+  {
+    to: 3,
+    name: 'add events, and the links from the tasks that wait for them',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS events (
+  id          TEXT PRIMARY KEY NOT NULL,
+  title       TEXT NOT NULL,
+  project_id  TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  note        TEXT,
+  expected_at TEXT,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  occurred_at TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+)`,
+      `CREATE INDEX IF NOT EXISTS events_status_idx ON events(status)`,
+      `CREATE INDEX IF NOT EXISTS events_project_idx ON events(project_id)`,
+      `CREATE TABLE IF NOT EXISTS task_events (
+  task_id  TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  PRIMARY KEY (task_id, event_id)
+)`,
+      `CREATE INDEX IF NOT EXISTS task_events_event_idx ON task_events(event_id)`,
     ],
   },
 ];

@@ -10,7 +10,7 @@
 import { nextReviewAt } from '../recur.ts';
 import { Availability } from '../store/store.ts';
 import type { JSONObject, JSONValue, Task } from '../task.ts';
-import { KeyAvailable, KeyBlockedBy, KeyNextReview, formatTime } from '../task.ts';
+import { KeyAvailable, KeyBlockedBy, KeyNextReview, KeyWaitsOn, formatTime } from '../task.ts';
 
 /**
  * NewTaskView pairs one task with the availability answer for it. asked is
@@ -59,6 +59,13 @@ export class TaskView {
         blocker = blockedBy(this.availability);
       }
       out[KeyBlockedBy] = blocker;
+      // The events it waits for, present only when there are some: an item
+      // that waits for nothing carries nothing. Both occurred and pending
+      // ones are listed, so a caller sees the whole dependency, and
+      // `blocked_by` says which one is in the way.
+      if (this.availability.waitsOn.length > 0) {
+        out[KeyWaitsOn] = [...this.availability.waitsOn];
+      }
     } else {
       out[KeyAvailable] = null;
       out[KeyBlockedBy] = null;

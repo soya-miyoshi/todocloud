@@ -47,6 +47,18 @@ tdo show 3                   # one item in full, with the reason it is blocked
 tdo next                     # the single first action
 ```
 
+An **event** is something you are waiting for rather than something you do — a
+reply, a delivery, a meeting. It occurs; it is not completed:
+
+```sh
+tdo event add "Vendor reply"
+tdo add "Send the order" --wait-on "Vendor reply"   # blocked until it occurs
+tdo event occur "Vendor reply"                      # says what it released
+```
+
+Events are not in `tdo ls`; `tdo event ls` lists them and `tdo event show`
+lists what is waiting for one.
+
 This is why putting a project on hold empties it from every list — which is the
 whole point of putting a project on hold. A **tag** can be put on hold the same
 way, and then everything filed under it steps out of the way: the errands that

@@ -44,6 +44,7 @@
 import { configf, providerf } from '@todocloud/core/exit';
 import * as id from '@todocloud/core/id';
 import { databaseFromURL } from '@todocloud/core/providercli';
+import type { EventItem, EventLink } from '@todocloud/core/store/event';
 import { Secret } from '@todocloud/core/secret';
 import {
   ErrAmbiguous,
@@ -89,6 +90,7 @@ import {
   type Statement,
   type Value,
 } from './protocol.ts';
+import * as eventOps from './events.ts';
 import * as query from './query.ts';
 import * as schemaOps from './schema.ts';
 
@@ -242,6 +244,40 @@ export class Store implements CoreStore {
 
   removeTag(name: string): Promise<number> {
     return query.removeTag(this, name);
+  }
+
+  // --- events (events.ts) -----------------------------------------------
+
+  addEvent(e: EventItem): Promise<void> {
+    return eventOps.addEvent(this, e);
+  }
+
+  getEvent(eventID: string): Promise<EventItem> {
+    return eventOps.getEvent(this, eventID);
+  }
+
+  findEventByPrefix(prefix: string): Promise<EventItem> {
+    return eventOps.findEventByPrefix(this, prefix);
+  }
+
+  events(): Promise<EventItem[]> {
+    return eventOps.events(this);
+  }
+
+  updateEvent(e: EventItem): Promise<void> {
+    return eventOps.updateEvent(this, e);
+  }
+
+  removeEvent(eventID: string): Promise<number> {
+    return eventOps.removeEvent(this, eventID);
+  }
+
+  setWaits(taskID: string, eventIDs: readonly string[]): Promise<void> {
+    return eventOps.setWaits(this, taskID, eventIDs);
+  }
+
+  waits(): Promise<EventLink[]> {
+    return eventOps.waits(this);
   }
 
   savePerspective(p: Perspective): Promise<void> {
@@ -825,6 +861,9 @@ export function escapeLike(s: string): string {
  */
 function deleteTask(b: Batch, taskID: string): void {
   b.add(`DELETE FROM task_tags WHERE task_id = ?`, false, taskID);
+  b.add(`DELETE FROM task_events WHERE task_id = ?`, false, taskID);
+  // An event of a purged project is kept, and belongs to none.
+  b.add(`UPDATE events SET project_id = NULL WHERE project_id = ?`, false, taskID);
   b.add(`DELETE FROM tasks WHERE id = ?`, false, taskID);
 }
 
@@ -1082,7 +1121,7 @@ export function integer(v: Value, column: string): bigint {
   return n;
 }
 
-function optionalColumn(v: Value, column: string): Date | undefined {
+export function optionalColumn(v: Value, column: string): Date | undefined {
   const s = optionalText(v, column);
   if (s === '') {
     return undefined;
@@ -1156,7 +1195,7 @@ function nullString(s: string): string | null {
   return s;
 }
 
-function optionalTime(t: Date | undefined): string | null {
+export function optionalTime(t: Date | undefined): string | null {
   if (t === undefined) {
     return null;
   }

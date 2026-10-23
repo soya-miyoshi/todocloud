@@ -11,6 +11,7 @@ export * from './task.ts';
 // separate Go package and export bare names (`initial`, `steps`, `validate`)
 // that would mislead at the top level. Providers import them by path.
 export * from './store/store.ts';
+export * from './store/event.ts';
 export * from './store/availability.ts';
 export * from './store/completion.ts';
 export * from './store/filter.ts';

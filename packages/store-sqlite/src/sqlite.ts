@@ -59,6 +59,7 @@ import {
   type Tag,
 } from '@todocloud/core/store';
 import { checkParent, cycleError } from '@todocloud/core/store/availability';
+import type { EventItem, EventLink } from '@todocloud/core/store/event';
 import { autoComplete, triggersAutoCompletion } from '@todocloud/core/store/completion';
 import type { Filter } from '@todocloud/core/store/filter';
 import type { Backupper, VersionChecker } from '@todocloud/core/store/version';
@@ -73,6 +74,17 @@ import {
   Task,
 } from '@todocloud/core/task';
 
+import {
+  addEvent,
+  detachEvents,
+  events,
+  findEventByPrefix,
+  getEvent,
+  removeEvent,
+  setWaits,
+  updateEvent,
+  waits,
+} from './events.ts';
 import {
   availability,
   children,
@@ -444,6 +456,48 @@ export class Store implements StoreContract, VersionChecker, Backupper {
     return removeTag(this, name);
   }
 
+  // ---- events.ts ----------------------------------------------------------
+
+  /** addEvent stores a new event. */
+  addEvent(e: EventItem): Promise<void> {
+    return addEvent(this, e);
+  }
+
+  /** getEvent returns the event with exactly this id. */
+  getEvent(id: string): Promise<EventItem> {
+    return getEvent(this, id);
+  }
+
+  /** findEventByPrefix returns the single event whose id starts with prefix. */
+  findEventByPrefix(prefix: string): Promise<EventItem> {
+    return findEventByPrefix(this, prefix);
+  }
+
+  /** events returns every event, oldest first. */
+  events(): Promise<EventItem[]> {
+    return events(this);
+  }
+
+  /** updateEvent replaces the stored event. */
+  updateEvent(e: EventItem): Promise<void> {
+    return updateEvent(this, e);
+  }
+
+  /** removeEvent forgets an event and the links to it. */
+  removeEvent(id: string): Promise<number> {
+    return removeEvent(this, id);
+  }
+
+  /** setWaits replaces the set of events a task waits for. */
+  setWaits(taskID: string, eventIDs: readonly string[]): Promise<void> {
+    return setWaits(this, taskID, eventIDs);
+  }
+
+  /** waits returns every link. */
+  waits(): Promise<EventLink[]> {
+    return waits(this);
+  }
+
   /** savePerspective stores a perspective, replacing one of the same name. */
   savePerspective(p: Perspective): Promise<void> {
     return savePerspective(this, p);
@@ -732,6 +786,8 @@ export class Store implements StoreContract, VersionChecker, Backupper {
 
       let changed: number;
       try {
+        this.db.run(`DELETE FROM task_events WHERE task_id = ?`, id);
+        detachEvents(this, id);
         changed = this.db.run(`DELETE FROM tasks WHERE id = ?`, id);
       } catch (err) {
         throw this.notInitialized(
@@ -759,6 +815,8 @@ export class Store implements StoreContract, VersionChecker, Backupper {
       for (let i = nodes.length - 1; i >= 0; i--) {
         const node = nodes[i] as Task;
         try {
+          this.db.run(`DELETE FROM task_events WHERE task_id = ?`, node.id);
+          detachEvents(this, node.id);
           this.db.run(`DELETE FROM tasks WHERE id = ?`, node.id);
         } catch (err) {
           throw this.notInitialized(
@@ -1125,11 +1183,11 @@ export function nullString(s: string): string | null {
   return s === '' ? null : s;
 }
 
-function optionalTime(t: Date | undefined): string | null {
+export function optionalTime(t: Date | undefined): string | null {
   return t === undefined ? null : formatTime(t);
 }
 
-function parseOptionalTime(
+export function parseOptionalTime(
   v: string | number | bigint | null | Uint8Array | undefined,
 ): Date | undefined {
   const s = text(v);

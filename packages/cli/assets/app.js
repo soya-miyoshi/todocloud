@@ -24,14 +24,15 @@
  * @typedef {Object.<string, any>} Task
  * @typedef {{name: string, status: string, count: number, note?: string}} Tag
  * @typedef {{name: string, filter: Object.<string, any>, created_at: string, updated_at: string}} Perspective
- * @typedef {{tasks: Task[], perspectives: Perspective[], tags: Tag[], now: string | null}} State
+ * @typedef {{id: string, title: string, project_id: string | null, note: string | null, status: string, expected_at: string | null, occurred_at: string | null, created_at: string, updated_at: string, waiting: string[]}} EventItem
+ * @typedef {{tasks: Task[], perspectives: Perspective[], tags: Tag[], events: EventItem[], now: string | null}} State
  * @typedef {{kind: string, key: string}} View
  */
 
 const token = document.body.dataset.token;
 
 /** @type {State} */
-let state = { tasks: [], perspectives: [], tags: [], now: null };
+let state = { tasks: [], perspectives: [], tags: [], events: [], now: null };
 /** @type {Map<string, Task>} */
 let byID = new Map();
 // Where the app opens: the Forecast, today. See `rootHash`.
@@ -326,6 +327,10 @@ function reportExtras(result) {
   const notes = [];
   for (const t of result.repeated || []) notes.push(`repeats: “${t.title}” is next`);
   for (const t of result.completed_with_last || []) notes.push(`“${t.title}” completed with its last action`);
+  // An event occurring is the other: what it released is the point of saying
+  // it happened, and what a reopen held again is the surprise to avoid.
+  for (const t of result.released || []) notes.push(`“${t.title}” is now available`);
+  for (const t of result.held || []) notes.push(`“${t.title}” is held again`);
   return notes.join(' · ');
 }
 
@@ -343,7 +348,7 @@ async function reload(message) {
   const fresh = await api('GET', '/api/state');
   state = fresh;
   byID = new Map(state.tasks.map((t) => [t.id, t]));
-  if (selected && !byID.has(selected)) selected = null;
+  if (selected && !byID.has(selected) && !eventByID(selected)) selected = null;
   // A saved perspective is not part of the snapshot — only the store can say
   // what is in it — so a write that changed what it matches has to be asked
   // again, or the list on screen answers the question as it stood before.
@@ -381,6 +386,13 @@ let located = false;
 const isClosed = (t) => t.status === 'done' || t.status === 'dropped';
 const isOpen = (t) => !isClosed(t);
 const isContainer = (t) => t.kind !== 'task';
+
+// A blocker is anything but the task's own defer date holding it back — a
+// sequential sibling, an on-hold parent, a tag that is on hold. A defer date
+// ahead is not one: it is the thing the Forecast is about, and it is what the
+// badge's defer state asks separately.
+const hasBlocker = (t) => Boolean(t.blocked_by) && t.blocked_by.rule !== 'deferred';
+
 
 function parentsOf(t) {
   const chain = [];
@@ -478,7 +490,7 @@ const PERSPECTIVES = [
     // `forecastOrder`), so an item that has only a defer date has to be in
     // it, or the default order is over a list the date is missing from.
     key: 'due', label: 'Forecast', tint: 'salmon', glyph: '◷', wide: true,
-    pick: (t) => t.kind === 'task' && isOpen(t) && (t.due_at || t.defer_at),
+    pick: (t) => t.kind === 'task' && isOpen(t) && (t.due_at || t.defer_at) && !forecastHides(t),
     badge: (items) => items.filter(forecastBadgeMatches).length,
   },
   {
@@ -524,6 +536,11 @@ const PERSPECTIVES = [
 // Other Perspectives, which OmniFocus keeps collapsed behind a Show: the
 // views that answer a question about the list rather than offering work.
 const OTHERS = [
+  // What is being waited for: the events that have not occurred yet. They are
+  // not tasks, so this is a list of its own like Tags (`rows: 'events'`);
+  // tapping an event's circle says it occurred, which releases what waited
+  // for it. `count` stands in for `pick`, which counts tasks.
+  { key: 'events', label: 'Events', rows: 'events', pick: () => false, count: () => pendingEvents().length },
   { key: 'blocked', label: 'Blocked', pick: (t) => isOpen(t) && t.available === false },
   { key: 'all', label: 'All', pick: (t) => isOpen(t) },
   { key: 'done', label: 'Completed', pick: (t) => isClosed(t), sort: (a, b) => (b.completed_at || '').localeCompare(a.completed_at || '') },
@@ -650,12 +667,37 @@ function setProjectsShow(status, on) {
 // the list is read here, not a fact about the tasks.
 const ForecastBadgeKey = 'tdo.badge.forecast';
 
+// What the Forecast does with a task something is blocking — one waiting on
+// a reply or on another task. `dim` keeps it on the list in a lighter
+// type, because it is still news that its date has come; `hide` takes it out;
+// `normal` treats it like any other. One setting for the list, the week's
+// counts and the tile, so the numbers and the rows agree.
+const ForecastBlockedKey = 'tdo.forecast.blocked';
+const forecastBlockedModes = ['dim', 'hide', 'normal'];
+
+function loadForecastBlocked() {
+  const stored = remembered(ForecastBlockedKey, '');
+  if (forecastBlockedModes.includes(stored)) return stored;
+  // The earlier setting was a switch that hid them.
+  return remembered('tdo.forecast.hideBlocked', '') === 'on' ? 'hide' : 'dim';
+}
+
+let forecastBlocked = loadForecastBlocked();
+const forecastHides = (t) => forecastBlocked === 'hide' && hasBlocker(t);
+
+/** @param {string} mode */
+function setForecastBlocked(mode) {
+  forecastBlocked = forecastBlockedModes.includes(mode) ? mode : 'dim';
+  remember(ForecastBlockedKey, forecastBlocked);
+  render();
+}
+
 /**
- * @typedef {{mode: 'all' | 'any', dueOn: boolean, dueDays: number, defer: 'any' | 'deferred' | 'started', flagged: boolean}} BadgeRule
+ * @typedef {{mode: 'all' | 'any', skipBlocked: boolean, dueOn: boolean, dueDays: number, defer: 'any' | 'deferred' | 'started', flagged: boolean}} BadgeRule
  */
 
 /** @type {BadgeRule} */
-const forecastBadgeDefault = { mode: 'all', dueOn: true, dueDays: 0, defer: 'any', flagged: false };
+const forecastBadgeDefault = { mode: 'all', skipBlocked: false, dueOn: true, dueDays: 0, defer: 'any', flagged: false };
 const badgeDueDays = [0, 1, 2, 3, 7];
 const badgeDeferStates = ['any', 'deferred', 'started'];
 
@@ -666,6 +708,7 @@ function loadForecastBadge() {
     if (!raw || typeof raw !== 'object') return { ...forecastBadgeDefault };
     return {
       mode: raw.mode === 'any' ? 'any' : 'all',
+      skipBlocked: raw.skipBlocked === true,
       dueOn: typeof raw.dueOn === 'boolean' ? raw.dueOn : forecastBadgeDefault.dueOn,
       dueDays: badgeDueDays.includes(raw.dueDays) ? raw.dueDays : forecastBadgeDefault.dueDays,
       defer: badgeDeferStates.includes(raw.defer) ? raw.defer : forecastBadgeDefault.defer,
@@ -684,6 +727,9 @@ let forecastBadge = loadForecastBadge();
 // A task with no defer date is neither.
 function forecastBadgeMatches(t) {
   const r = forecastBadge;
+  // An exclusion, not one of the conditions: a blocked task is never counted,
+  // whether the conditions are combined with AND or OR.
+  if (r.skipBlocked && hasBlocker(t)) return false;
   const deferred = Boolean(t.defer_at) && calendarDays(t.defer_at) > 0;
   const started = Boolean(t.defer_at) && calendarDays(t.defer_at) <= 0;
   // Only the conditions that are switched on take part. None on is the whole
@@ -926,6 +972,14 @@ function openContainer(t) {
   render();
 }
 
+// eventByID is the event with this id in the snapshot, or undefined. The
+// inspector's `selected` holds either a task's id or an event's: both are
+// ULIDs, so they cannot collide, and the address `…/item/<id>` names either.
+/** @param {string | null | undefined} id */
+function eventByID(id) {
+  return id ? (state.events || []).find((e) => e.id === id) : undefined;
+}
+
 function selectItem(id) {
   // A pending edit belongs to the item that was on screen when it was
   // typed, so it goes up before the inspector shows another one.
@@ -1068,7 +1122,7 @@ function applyLocation() {
   // entitled to know that as the reader is.
   if (where.pane === 'home' || where.view === undefined) return showRestored('home');
   view = where.view;
-  if (where.id && byID.has(where.id)) {
+  if (where.id && (byID.has(where.id) || eventByID(where.id))) {
     selected = where.id;
     return showRestored('inspector');
   }
@@ -1445,7 +1499,7 @@ function renderHome() {
   }));
 
   $('#others').replaceChildren(
-    ...OTHERS.map((spec) => navRow(spec.label, state.tasks.filter(spec.pick).length,
+    ...OTHERS.map((spec) => navRow(spec.label, spec.count ? spec.count() : state.tasks.filter(spec.pick).length,
       view.kind === spec.key, () => select({ kind: spec.key, key: '' }), { key: spec.key })),
     ...(state.perspectives || []).map((p) => navRow(
       p.name,
@@ -1533,10 +1587,10 @@ const forecastCell = (key) => forecastDays().find((c) => c.key === key);
 // the number of rows the day opens, and a project with a due date was in
 // both the count and the list.
 const dueOn = (cell) => state.tasks.filter(
-  (t) => t.kind === 'task' && t.due_at && isOpen(t) && cell.dueMatch(calendarDays(t.due_at)));
+  (t) => t.kind === 'task' && t.due_at && isOpen(t) && !forecastHides(t) && cell.dueMatch(calendarDays(t.due_at)));
 
 const startsOn = (cell) => state.tasks.filter(
-  (t) => t.kind === 'task' && t.defer_at && isOpen(t) && cell.startMatch(calendarDays(t.defer_at)));
+  (t) => t.kind === 'task' && t.defer_at && isOpen(t) && !forecastHides(t) && cell.startMatch(calendarDays(t.defer_at)));
 
 // completedOn is the day as a record rather than a plan: what was finished
 // on it. Not counted on the cell and not in any badge — a day's number means
@@ -1705,6 +1759,11 @@ function tagChip(name) {
 // `ancestor_tag_status` are the two rules a reader cannot act on without
 // knowing which tag is responsible.
 function blockedTitle(blocked) {
+  // The event is what will change the answer, so it is named, not the rule.
+  if (blocked.rule === 'event' || blocked.rule === 'ancestor_event') {
+    const event = (state.events || []).find((e) => e.id === blocked.task_id);
+    return `blocked: waiting for ${event ? event.title : 'an event'}`;
+  }
   if (blocked.tag) return `blocked: ${blocked.rule} (${blocked.tag})`;
   return `blocked: ${blocked.rule}`;
 }
@@ -1712,7 +1771,8 @@ function blockedTitle(blocked) {
 // treeRows is the Projects list in the sidebar: every open project, flat —
 // filtered by status (`projectsShow`); finished ones are struck through —
 // folders are not shown, because nobody here files projects into them — and
-// under a project that is expanded, all of its tasks at every depth, so the
+// under a project that is expanded, its events and then all of its tasks at
+// every depth, so the
 // whole hierarchy of a project is readable without opening it. A project
 // opens (expands) when it is clicked; the triangle folds it again.
 function treeRows() {
@@ -1736,6 +1796,20 @@ function treeRows() {
     draggable(row.querySelector('.nav-row'), p, p);
     rows.push(row);
     if (!open) continue;
+    // The events that belong to the project come first: what the plan is
+    // waiting on is the first thing to know about it, and they are few. The
+    // pending ones, then the ones that occurred or were cancelled, struck
+    // through. A row opens the event in the inspector, as a task's does; the
+    // number is how many items are waiting for it.
+    const own = eventsInProject(p);
+    for (const e of [...own.filter((x) => x.status === 'pending'), ...own.filter((x) => x.status !== 'pending')]) {
+      const waiting = (e.waiting || []).length;
+      rows.push(navRow(e.title, waiting > 0 ? waiting : null, selected === e.id, () => selectItem(e.id), {
+        depth: 1,
+        held: e.status !== 'pending',
+        mark: el('span', { textContent: '\u25f7' }),
+      }));
+    }
     for (const x of kids) {
       const depth = parentsOf(x).filter((q) => q.id !== p.id && inSubtree(q, p.id)).length + 1;
       const child = navRow(x.title, null, selected === x.id, () => selectItem(x.id), { depth, id: x.id });
@@ -1760,6 +1834,129 @@ function tagRows() {
     view.kind === 'tag' && view.key === g.name,
     () => select({ kind: 'tag', key: g.name }),
     { held: g.status && g.status !== 'active', mark: el('span', { textContent: '#' }), tag: g.name }));
+}
+
+// eventsInProject is the events that belong to a project, in either sense: it
+// was filed there (`project_id`), or an item inside the project waits for it.
+// The second is what makes an event show up where it matters even when nobody
+// filed it — an event made before events could be filed, or by an agent that
+// only linked it — and it needs nothing stored: a task's `waits_on` lists the
+// events it waits for, the ones that have occurred as well.
+/** @param {Task} project */
+function eventsInProject(project) {
+  const events = state.events || [];
+  if (events.length === 0) return [];
+  const waited = new Set();
+  for (const t of state.tasks) {
+    if (t.id !== project.id && Array.isArray(t.waits_on) && inSubtree(t, project.id)) {
+      for (const id of t.waits_on) waited.add(id);
+    }
+  }
+  return events.filter((e) => e.project_id === project.id || waited.has(e.id));
+}
+
+// pendingEvents are the events that have not occurred, which is what the
+// Events list opens on.
+function pendingEvents() {
+  return (state.events || []).filter((e) => e.status === 'pending');
+}
+
+// setEventStatus is the one write an event has in the viewer: it occurred, or
+// — because tapping the wrong circle must not be final — it did not, after all.
+// Reopening a cancelled event is the same call, which is why one function does
+// both and the circle is a toggle.
+/**
+ * @param {EventItem} e
+ * @param {'occurred' | 'pending'} status
+ */
+function setEventStatus(e, status) {
+  return act('POST', `/api/events/${e.id}/status`, { status }, status === 'occurred' ? 'occurred' : 'reopened');
+}
+
+// eventRow is one event as a row: a circle that is a toggle, the title, and
+// under it how many open items are waiting for it and, where the list mixes
+// projects, which project it belongs to. The circle is a button of its own and
+// the row is not one: tapping a title to read it must not release the things
+// waiting for it.
+//
+// A pending event has an empty circle. One that occurred has the ticked circle
+// and a struck-through title, like a completed task, and tapping the tick is
+// the undo. A cancelled one is shown the same way with its state in words,
+// because it is neither waiting nor released.
+/**
+ * @param {EventItem} e
+ * @param {boolean} withProject
+ */
+function eventRow(e, withProject) {
+  const pending = e.status === 'pending';
+  const circle = el('button', {
+    type: 'button',
+    className: pending ? 'circle' : 'circle done',
+    onclick: () => setEventStatus(e, pending ? 'occurred' : 'pending'),
+  });
+  circle.setAttribute('aria-label', pending ? `${e.title} occurred` : `${e.title} did not occur after all`);
+  circle.title = pending ? 'It occurred' : 'Undo: it has not occurred';
+  const lines = el('div', { className: 'lines' }, [el('div', { className: 'title', textContent: e.title })]);
+  const bits = [];
+  const waiting = (e.waiting || []).length;
+  if (waiting > 0) bits.push(`${waiting} waiting`);
+  if (e.status === 'cancelled') bits.push('cancelled');
+  const project = withProject && e.project_id ? byID.get(e.project_id) : undefined;
+  if (project) bits.push(project.title);
+  if (bits.length) lines.append(el('div', { className: 'where', textContent: bits.join(' \u00b7 ') }));
+  const row = el('li', { className: pending ? 'item event' : 'item event closed quiet', tabIndex: -1 }, [circle, lines]);
+  row.dataset.event = e.id;
+  row.setAttribute('aria-selected', selected === e.id ? 'true' : 'false');
+  // The row opens the event in the inspector; the circle, which is its own
+  // button, only changes its state and must not also open it.
+  row.onclick = (event) => {
+    if (event.target instanceof Node && circle.contains(event.target)) return;
+    if (event.detail < 2) selectItem(e.id);
+  };
+  return row;
+}
+
+// eventHeading is the small caption above a group of event rows.
+function eventHeading(text) {
+  return el('li', { className: 'group-head', textContent: text });
+}
+
+// eventRows is the Events perspective: what is being waited for, then — under
+// their own caption, so the list stays about what is still to come — the
+// events that occurred or were cancelled, each with its undo.
+function eventRows() {
+  const all = state.events || [];
+  const pending = all.filter((e) => e.status === 'pending');
+  const done = all.filter((e) => e.status !== 'pending')
+    .sort((a, b) => (b.occurred_at || b.updated_at || '').localeCompare(a.occurred_at || a.updated_at || ''));
+  const rows = [];
+  if (pending.length === 0) {
+    rows.push(el('li', { className: 'item' }, [el('div', { className: 'lines' }, [
+      el('div', { className: 'where', textContent: 'Nothing is being waited for. `tdo event add` creates one.' }),
+    ])]));
+  }
+  rows.push(...pending.map((e) => eventRow(e, true)));
+  if (done.length) {
+    rows.push(eventHeading('Occurred'), ...done.map((e) => eventRow(e, true)));
+  }
+  return rows;
+}
+
+// projectEventRows are the events that belong to one project, for the top of
+// its own view: the project is where you look for what its plan is waiting
+// on. Nothing when it has none, so a project without events reads as before.
+/** @param {string} projectID */
+function projectEventRows(projectID) {
+  const project = byID.get(projectID);
+  const own = project ? eventsInProject(project) : [];
+  if (own.length === 0) return [];
+  const pending = own.filter((e) => e.status === 'pending');
+  const done = own.filter((e) => e.status !== 'pending');
+  return [
+    eventHeading('Waiting for'),
+    ...pending.map((e) => eventRow(e, false)),
+    ...(done.length ? [eventHeading('Occurred'), ...done.map((e) => eventRow(e, false))] : []),
+  ];
 }
 
 // renderAbout draws what the container itself says, above its list. It is
@@ -1867,13 +2064,16 @@ function renderList() {
   // — a store with no projects in it is not a mistake to report.
   const spec = specOf(view.kind);
   if (spec && spec.rows) {
-    $('#items').replaceChildren(...(spec.rows === 'tree' ? treeRows() : tagRows()));
+    $('#items').replaceChildren(...(spec.rows === 'tree' ? treeRows() : spec.rows === 'events' ? eventRows() : tagRows()));
     $('#empty').hidden = true;
     return;
   }
 
   const items = currentItems();
-  $('#empty').hidden = items.length > 0;
+  // A project also lists the events that belong to it, above its tasks, so a
+  // project with events and no task yet is not an empty one.
+  const eventsAbove = view.kind === 'project' && !query ? projectEventRows(view.key) : [];
+  $('#empty').hidden = items.length > 0 || eventsAbove.length > 0;
 
   // Inside a project, the rows are a tree and not a list: a sub-task under
   // its parent is what says "this is part of that", and in a sequential
@@ -1904,7 +2104,10 @@ function renderList() {
     return;
   }
 
-  $('#items').replaceChildren(...items.map((t) => itemRow(t, depthOf)));
+  $('#items').replaceChildren(
+    ...eventsAbove,
+    ...(eventsAbove.length && items.length ? [eventHeading('Tasks')] : []),
+    ...items.map((t) => itemRow(t, depthOf)));
 }
 
 // --- the Forecast's week -------------------------------------------------
@@ -2018,6 +2221,9 @@ function itemRow(t, depthOf) {
   // the exception the manual makes and the reason the rule is useful.
   if (isClosed(t) || isContainer(t) || t.available === false) row.classList.add('quiet');
   if (overdue(t) || dueSoon(t)) row.classList.add('dated');
+  // In the Forecast a blocked task stays lighter even when it is due soon:
+  // the date is real, but there is nothing to do about it yet.
+  if (view.kind === 'due' && forecastBlocked === 'dim' && hasBlocker(t)) row.classList.add('waiting');
   // Today's list holds what is due today and what was due before it, and
   // nothing in the row said which was which beyond a date two words long.
   // A red edge does, at the speed a list is actually read — and it is why
@@ -2064,7 +2270,56 @@ function itemRow(t, depthOf) {
   return row;
 }
 
+// renderWaiting is the events an item waits for, in a block of its own above
+// the facts. "Blocked by" names the one event in the way; this is the whole
+// dependency — the ones that have occurred as well — because what an item is
+// waiting for is the first thing to know about why it is not available.
+//
+// Each event is a card: its title, which opens the event (a long title wraps
+// instead of being cut), where it stands, and the button that changes it. An
+// event that is not in the snapshot (removed since) is shown by its id rather
+// than left out: a dependency the page cannot name is still one.
+/** @param {Task | null} t */
+function renderWaiting(t) {
+  const block = $('#waiting');
+  const ids = t && Array.isArray(t.waits_on) ? t.waits_on : [];
+  block.hidden = ids.length === 0;
+  if (ids.length === 0) {
+    block.querySelector('ul')?.replaceChildren();
+    return;
+  }
+  const cards = ids.map((eventID) => {
+    const event = eventByID(eventID);
+    const status = event ? event.status : 'unknown';
+    const title = event
+      ? el('button', {
+        type: 'button',
+        className: 'wait-title',
+        textContent: event.title,
+        onclick: () => selectItem(event.id),
+      })
+      : el('span', { className: 'wait-title', textContent: eventID });
+    const foot = el('div', { className: 'wait-foot' }, [
+      el('span', { className: 'wait-state', textContent: status }),
+    ]);
+    // Both ways, because the first tap must be undoable: a pending event can
+    // be said to have occurred, and one that has can be reopened.
+    if (event) {
+      const occurred = status === 'occurred';
+      foot.append(el('button', {
+        type: 'button',
+        className: 'wait-occurred',
+        textContent: occurred ? 'Undo' : status === 'cancelled' ? 'Reopen' : 'Occurred',
+        onclick: () => setEventStatus(event, occurred || status === 'cancelled' ? 'pending' : 'occurred'),
+      }));
+    }
+    return el('li', { className: `wait ${status}` }, [title, foot]);
+  });
+  block.querySelector('ul')?.replaceChildren(...cards);
+}
+
 function facts(t) {
+  /** @type {[string, string][]} */
   const rows = [
     ['id', t.id],
     ['kind', t.kind],
@@ -2096,7 +2351,7 @@ const RESERVED_KEYS = new Set([
   'estimated_minutes', 'note', 'repeat', 'series_id', 'review_interval',
   'last_reviewed_at', 'created_at', 'updated_at', 'completed_at',
   'dropped_at', 'deleted_at', 'tags', 'done', 'available', 'blocked_by',
-  'next_review_at', 'priority',
+  'next_review_at', 'waits_on', 'priority',
 ]);
 
 // customFields lists what a task carries beyond the shape, sorted the way
@@ -2168,11 +2423,14 @@ function renderFields(t) {
 
 function renderInspector() {
   const form = $form('#detail');
-  const t = selected ? byID.get(selected) : null;
-  $('#no-selection').hidden = Boolean(t);
+  const event = eventByID(selected);
+  const t = selected && !event ? byID.get(selected) : null;
+  $('#no-selection').hidden = Boolean(t) || Boolean(event);
   form.hidden = !t;
+  renderEventDetail(event);
+  if (!t) renderWaiting(null);
   $('#back-label').textContent = 'Home';
-  renderInspectorTitle(t);
+  renderInspectorTitle(t || null, event);
   if (!t) return;
 
   // Every write is followed by a fresh snapshot, and the snapshot arrives
@@ -2186,6 +2444,7 @@ function renderInspector() {
   }
   form.dataset.id = t.id;
 
+  renderWaiting(t);
   $('#facts').replaceChildren(...facts(t));
   $('#complete').textContent = t.status === 'done' ? 'Reopen' : 'Complete';
 }
@@ -2194,12 +2453,72 @@ function renderInspector() {
 // goes up to that project's view. A project is its own title; an item with
 // no project above it (an inbox task, a folder) has nothing to go up to, so
 // the title is plain text there.
-function renderInspectorTitle(t) {
+function renderInspectorTitle(t, event) {
   const button = /** @type {HTMLButtonElement} */ ($('#inspector-project'));
-  const project = t ? [t, ...parentsOf(t).reverse()].find((x) => x.kind === 'project') : null;
-  button.textContent = project ? project.title : t ? (t.kind === 'folder' ? t.title : 'Inbox') : '';
+  // An event's title is the project it belongs to, like an item's, or Events
+  // when it belongs to none: the list it is in.
+  const home = event && event.project_id ? byID.get(event.project_id) : undefined;
+  const project = event ? home : t ? [t, ...parentsOf(t).reverse()].find((x) => x.kind === 'project') : null;
+  button.textContent = event ? (home ? home.title : 'Events') : project ? project.title : t ? (t.kind === 'folder' ? t.title : 'Inbox') : '';
   button.disabled = !project;
   button.onclick = project ? () => openContainer(project) : null;
+}
+
+// renderEventDetail fills the event form, or hides it. As with the item's
+// form, the fields are left alone while one of them has the cursor: a refresh
+// that arrives after a keystroke must not delete what was typed.
+/** @param {EventItem | undefined} e */
+function renderEventDetail(e) {
+  const form = $form('#event-detail');
+  form.hidden = !e;
+  if (!e) return;
+  const same = form.dataset.id === e.id;
+  if (!same || !form.contains(document.activeElement)) {
+    form.elements.title.value = e.title;
+    form.elements.note.value = e.note || '';
+    form.elements.expected_at.value = e.expected_at ? e.expected_at.slice(0, 10) : '';
+    const select = form.elements.project_id;
+    select.replaceChildren(
+      el('option', { value: '', textContent: '(no project)' }),
+      ...state.tasks.filter((t) => t.kind === 'project' && (isOpen(t) || t.id === e.project_id))
+        .map((p) => el('option', { value: p.id, textContent: p.title })));
+    select.value = e.project_id || '';
+    grow(form.elements.title);
+    grow(form.elements.note);
+  }
+  form.dataset.id = e.id;
+
+  const facts = [`Status: ${e.status}`];
+  if (e.occurred_at) facts.push(`occurred ${e.occurred_at.slice(0, 10)}`);
+  if (e.created_at) facts.push(`created ${e.created_at.slice(0, 10)}`);
+  $('#event-state').textContent = facts.join(' \u00b7 ');
+
+  // What is waiting for it: each a row that opens the item. Nothing waits for
+  // an event that has occurred — the links stay as history, they hold nothing.
+  /** @type {Task[]} */
+  const waiting = [];
+  for (const id of e.waiting || []) {
+    const t = byID.get(id);
+    if (t) waiting.push(t);
+  }
+  const list = $('#event-waiting');
+  if (waiting.length === 0) {
+    list.replaceChildren(el('li', { className: 'none', textContent: e.status === 'pending' ? 'Nothing is waiting for it.' : 'Nothing is held by it.' }));
+  } else {
+    list.replaceChildren(...waiting.map((t) => el('li', {}, [el('button', {
+      type: 'button',
+      className: 'linklike',
+      textContent: t.title,
+      onclick: () => selectItem(t.id),
+    })])));
+  }
+
+  const pending = e.status === 'pending';
+  $('#event-occurred').textContent = pending ? 'Occurred' : e.status === 'cancelled' ? 'Reopen' : 'Undo: not occurred';
+  $('#event-occurred').onclick = () => setEventStatus(e, pending ? 'occurred' : 'pending');
+  const cancel = $('#event-cancel');
+  cancel.hidden = !pending;
+  cancel.onclick = () => act('POST', `/api/events/${e.id}/status`, { status: 'cancelled' }, 'cancelled');
 }
 
 function fillInspector(form, t) {
@@ -2810,6 +3129,34 @@ $form('#detail').onchange = () => saveNow();
 // Enter in a single-line field — which must not submit the form, since the
 // form has no submit left to do.
 $form('#detail').addEventListener('focusout', () => saveNow());
+
+// An event is saved when a field is left, not on every key: it has four
+// fields and none of them is typed into at the speed a task's title is.
+// `change` fires on leaving a text box and on choosing from a menu or a date,
+// which is exactly when there is something to send.
+const eventForm = $form('#event-detail');
+eventForm.addEventListener('change', () => {
+  const id = eventForm.dataset.id;
+  if (!id) return;
+  const f = eventForm.elements;
+  act('PATCH', `/api/events/${id}`, {
+    title: f.title.value,
+    note: f.note.value,
+    expected_at: f.expected_at.value,
+    project_id: f.project_id.value,
+  }, 'saved');
+});
+// Enter in the title commits it, as in the item's form: a title is one line of
+// text whatever it is drawn in.
+eventForm.elements.title.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    /** @type {HTMLElement} */ (event.target).blur();
+  }
+});
+eventForm.addEventListener('input', (event) => {
+  if (event.target instanceof HTMLTextAreaElement) grow(event.target);
+});
 $form('#detail').onsubmit = (event) => {
   event.preventDefault();
   saveNow();
@@ -3521,6 +3868,8 @@ function fillPrefs() {
   $select('#prefs-badge-days').disabled = !forecastBadge.dueOn;
   $select('#prefs-badge-defer').value = forecastBadge.defer;
   $input('#prefs-badge-flagged').checked = forecastBadge.flagged;
+  $input('#prefs-badge-skip-blocked').checked = forecastBadge.skipBlocked;
+  $select('#prefs-forecast-blocked').value = forecastBlocked;
 }
 
 if (maybe('#prefs')) {
@@ -3549,6 +3898,10 @@ $select('#prefs-theme').onchange = (event) => setTheme(/** @type {HTMLInputEleme
     const value = /** @type {HTMLSelectElement} */ (event.target).value;
     if (value === 'any' || value === 'deferred' || value === 'started') setForecastBadge({ defer: value });
   };
+  $input('#prefs-badge-skip-blocked').onchange = (event) =>
+    setForecastBadge({ skipBlocked: /** @type {HTMLInputElement} */ (event.target).checked });
+  $select('#prefs-forecast-blocked').onchange = (event) =>
+    setForecastBlocked(/** @type {HTMLSelectElement} */ (event.target).value);
   $input('#prefs-badge-flagged').onchange = (event) =>
     setForecastBadge({ flagged: /** @type {HTMLInputElement} */ (event.target).checked });
   // Where the database is is a question about the store and not about this

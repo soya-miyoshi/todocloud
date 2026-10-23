@@ -144,6 +144,58 @@ test('every released schema is carried forward onto the schema init writes', asy
   }
 });
 
+// Version 3 added events. What the schema comparison above cannot show is that
+// a store somebody already has — tasks, tags, a perspective — comes through
+// the step untouched, starts with no events and no links, and can then use
+// them.
+test('a version 2 store with data gains events and keeps everything it had', async (t) => {
+  const ddl = historical(2);
+  assert.ok(ddl !== undefined, 'version 2 has no frozen DDL');
+  const old = fileStore(t);
+  for (const stmt of ddl) {
+    old.db.exec(stmt);
+  }
+  old.db.run(SetVersionSQL, MetaKey, 2n);
+  const stamp = '2026-03-01T00:00:00Z';
+  old.db.run(
+    `INSERT INTO tasks (id, kind, title, status, created_at, updated_at)
+     VALUES ('01J3TASK0000000000000000T1', 'task', 'pay the invoice', 'active', ?, ?)`,
+    stamp,
+    stamp,
+  );
+  old.db.run(
+    `INSERT INTO task_tags (task_id, tag, tag_key) VALUES ('01J3TASK0000000000000000T1', 'Money', 'money')`,
+  );
+  old.db.run(
+    `INSERT INTO tags (tag_key, tag, status, created_at, updated_at) VALUES ('money', 'Money', 'on_hold', ?, ?)`,
+    stamp,
+    stamp,
+  );
+
+  assert.equal(
+    old.db.rows(`SELECT name FROM sqlite_master WHERE name IN ('events', 'task_events')`).length,
+    0,
+    'a version 2 store has no event tables',
+  );
+  await old.migrate();
+  assert.equal(await old.schemaVersion(), Version);
+
+  assert.deepEqual(await old.events(), [], 'a migrated store starts with no events');
+  assert.deepEqual(await old.waits(), [], 'and no links');
+  const task = await old.get('01J3TASK0000000000000000T1');
+  assert.equal(task.title, 'pay the invoice', 'the task survived the step');
+  assert.deepEqual(task.tags, ['Money'], 'and its tag');
+  assert.equal((await old.tags()).find((x) => x.name === 'Money')?.status, 'on_hold', 'and the tag status');
+
+  // and the new half works on the migrated store
+  const { newEvent } = await import('@todocloud/core/store/event');
+  const e = newEvent('01J3EVENT0000000000000000E', 'the invoice arrives', new Date(stamp));
+  await old.addEvent(e);
+  await old.setWaits(task.id, [e.id]);
+  const answer = (await old.availability(new Date(stamp), task.id)).get(task.id);
+  assert.equal(answer?.available, false, 'the migrated store honours the event rule');
+});
+
 // The copy a user is told about: it exists, it is private, and it is a real
 // database holding the rows as they were.
 test('migrate backs the database up before it changes it', async (t) => {

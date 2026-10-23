@@ -53,6 +53,7 @@ import {
 
 // A type-only import, so filter.ts importing this module back is not a
 // runtime cycle.
+import type { EventItem, EventLink } from './event.ts';
 import type { Filter } from './filter.ts';
 
 /**
@@ -171,6 +172,8 @@ export type Rule =
   | 'ancestor_sequential'
   | 'tag_status'
   | 'ancestor_tag_status'
+  | 'event'
+  | 'ancestor_event'
   | (string & {});
 
 /** RuleNone is the zero value: nothing is blocking. */
@@ -221,6 +224,19 @@ export const RuleTagStatus: Rule = 'tag_status';
  * that is out of play with its actions still offered as next actions.
  */
 export const RuleAncestorTagStatus: Rule = 'ancestor_tag_status';
+/**
+ * RuleEvent is an item waiting for an event that has not occurred. blockedBy
+ * names the event — the first such one, in id order — which is what a caller
+ * would go and mark as occurred. It is an event id, not a task id.
+ */
+export const RuleEvent: Rule = 'event';
+/**
+ * RuleAncestorEvent is the same rule applied to an ancestor: a project that
+ * waits for an event holds back everything inside it, as putting it on hold
+ * would. blockedBy names the event, not the project, since the event is what
+ * will change the answer.
+ */
+export const RuleAncestorEvent: Rule = 'ancestor_event';
 
 /**
  * ruleDeferral reports whether the rule is a defer date rather than a hold, a
@@ -248,6 +264,13 @@ export class Availability {
    * tag's stored spelling, which is what a user would type to lift the hold.
    */
   tag = '';
+  /**
+   * waitsOn is every event the item waits for, whether or not it has occurred.
+   * It is set by Tree on every answer so that the one call that already
+   * computes availability also says what an item is waiting for, in id order;
+   * it is empty for an item that waits for nothing.
+   */
+  waitsOn: string[] = [];
 
   constructor(init?: {
     available?: boolean | undefined;
@@ -740,6 +763,46 @@ export interface Store {
    * tasks themselves are untouched apart from losing it.
    */
   removeTag(name: string): Promise<number>;
+
+  /**
+   * addEvent stores a new event. The caller sets the id and the timestamps.
+   * It reports ErrExists when the id is taken.
+   */
+  addEvent(e: EventItem): Promise<void>;
+
+  /** getEvent returns the event with exactly this id, or throws ErrNotFound. */
+  getEvent(id: string): Promise<EventItem>;
+
+  /**
+   * findEventByPrefix returns the single event whose id starts with prefix, or
+   * throws ErrNotFound / ErrAmbiguous.
+   */
+  findEventByPrefix(prefix: string): Promise<EventItem>;
+
+  /** events returns every event, oldest first. */
+  events(): Promise<EventItem[]>;
+
+  /** updateEvent replaces the stored event with e, matched by id. ErrNotFound if unknown. */
+  updateEvent(e: EventItem): Promise<void>;
+
+  /**
+   * removeEvent forgets an event and every link to it, returning how many
+   * items stopped waiting for it. It reports ErrNotFound when the id is
+   * unknown. There is no tombstone: an event is not work, and what waited on
+   * it is untouched apart from no longer waiting.
+   */
+  removeEvent(id: string): Promise<number>;
+
+  /**
+   * setWaits replaces the set of events a task waits for, creating and
+   * removing links as needed, in the way a task's tags are replaced. It
+   * reports ErrNotFound when the task or any of the events is unknown, and
+   * touches nothing in that case.
+   */
+  setWaits(taskID: string, eventIDs: readonly string[]): Promise<void>;
+
+  /** waits returns every link: which task waits for which event. */
+  waits(): Promise<EventLink[]>;
 
   /**
    * savePerspective stores a perspective, replacing one of the same name.

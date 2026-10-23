@@ -6,6 +6,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { New as newID } from "@todocloud/core/id";
+import { newEvent } from "@todocloud/core/store/event";
 import { KeyAvailable, KeyBlockedBy, KeyNextReview } from "@todocloud/core/task";
 
 import { Harness, errorCode, pinnedNow } from "./testsupport.ts";
@@ -745,4 +747,128 @@ test("set_text refuses a value that is not a string and a reserved key", async (
   const reserved = await h.do("PATCH", `/api/tasks/${taskID}`, { set_text: { status: "done" } });
   assert.equal(reserved.status, 400, reserved.text);
   assert.equal((await h.find(taskID))["status"], "active");
+});
+
+// --- events ---------------------------------------------------------------
+
+/** event stores an event directly: the page cannot create one, the CLI does. */
+async function event(h: Harness, title: string): Promise<string> {
+  const e = newEvent(newID(), title, new Date(Date.UTC(2026, 2, 1)));
+  await h.st.addEvent(e);
+  return e.id;
+}
+
+test("the state response lists the events and who waits for them", async (t) => {
+  const h = await Harness.start(t);
+  const taskID = await h.add({ title: "send the order" });
+  const eventID = await event(h, "vendor reply");
+  await h.st.setWaits(taskID, [eventID]);
+
+  const { payload } = await h.send("GET", "/api/state", undefined, h.srv.token, "");
+  const events = list(payload, "events") as Record<string, unknown>[];
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.["id"], eventID);
+  assert.equal(events[0]?.["status"], "pending");
+  assert.deepEqual(events[0]?.["waiting"], [taskID], "the event says who waits for it");
+
+  const waiting = await h.find(taskID);
+  assert.equal(waiting[KeyAvailable], false, "the waiting task is blocked in the same snapshot");
+  assert.deepEqual((waiting[KeyBlockedBy] as Record<string, unknown>)["rule"], "event");
+  assert.deepEqual(waiting["waits_on"], [eventID]);
+});
+
+test("an event occurring releases what waits for it, and says so", async (t) => {
+  const h = await Harness.start(t);
+  const taskID = await h.add({ title: "send the order" });
+  const eventID = await event(h, "vendor reply");
+  await h.st.setWaits(taskID, [eventID]);
+
+  const res = await h.do("POST", `/api/events/${eventID}/status`, { status: "occurred" });
+  assert.equal(res.status, 200, res.text);
+  const released = list(res.payload, "released") as Record<string, unknown>[];
+  assert.deepEqual(released.map((x) => x["id"]), [taskID]);
+  assert.equal(released[0]?.[KeyAvailable], true);
+  assert.equal((await h.find(taskID))[KeyAvailable], true, "and the next snapshot agrees");
+
+  const back = await h.do("POST", `/api/events/${eventID}/status`, { status: "pending" });
+  assert.equal(back.status, 200, back.text);
+  assert.deepEqual((list(back.payload, "held") as Record<string, unknown>[]).map((x) => x["id"]), [taskID]);
+  assert.equal((await h.find(taskID))[KeyAvailable], false);
+});
+
+test("the event status endpoint refuses what it should", async (t) => {
+  const h = await Harness.start(t);
+  const eventID = await event(h, "vendor reply");
+  const bad = await h.do("POST", `/api/events/${eventID}/status`, { status: "done" });
+  assert.equal(bad.status, 400, "done is a task status: " + bad.text);
+  const notID = await h.do("POST", "/api/events/not-an-id/status", { status: "occurred" });
+  assert.equal(notID.status, 400, notID.text);
+  const unknown = await h.do("POST", `/api/events/${newID()}/status`, { status: "occurred" });
+  assert.equal(unknown.status, 404, unknown.text);
+  const noToken = await h.send("POST", `/api/events/${eventID}/status`, { status: "occurred" }, "", "");
+  assert.notEqual(noToken.status, 200, "a write without the token is refused");
+});
+
+test("an event's title, note, expected date and project are editable", async (t) => {
+  const h = await Harness.start(t);
+  const projectID = await h.add({ title: "launch", kind: "project" });
+  const eventID = await event(h, "vendor reply");
+
+  const res = await h.do("PATCH", `/api/events/${eventID}`, {
+    title: "会長の返信（屋上か個人ベランダか）",
+    note: "理事会で確認する",
+    expected_at: "2026-11-05",
+    project_id: projectID,
+  });
+  assert.equal(res.status, 200, res.text);
+  const [e] = list(res.payload, "events") as Record<string, unknown>[];
+  assert.equal(e?.["title"], "会長の返信（屋上か個人ベランダか）");
+  assert.equal(e?.["note"], "理事会で確認する");
+  assert.equal(e?.["expected_at"], "2026-11-05T00:00:00Z");
+  assert.equal(e?.["project_id"], projectID);
+
+  // it is what the store holds, and the next snapshot says so
+  const stored = await h.st.getEvent(eventID);
+  assert.equal(stored.projectID, projectID);
+  const state = await h.send("GET", "/api/state", undefined, h.srv.token, "");
+  assert.equal((list(state.payload, "events")[0] as Record<string, unknown>)["project_id"], projectID);
+
+  // a key that is absent leaves the field alone, an empty one clears it
+  const only = await h.do("PATCH", `/api/events/${eventID}`, { note: "" });
+  assert.equal(only.status, 200, only.text);
+  const after = await h.st.getEvent(eventID);
+  assert.equal(after.note, "", "an empty string clears the note");
+  assert.equal(after.title, "会長の返信（屋上か個人ベランダか）", "and what was not sent is untouched");
+  assert.equal(after.projectID, projectID);
+  const unfiled = await h.do("PATCH", `/api/events/${eventID}`, { project_id: "", expected_at: "" });
+  assert.equal(unfiled.status, 200, unfiled.text);
+  const free = await h.st.getEvent(eventID);
+  assert.equal(free.projectID, "", "an empty project takes it out of its project");
+  assert.equal(free.expectedAt, undefined, "an empty date clears it");
+});
+
+test("an event edit refuses what it should and changes nothing", async (t) => {
+  const h = await Harness.start(t);
+  const taskID = await h.add({ title: "a task" });
+  const eventID = await event(h, "vendor reply");
+
+  const blank = await h.do("PATCH", `/api/events/${eventID}`, { title: "   " });
+  assert.equal(blank.status, 400, "a blank title: " + blank.text);
+  const notProject = await h.do("PATCH", `/api/events/${eventID}`, { project_id: taskID });
+  assert.equal(notProject.status, 400, "a task is not a project: " + notProject.text);
+  const ghost = await h.do("PATCH", `/api/events/${eventID}`, { project_id: newID() });
+  assert.equal(ghost.status, 404, "a project that does not exist: " + ghost.text);
+  const badDate = await h.do("PATCH", `/api/events/${eventID}`, { expected_at: "next week" });
+  assert.equal(badDate.status, 400, badDate.text);
+  const unknownKey = await h.do("PATCH", `/api/events/${eventID}`, { status: "occurred" });
+  assert.equal(unknownKey.status, 400, "status has its own endpoint: " + unknownKey.text);
+  const notID = await h.do("PATCH", "/api/events/not-an-id", { title: "x" });
+  assert.equal(notID.status, 400, notID.text);
+  const unknown = await h.do("PATCH", `/api/events/${newID()}`, { title: "x" });
+  assert.equal(unknown.status, 404, unknown.text);
+
+  const stored = await h.st.getEvent(eventID);
+  assert.equal(stored.title, "vendor reply", "none of the refused edits changed anything");
+  assert.equal(stored.projectID, "");
+  assert.equal(stored.status, "pending");
 });

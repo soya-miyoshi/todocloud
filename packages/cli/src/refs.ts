@@ -5,6 +5,7 @@
 
 import * as id from '@todocloud/core/id';
 import { ErrAmbiguous, ErrNotFound, isNotFound, type Store } from '@todocloud/core/store';
+import type { EventItem } from '@todocloud/core/store/event';
 import { Filter } from '@todocloud/core/store/filter';
 import type { Kind, Task } from '@todocloud/core/task';
 
@@ -45,7 +46,28 @@ export async function resolveRef(a: App, st: Store, ref: string): Promise<Task> 
   }
 
   if (id.ValidPrefix(trimmed)) {
-    return st.findByPrefix(id.Normalize(trimmed));
+    try {
+      return await st.findByPrefix(id.Normalize(trimmed));
+    } catch (err) {
+      // An id that is no item may be an event's, and `tdo done` on an event is
+      // a mistake worth naming: the command that does what was meant is
+      // `tdo event`, and "not found" would send the reader looking for a typo.
+      if (isNotFound(err)) {
+        let event: EventItem | undefined;
+        try {
+          event = await st.findEventByPrefix(id.Normalize(trimmed));
+        } catch {
+          event = undefined;
+        }
+        if (event !== undefined) {
+          throw usagef(
+            `${trimmed} is an event (${JSON.stringify(event.title)}), not an item; ` +
+              'events are changed with `tdo event` (occur, cancel, reopen, rm)',
+          );
+        }
+      }
+      throw err;
+    }
   }
 
   throw usagef(id.ErrBadPrefix(ref).message);
@@ -220,4 +242,40 @@ export function containsKind(kinds: readonly Kind[], k: Kind): boolean {
 /** kindList names the kinds a reference may have, for an error message. */
 export function kindList(kinds: readonly Kind[]): string {
   return kinds.join(' or ');
+}
+
+/**
+ * resolveEvent turns what was typed into an event: an id prefix first, as
+ * everywhere, and otherwise a title, compared case-insensitively. Events are
+ * named far more often than numbered, so there is no short number.
+ */
+export async function resolveEvent(st: Store, ref: string): Promise<EventItem> {
+  const trimmed = ref.trim();
+  if (trimmed === '') {
+    throw usagef('empty event reference');
+  }
+  if (id.ValidPrefix(trimmed)) {
+    try {
+      return await st.findEventByPrefix(id.Normalize(trimmed));
+    } catch (err) {
+      // Most titles are valid base32 by accident, so only a miss falls
+      // through to the title; an ambiguous prefix is an answer.
+      if (!isNotFound(err)) {
+        throw err;
+      }
+    }
+  }
+  const matches = (await st.events()).filter(
+    (e) => e.title.trim().toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (matches.length > 1) {
+    throw new Error(`more than one event is called ${JSON.stringify(trimmed)}; use its id`, {
+      cause: ErrAmbiguous,
+    });
+  }
+  const found = matches[0];
+  if (found === undefined) {
+    throw notFoundf(`no event called ${JSON.stringify(trimmed)}; \`tdo event ls --all\` lists them`);
+  }
+  return found;
 }

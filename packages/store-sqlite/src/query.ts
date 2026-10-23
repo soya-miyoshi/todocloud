@@ -27,6 +27,7 @@ import {
   Task,
 } from '@todocloud/core/task';
 
+import { eventRows, linkRows } from './events.ts';
 import {
   type Bind,
   columns,
@@ -287,6 +288,7 @@ export function loadTree(s: Store): Tree {
   const tree = new Tree(nodes);
   attachAllTags(s, nodes);
   tree.setTagStatuses(tagRows(s));
+  tree.setEvents(eventRows(s), linkRows(s));
   return tree;
 }
 

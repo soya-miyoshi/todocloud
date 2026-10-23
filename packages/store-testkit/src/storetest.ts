@@ -21,6 +21,7 @@ import {
 import {
   testCompletedByChildren,
 } from './completion.ts';
+import { testEventProjects, testEvents, testTagStatusInListing } from './events.ts';
 import {
   testFilters,
   testIDNormalization,
@@ -103,6 +104,15 @@ export function run(newStore: Factory, register: Register = test): void {
     [
       'a tag carries a status, and an inactive one holds its tasks back',
       testTagStatus,
+    ],
+    [
+      'an event holds back what waits for it, and releases it when it occurs',
+      testEvents,
+    ],
+    ['an event may belong to a project, and survives its purge', testEventProjects],
+    [
+      'a filtered listing sees the status of a tag as the availability call does',
+      testTagStatusInListing,
     ],
     ['perspectives are saved filters and nothing else', testPerspectives],
     ['a repeating task keeps its repeat and its series', testRepetition],

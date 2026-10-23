@@ -263,8 +263,11 @@ test('HTTP failure modes', async (t) => {
       handler: (res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         // One result per statement the listing sends, all of them
-        // malformed in the same way.
-        res.end('{"results":[{"type":"ok"},{"type":"ok"},{"type":"ok"}]}');
+        // malformed in the same way. A listing that needs the whole tree
+        // sends six: the rows, the tags, and the tree with the tag statuses
+        // and events it reads.
+        const ok = '{"type":"ok"}';
+        res.end(`{"results":[${[ok, ok, ok, ok, ok, ok].join(',')}]}`);
       },
       wantCode: ExitProvider,
       wantText: 'no result',
@@ -275,7 +278,7 @@ test('HTTP failure modes', async (t) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         const one =
           '{"type":"error","error":{"message":"database is locked","code":"SQLITE_BUSY"}}';
-        res.end(`{"results":[${one},${one},${one}]}`);
+        res.end(`{"results":[${[one, one, one, one, one, one].join(',')}]}`);
       },
       wantCode: ExitProvider,
       wantText: 'database is locked',

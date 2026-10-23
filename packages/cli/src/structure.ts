@@ -21,7 +21,7 @@ import {
 import { openStatuses } from '@todocloud/core/taskops/select';
 
 import { type App, type Command, type Context, type Flags, asError, usagef } from './app.ts';
-import { newItem, setFlags } from './add.ts';
+import { newItem, setFlags, waitOn } from './add.ts';
 import { parseStatuses } from './list.ts';
 import { resolveContainer, saveListing } from './refs.ts';
 import { availabilityOf, printTable, renderTask, treeError, views } from './view.ts';
@@ -66,6 +66,12 @@ export function projectCommand(a: App): Command {
         type: 'string',
         placeholder: '25m',
         usage: 'how long it will take, for example 25m',
+      },
+      'wait-on': {
+        type: 'string',
+        multiple: true,
+        placeholder: 'EVENT',
+        usage: 'hold the project until EVENT has occurred; may be repeated',
       },
       ...sharedContainerFlags,
       ...setFlags(),
@@ -165,6 +171,7 @@ async function containerAdd(
   }
 
   const t = newItem(ctx, kind, title, parent);
+  const waits = await waitOn(st, ctx);
   if (ctx.bool('sequential') && ctx.bool('parallel')) {
     throw usagef('--sequential and --parallel ask for opposite things');
   }
@@ -181,6 +188,9 @@ async function containerAdd(
     await st.add(t);
   } catch (err) {
     throw treeError(err);
+  }
+  if (waits.length > 0) {
+    await st.setWaits(t.id, waits);
   }
   await renderTask(a, st, t);
 }
@@ -273,6 +283,7 @@ const elsewhere: Readonly<Record<string, string>> = {
   estimate: '`tdo project add --estimate` and `tdo edit <ref> --estimate`',
   priority: '`tdo project add --priority` and `tdo edit <ref> --priority`',
   set: '`tdo project add --set` and `tdo edit <ref> --set`',
+  'wait-on': '`tdo project add --wait-on` and `tdo event link <event> <ref>`',
 };
 
 /**

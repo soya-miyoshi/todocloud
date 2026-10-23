@@ -26,6 +26,7 @@ import {
   type Status,
 } from '@todocloud/core/task';
 
+import { eventRowsSQL, linkRowsSQL, scanEvents, scanLinks } from './events.ts';
 import type { Arg, ExecuteResult, Value } from './protocol.ts';
 import {
   Batch,
@@ -77,6 +78,12 @@ export async function list(s: Store, f: Filter): Promise<Task[]> {
     // above.
     treeAt = b.len();
     b.add(`SELECT ${columns} FROM tasks`, true);
+    // The rules that read more than the rows: what each tag's status is and
+    // which events exist. The tags themselves are the pipeline's second
+    // result, which covers every task and not only the candidates.
+    b.add(tagRowsSQL, true);
+    b.add(eventRowsSQL, true);
+    b.add(linkRowsSQL, true);
   }
 
   let res: ExecuteResult[];
@@ -91,7 +98,14 @@ export async function list(s: Store, f: Filter): Promise<Task[]> {
     candidates = scanTasks(res[0] as ExecuteResult);
     attachTags(candidates, res[tagsAt] as ExecuteResult);
     if (treeAt >= 0) {
-      tree = treeFrom(res[treeAt] as ExecuteResult);
+      const built = treeWithNodes(res[treeAt] as ExecuteResult);
+      tree = built.tree;
+      attachTags(built.nodes, res[tagsAt] as ExecuteResult);
+      tree.setTagStatuses(scanTagRows(res[treeAt + 1] as ExecuteResult));
+      tree.setEvents(
+        scanEvents(res[treeAt + 2] as ExecuteResult),
+        scanLinks(res[treeAt + 3] as ExecuteResult),
+      );
     }
   } catch (err) {
     throw new Error(`turso: list tasks: ${messageOf(err)}`, { cause: err });
@@ -256,6 +270,8 @@ export async function loadTree(s: Store): Promise<Tree> {
   b.add(`SELECT ${columns} FROM tasks`, true);
   b.add(allTagsSQL, true);
   b.add(tagRowsSQL, true);
+  b.add(eventRowsSQL, true);
+  b.add(linkRowsSQL, true);
   let res: ExecuteResult[];
   try {
     res = await s.send(b);
@@ -271,6 +287,14 @@ export async function loadTree(s: Store): Promise<Tree> {
     throw new Error(`turso: read the tree: ${messageOf(err)}`, { cause: err });
   }
   tree.setTagStatuses(scanTagRows(res[2] as ExecuteResult));
+  try {
+    tree.setEvents(
+      scanEvents(res[3] as ExecuteResult),
+      scanLinks(res[4] as ExecuteResult),
+    );
+  } catch (err) {
+    throw new Error(`turso: read the tree: ${messageOf(err)}`, { cause: err });
+  }
   return tree;
 }
 

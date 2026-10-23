@@ -50,7 +50,7 @@ import { watchFlags, watching } from './watch.ts';
 export function filterFlags(): Flags {
   return {
     available: { type: 'boolean', usage: 'keep only items that can be worked on now (the default)' },
-    blocked: { type: 'boolean', usage: 'keep only items something is holding back' },
+    blocked: { type: 'boolean', usage: 'keep only items something is holding back: a hold, a defer date, a sequential list, a tag or an event that has not occurred' },
     deferred: { type: 'boolean', usage: 'keep only items waiting for a defer date' },
     all: { type: 'boolean', usage: 'no availability or status filter: everything but tombstones' },
     deleted: { type: 'boolean', usage: 'list the items `tdo rm` tombstoned' },

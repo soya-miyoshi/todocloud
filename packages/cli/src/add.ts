@@ -20,7 +20,7 @@ import { Draft, parseRepeat as taskopsParseRepeat, normalizeTags } from '@todocl
 
 import { type App, asError, type Command, type Context, type Flags, usagef } from './app.ts';
 import { parseMinutes } from './list.ts';
-import { resolveContainer, resolveRef } from './refs.ts';
+import { resolveContainer, resolveEvent, resolveRef } from './refs.ts';
 import { renderTask, treeError } from './view.ts';
 
 /**
@@ -60,6 +60,12 @@ export function addFlags(): Flags {
     // `aliasedString` reads whichever was given.
     notes: { type: 'string', placeholder: 'S', usage: 'free-form note', hidden: true },
     estimate: { type: 'string', placeholder: '25m', usage: 'how long it will take, for example 25m' },
+    'wait-on': {
+      type: 'string',
+      multiple: true,
+      placeholder: 'EVENT',
+      usage: 'hold the task until EVENT has occurred; may be repeated',
+    },
     repeat: {
       type: 'string',
       placeholder: 'EVERY[:method]',
@@ -230,14 +236,35 @@ export function addCommand(a: App): Command {
       const st: Store = ctx.store();
       const parent = await addParent(a, ctx, st);
       const t = newItem(ctx, KindTask, title, parent);
+      // The events are resolved before the task is written, so a reference
+      // that means nothing leaves nothing behind.
+      const events = await waitOn(st, ctx);
       try {
         await st.add(t);
       } catch (err) {
         throw treeError(err);
       }
+      if (events.length > 0) {
+        await st.setWaits(t.id, events);
+      }
       await renderTask(a, st, t);
     },
   };
+}
+
+/**
+ * waitOn reads --wait-on: the events a new item is held for, as ids. It lives
+ * here because `tdo project add` takes the same flag.
+ */
+export async function waitOn(st: Store, ctx: Context): Promise<string[]> {
+  const out: string[] = [];
+  for (const ref of ctx.strings('wait-on')) {
+    const e = await resolveEvent(st, ref);
+    if (!out.includes(e.id)) {
+      out.push(e.id);
+    }
+  }
+  return out;
 }
 
 /**

@@ -30,6 +30,8 @@ import {
   RuleSequential,
   RuleStatus,
   RuleTagStatus,
+  RuleEvent,
+  RuleAncestorEvent,
 } from '../store/store.ts';
 import type { JSONValue, Task } from '../task.ts';
 import {
@@ -432,6 +434,10 @@ export function BlockedReason(a: Availability, by: Task | undefined): string {
       return `${name} has not come up yet in its sequential list`;
     case RuleTagStatus:
       return `its tag ${quote(sanitize(a.tag))} is not active`;
+    case RuleEvent:
+      return `it is waiting for the event ${name}`;
+    case RuleAncestorEvent:
+      return `what contains it is waiting for the event ${name}`;
     case RuleAncestorTagStatus:
       return `${name}, which contains it, has the tag ${quote(sanitize(a.tag))}, which is not active`;
     default:

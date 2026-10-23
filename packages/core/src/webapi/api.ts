@@ -50,6 +50,7 @@
 
 import type { Perspective, Store, Tag } from '../store/store.ts';
 import { Availability, OrderPosition, tagKey } from '../store/store.ts';
+import { EventOccurred, EventPending, eventStatusValid } from '../store/event.ts';
 import { Filter, filterFromJSON } from '../store/filter.ts';
 import * as id from '../id.ts';
 import { NewTaskView, Views } from '../output/view.ts';
@@ -63,6 +64,7 @@ import {
   type Kind,
   type Status,
   StatusDone,
+  StatusDropped,
   type Task,
   formatTime,
   kindValid,
@@ -340,11 +342,22 @@ export class API {
     const av = await taskops.availabilityOf(this.st, tasks, now);
     const perspectives = await this.st.perspectives();
     const tags = await this.st.tags();
+    const events = await this.st.events();
+    const links = await this.st.waits();
     return {
       tasks: Views(tasks, av),
       count: tasks.length,
       perspectives: perspectives.map(perspectiveJSON),
       tags: tags.map(tagJSON),
+      // Every event, with the ids of the items waiting for it: the viewer
+      // lists what is being waited for and says what each one holds back.
+      events: events.map((e) => ({
+        ...e.toJSON(),
+        // Nothing waits for an event that has occurred: the links stay as
+        // history, but they hold nothing.
+        waiting:
+          e.status === EventOccurred ? [] : links.filter((l) => l.eventID === e.id).map((l) => l.taskID),
+      })),
       store: this.st.describe(),
       now: formatTime(now),
     };
@@ -508,6 +521,100 @@ export class API {
     }
     const res = await taskops.setStatus(this.st, [t], status, this.now());
     return this.resultPayload(res);
+  };
+
+  /**
+   * handleEventStatus is `POST /api/events/{id}/status`: an event occurs, is
+   * cancelled, or is reopened. Nothing else about an event is writable from
+   * the page; `tdo event` is the way to make, edit and link them.
+   *
+   * The answer is the event and what the change released or held, the same
+   * keys `tdo event occur --json` carries, so the viewer can say so.
+   */
+  handleEventStatus: Handler = async (r) => {
+    const raw = (r.params['id'] ?? '').trim();
+    if (!id.Valid(raw)) {
+      throw usagef(`${quote(raw)} is not an event id`);
+    }
+    const o = body(r, ['status']);
+    const given = reqString(o, 'status').trim();
+    if (!eventStatusValid(given)) {
+      throw usagef(`status must be pending, occurred or cancelled, got ${quote(given)}`);
+    }
+    const now = this.now();
+    const event = (await this.st.getEvent(raw)).clone();
+    const links = (await this.st.waits()).filter((l) => l.eventID === event.id);
+    const waiting: Task[] = [];
+    for (const l of links) {
+      const t = await this.st.get(l.taskID);
+      if (!t.deleted() && t.status !== StatusDone && t.status !== StatusDropped) {
+        waiting.push(t);
+      }
+    }
+    const before = await taskops.availabilityOf(this.st, waiting, now);
+    event.setStatus(given, now);
+    await this.st.updateEvent(event);
+    const after = await taskops.availabilityOf(this.st, waiting, now);
+    const ok = (m: Map<string, Availability>, t: Task): boolean => m.get(t.id)?.available === true;
+    const released = given === EventOccurred ? waiting.filter((t) => !ok(before, t) && ok(after, t)) : [];
+    const held = given === EventPending ? waiting.filter((t) => ok(before, t) && !ok(after, t)) : [];
+    return {
+      events: [{ ...event.toJSON(), waiting: given === EventOccurred ? [] : waiting.map((t) => t.id) }],
+      count: 1,
+      released: Views(released, after),
+      held: Views(held, after),
+    };
+  };
+
+  /**
+   * handleEventEdit is `PATCH /api/events/{id}`: the title, the note, when it
+   * is expected and which project it belongs to. A key that is absent leaves
+   * the field alone and an empty string clears it, as in a task's edit. The
+   * status is not here: it has an endpoint of its own, because changing it
+   * says what it released.
+   */
+  handleEventEdit: Handler = async (r) => {
+    const raw = (r.params['id'] ?? '').trim();
+    if (!id.Valid(raw)) {
+      throw usagef(`${quote(raw)} is not an event id`);
+    }
+    const o = body(r, ['title', 'note', 'expected_at', 'project_id']);
+    const e = (await this.st.getEvent(raw)).clone();
+    const title = optString(o, 'title');
+    if (title !== undefined) {
+      e.title = title;
+    }
+    const note = optString(o, 'note');
+    if (note !== undefined) {
+      e.note = note;
+    }
+    if (present(o, 'expected_at')) {
+      e.expectedAt = parseInstant(optString(o, 'expected_at'), 'expected_at');
+    }
+    const project = optString(o, 'project_id');
+    if (project !== undefined) {
+      const wanted = project.trim();
+      if (wanted !== '' && !id.Valid(wanted)) {
+        throw usagef(`${quote(wanted)} is not a project id`);
+      }
+      e.projectID = wanted;
+    }
+    e.updatedAt = this.now();
+    const invalid = e.validate();
+    if (invalid !== undefined) {
+      throw usagef(invalid.message);
+    }
+    await this.st.updateEvent(e);
+    const links = (await this.st.waits()).filter((l) => l.eventID === e.id);
+    return {
+      events: [
+        {
+          ...e.toJSON(),
+          waiting: e.status === EventOccurred ? [] : links.map((l) => l.taskID),
+        },
+      ],
+      count: 1,
+    };
   };
 
   handleFlag: Handler = async (r) => {

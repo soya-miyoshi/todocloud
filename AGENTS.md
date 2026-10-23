@@ -37,6 +37,14 @@ tdo done <id> --json
   carries it. The rules are `tag_status` and `ancestor_tag_status`, and both
   name the tag in `blocked_by.tag`. `tdo tag ls --json` lists the tags with
   their statuses; tags are referenced by name, never by number.
+- **An event is something waited for, not a task.** `tdo event` makes and
+  changes them; an item waits for events through links (`tdo event link`,
+  `tdo add --wait-on`). Until each has `occurred` the item is blocked with
+  rule `event` (or `ancestor_event` inside a waiting project), and
+  `blocked_by.task_id` is then an *event* id. `tdo event occur` reports
+  `released`, the items that became available, and `reopen` reports `held`.
+  A `cancelled` event keeps holding its items. Events are not in `tdo ls`. An event may belong to a project (`--project`, `project_id`); `tdo show <project>` lists its events under `events`.
+  Task objects carry `waits_on` (event ids) when they wait for any.
 - **One shape for tasks.** Every command that emits tasks emits
   `{"tasks":[…],"count":n}` — including `add`, `show`, `edit` and `next`, so
   read `.tasks[0]` where you know there is one item. `tdo next` with nothing

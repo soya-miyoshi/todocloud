@@ -85,6 +85,7 @@ import {
   statusOf,
   perspectivePath,
   tagPath,
+  eventPath,
   taskPath,
 } from '@todocloud/core/webapi/http';
 
@@ -311,6 +312,8 @@ export class Server {
       this.write('POST', taskPath('date'), this.api.handleDate),
       this.write('POST', taskPath('move'), this.api.handleMove),
       this.write('POST', taskPath('reorder'), this.api.handleReorder),
+      this.write('POST', eventPath('status'), this.api.handleEventStatus),
+      this.write('PATCH', eventPath(''), this.api.handleEventEdit),
       // Renaming a tag is a write over many tasks at once, so it carries
       // the token like every other write. There is no endpoint for a tag's
       // status or for removing one: `tdo tag hold`/`rm` are the CLI's, and

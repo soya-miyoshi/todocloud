@@ -133,6 +133,7 @@ import { removeAliasCommand, removeCommand } from './remove.ts';
 import { perspectiveCommand, repeatCommand, reviewCommand, seriesCommand } from './repeat.ts';
 import { serveCommand } from './serve.ts';
 import { showCommand } from './show.ts';
+import { eventCommand } from './event.ts';
 import { folderCommand, projectCommand } from './structure.ts';
 import { tagCommand } from './tags.ts';
 import { exportCommand, importCommand } from './transfer.ts';
@@ -366,6 +367,13 @@ export interface Command {
   usage: string;
   /** argsUsage summarises the positional arguments, e.g. "<ref>...". */
   argsUsage?: string | undefined;
+  /**
+   * details is free text `tdo <command> --help` prints under the usage line:
+   * what a command with verbs (`tdo event`) does with each, and an example.
+   * `usage` stays one line because `tdo --help` lists it beside every other
+   * command.
+   */
+  details?: string | undefined;
   /** flags are this command's own flags; the global four are added to them. */
   flags?: Flags | undefined;
   /** store says what the command needs from the store, if anything. */
@@ -1105,6 +1113,9 @@ function commandHelp(cmd: Command): string {
     'Usage:',
     `  tdo ${cmd.name} [flags]${args}`,
   ];
+  if (cmd.details !== undefined && cmd.details !== '') {
+    lines.push('', cmd.details.trimEnd());
+  }
   if (cmd.subcommands !== undefined) {
     lines.push('', 'Subcommands:', ...commandLines(cmd.subcommands));
   }
@@ -1184,6 +1195,7 @@ const registry: readonly CommandFactory[] = [
   // structure
   projectCommand,
   folderCommand,
+  eventCommand,
   tagCommand,
   // repetition and review
   repeatCommand,

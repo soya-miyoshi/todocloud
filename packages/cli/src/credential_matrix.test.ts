@@ -125,6 +125,7 @@ const matrixSubcommands: readonly { name: string; globals?: string[] }[] = [
   { name: 'forecast' },
   { name: 'project' },
   { name: 'folder' },
+  { name: 'event' },
   { name: 'tag' },
   { name: 'repeat' },
   { name: 'series' },
@@ -402,6 +403,9 @@ function matrixRows(f: Fixture): MatrixCommand[] {
     { name: 'rm', args: ['rm', '2'], mustSucceed: true },
     { name: 'rm --purge --yes', args: ['rm', '--purge', '--yes', '3'], mustSucceed: true },
     { name: 'list (the ls alias)', args: ['list'], mustSucceed: true },
+    { name: 'event add', args: ['event', 'add', 'Vendor reply'], mustSucceed: true },
+    { name: 'event ls', args: ['event', 'ls'], mustSucceed: true },
+    { name: 'event occur', args: ['event', 'occur', 'Vendor reply'], mustSucceed: true },
     { name: 'export', args: ['export'], mustSucceed: true },
     {
       name: 'export --csv',

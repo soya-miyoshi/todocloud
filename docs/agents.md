@@ -137,6 +137,19 @@ tdo project <ref> [--sequential|--parallel] [--complete-with-last] [--review 1w]
                   [--folder F]              # F empty moves it to the top level
 tdo folder add <title...> [--folder F] [--review 1mo]
 tdo folder ls
+
+# Events: things that happen outside the list, and what waits for them
+tdo event add <title...> [--project P] [--note S] [--expected D] [--for <ref>]...
+tdo event ls [--project P] [--status S]... [--all]   # default: still pending
+tdo event show <event>                    # the event, and what waits for it
+tdo event edit <event> [--title S] [--note S] [--expected D] [--project P]  # P empty unfiles it
+tdo event occur <event...>                # it happened; reports `released`
+tdo event cancel <event...>               # it will not happen
+tdo event reopen <event...>               # it has not, after all; reports `held`
+tdo event rm <event...>                   # forget it; whatever waited is free
+tdo event link <event> <ref...>           # these items wait for the event
+tdo event unlink <event> <ref...>
+tdo add <title...> --wait-on <event>...   # also: tdo project add --wait-on
 tdo tag ls [--status S] [--unused]
 tdo tag hold <tag...> | unhold <tag...> | drop <tag...>
 tdo tag rename <old> <new> | rm <tag...>
@@ -210,6 +223,7 @@ Two command-line shapes are easy to get wrong:
 One tree holds everything. A node is a **folder** (organisation; never
 actionable, never completed), a **project** (an outcome; contains tasks) or a
 **task** (an action, which may contain tasks and is then an action group).
+**Events** are not in the tree; see below.
 Containment is one `parent_id`: a folder holds folders and projects, a project
 holds tasks, a task holds tasks. **A task with no parent is in the inbox** —
 the inbox is the absence of a container, so nothing creates it and nothing can
@@ -242,9 +256,10 @@ caller never recomputes it:
 ```
 
 `blocked_by` is `null` when `available` is true. The rules are
-`not_actionable`, `deleted`, `status`, `deferred`, `tag_status`, `sequential`,
-`missing_parent`, `ancestor_deleted`, `ancestor_status`, `ancestor_deferred`,
-`ancestor_tag_status` and `ancestor_sequential`. The most specific one wins:
+`not_actionable`, `deleted`, `status`, `deferred`, `tag_status`, `event`,
+`sequential`, `missing_parent`, `ancestor_deleted`, `ancestor_status`,
+`ancestor_deferred`, `ancestor_tag_status`, `ancestor_event` and
+`ancestor_sequential`. For the two event rules `task_id` is an event id. The most specific one wins:
 an item's own deferral is reported before an ancestor's, and `task_id` names
 the item responsible — itself, the ancestor, or the sibling whose turn it is.
 
@@ -259,6 +274,70 @@ item itself is not what has to change for the hold to lift:
 `tag` is present for `tag_status` and `ancestor_tag_status` and absent for
 every other rule, so a caller switching on `rule` never has to ask whether
 the key might be there.
+
+### Events: waiting for something to happen
+
+An **event** is a reply arriving, a delivery, a meeting held. It is not work,
+so it is not a task and not in the tree: it has a table of its own, a status
+of its own and no `parent_id`, `sequential`, `repeat` or any other column that
+only means something for work. Its status is `pending` (has not happened),
+`occurred` or `cancelled`; `done`, `hold` and `drop` are for tasks and do not
+reach an event.
+
+An item **waits for** events through links (`tdo event link`, `--wait-on` at
+creation). Tasks, action groups and projects can wait; folders cannot. While
+any event an item waits for has not occurred, the item is blocked, with rule
+`event` and `task_id` naming **the event** (an event id, not a task id; the
+first still pending, in id order). Everything inside a waiting project is
+blocked with rule `ancestor_event`, again naming the event. Both rules rank
+after the item's own status, defer date and tag, and before its place in a
+sequential list.
+
+**Only `occurred` lifts it.** A `cancelled` event keeps holding its items,
+because the reason they were waiting is unresolved; `unlink` it, or say it
+occurred. A link to an event that no longer exists holds nothing back.
+
+Nothing is pushed to the waiting items. Availability is computed when it is
+asked for, so changing the event changes everything that waits for it at the
+next read. `occur` and `reopen` report what that changed.
+
+Every task object carries `waits_on`, the ids of every event it waits for —
+occurred ones included, so the dependency stays visible — when there are any,
+and omits the key when there are none. `waits_on` is derived (it comes from
+the links), so it is reserved like `blocked_by`.
+
+Events have one shape of their own, `{"events":[…],"count":n}`, each event:
+
+```json
+{"id":"01J3…","title":"Vendor reply","project_id":null,"note":null,
+ "status":"pending","expected_at":null,"occurred_at":null,"created_at":"…","updated_at":"…",
+ "waiting":["01J3…"]}
+```
+
+`waiting` is the ids of the **open** items it is holding — empty once the event
+has `occurred`, though the links stay as history (a completed or removed item
+is not waiting either). `show` adds `tasks`, those items in full with
+their availability. `occur`, `cancel` and `reopen` add `released` and
+`held` — task objects, both always present, empty where they do not apply:
+`released` is what an `occur` made available, `held` what a `reopen` blocked
+again. `rm` adds `unlinked`, how many items stopped waiting.
+`link` and `unlink` change items, so they answer with the tasks.
+
+An event may **belong to a project** (`--project P`, `project_id` in its JSON;
+null for one that belongs to none). It is a place to look and nothing more: it
+decides nothing about what waits for it. Only a project can own an event, not a
+folder or a task. An event is *in* a project if it was filed there or if an item
+inside the project waits for it (or waited, once it has occurred), so an event
+nobody filed still shows up where it matters; `tdo event ls --project` means the
+same. A project's own view lists its events: `tdo show <project>`
+and `tdo project <ref>` add `"events":[…]` to their JSON (always present for a
+project, never for another kind) and an `events:` table to the human form; the
+viewer shows them above the project's tasks, each with an undo. Purging a
+project leaves its events, owned by no one, and whatever waited for them still
+waits.
+
+An event is referenced by id prefix or by title (any case); there are no
+short numbers for events. Two events with one title are exit 6.
 
 ### Tags carry a status
 
@@ -395,12 +474,12 @@ envelope and no `null` task.
 | `perspective save`, `perspective show` | `{"perspective":{"name":"…","filter":{…},"created_at":"…","updated_at":"…"}}` |
 | `perspective ls` | `{"perspectives":[…],"count":n}` |
 | `perspective rm` | `{"removed":"<name>"}` |
-| `init` | `{"provider":"sqlite","schema_version":2,"initialized":true,"created":true}` |
-| `migrate` | `{"from":2,"to":2,"migrated":false,"backup_path":"","steps":[]}` |
-| `doctor` | `{"ok":true,"checks":[{"name":"config","ok":true,"detail":"…"}],"from":2,"to":2,"backup_path":"","steps":[]}` |
+| `init` | `{"provider":"sqlite","schema_version":3,"initialized":true,"created":true}` |
+| `migrate` | `{"from":3,"to":3,"migrated":false,"backup_path":"","steps":[]}` |
+| `doctor` | `{"ok":true,"checks":[{"name":"config","ok":true,"detail":"…"}],"from":3,"to":3,"backup_path":"","steps":[]}` |
 | `login` | see below |
-| `export` | `{"version":1,"exported_at":"…","store":"sqlite: /path/to/tasks.db","tasks":[…],"count":n,"perspectives":[…],"perspective_count":n}` |
-| `import` | `{"imported":n,"skipped":n,"perspectives_imported":n,"perspectives_skipped":n}` |
+| `export` | `{"version":1,"exported_at":"…","store":"sqlite: /path/to/tasks.db","tasks":[…],"count":n,"perspectives":[…],"perspective_count":n,"events":[…],"event_count":n,"waits":[{"task_id":"…","event_id":"…"}]}` |
+| `import` | `{"imported":n,"skipped":n,"perspectives_imported":n,"perspectives_skipped":n,"events_imported":n,"events_skipped":n,"waits_imported":n}` |
 | `version` | `{"version":"…","commit":"…","runtime":"…"}` |
 | `config` | the resolved configuration, with every secret redacted |
 | `config set` | `{"config_file":"/home/you/.config/todocloud/config.toml","created":false,"wrote":true,"changes":[{"key":"turso.url","value":"libsql://example.turso.io","previous":"","added":true,"changed":true}]}` |
@@ -420,6 +499,12 @@ comma-separated list.
 
 `export`'s `store` key names the store the archive was taken from, so an
 export is never anonymous about its origin.
+
+`export`'s `events` and `waits` are the events and the links from the items
+that wait for them, and `import` restores both: an event whose id is taken is
+skipped like a task, and links are added to what an item already waits for,
+never replacing it. With `--new-ids` the links follow the new ids. A CSV
+export has no place for either and says so on stderr.
 
 `export`'s `perspectives` are the saved queries, in the shape
 `perspective show` prints, and `import` restores them. An export is a backup
@@ -747,10 +832,11 @@ tdo ls --where client=acme --json | jq -r '.tasks[].title'
   represent them.
 - Setting a reserved name is a usage error (exit code 2). The reserved names
   are every key in the task shape above: the required fields of the model and
-  the four derived ones (`done`, `available`, `blocked_by`,
-  `next_review_at`). `priority` is **not** reserved — it is an ordinary
+  the five derived ones (`done`, `available`, `blocked_by`,
+  `next_review_at`, `waits_on`). `priority` is **not** reserved — it is an ordinary
   user-defined field with a flag and a guaranteed key, kept because it
-  predates the model.
+  predates the model. `waits_on` is derived, like `blocked_by`, and so is
+  reserved.
 
 One lossy step worth stating plainly: a title or a value containing **invalid
 UTF-8 is replaced with U+FFFD** when it passes through JSON. NUL bytes survive.

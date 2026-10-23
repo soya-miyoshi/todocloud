@@ -7,11 +7,19 @@ import * as exit from '@todocloud/core/exit';
 import * as id from '@todocloud/core/id';
 import { Detail, Row, Table } from '@todocloud/core/output/task';
 import { NewTaskView, type TaskView, Views } from '@todocloud/core/output/view';
-import { Availability, isBadParent, isCycle, type Store } from '@todocloud/core/store';
-import type { Task } from '@todocloud/core/task';
+import {
+  Availability,
+  isBadParent,
+  isCycle,
+  RuleAncestorEvent,
+  RuleEvent,
+  type Store,
+} from '@todocloud/core/store';
+import { newTask, type Task } from '@todocloud/core/task';
 import { availabilityOf as taskopsAvailabilityOf } from '@todocloud/core/taskops';
 
 import { type App, asError } from './app.ts';
+import { eventJSON, printEvents, projectEvents, projectTitles, waitingFor } from './eventview.ts';
 
 /**
  * views pairs tasks with the availability answer for each of them. The shape
@@ -49,10 +57,15 @@ export async function renderTask(a: App, st: Store, t: Task): Promise<void> {
   const av = await availabilityOf(a, st, [t]);
   const answer = av.get(t.id);
   const asked = answer !== undefined;
+  // A project also lists the events that belong to it: they are what its
+  // outline waits on, and the project's own view is where to look for them.
+  const owned = t.kind === 'project' ? await projectEvents(st, t) : [];
+  const waiting = owned.length > 0 ? await waitingFor(st) : new Map<string, Task[]>();
   if (a.out.json) {
     a.out.emit({
       tasks: [NewTaskView(t, answer ?? emptyAvailability(), asked)],
       count: 1,
+      ...(t.kind === 'project' ? { events: owned.map((e) => eventJSON(e, waiting)) } : {}),
     });
     return;
   }
@@ -66,7 +79,14 @@ export async function renderTask(a: App, st: Store, t: Task): Promise<void> {
     answer.blockedBy !== t.id
   ) {
     try {
-      by = await st.get(answer.blockedBy);
+      if (answer.rule === RuleEvent || answer.rule === RuleAncestorEvent) {
+        // The blocker is an event, which is not a task; Detail wants a task
+        // to name, so the event stands in under its own title.
+        const e = await st.getEvent(answer.blockedBy);
+        by = newTask(e.id, 'task', e.title, e.createdAt);
+      } else {
+        by = await st.get(answer.blockedBy);
+      }
     } catch {
       // Go ignored this error too: the blocking item being unreadable is no
       // reason to refuse to show the item the user asked for.
@@ -77,6 +97,10 @@ export async function renderTask(a: App, st: Store, t: Task): Promise<void> {
     new Row({ task: t, availability: answer ?? emptyAvailability(), asked }),
     by,
   );
+  if (owned.length > 0) {
+    a.out.printf('\nevents:\n');
+    printEvents(a, owned, waiting, await projectTitles(st, owned));
+  }
 }
 
 /**

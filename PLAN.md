@@ -214,6 +214,22 @@ a tag keeps its row, and its status, when its last task is finished, because
 putting a context on hold is not undone by emptying it. What this buys is rule
 2a of §3.3: one command takes a whole context out of play.
 
+An **event** is something waited for rather than done — a reply, a delivery, a
+meeting held. It is deliberately *not* a kind of task: it is never completed, it
+occurs, and a task row would have carried a dozen columns that mean nothing for
+one (sequential, repeat, estimate, review) and a status vocabulary that says
+`done` where the thing that happened is not an action. It follows the shape
+tags already have: a row of its own in `events` (`pending`, `occurred` or
+`cancelled`, with `occurred_at`, and an optional `project_id` so that a project's
+own view can list what its plan is waiting on) joined to the items it affects through
+`task_events`, so "what is waiting for this" is an index lookup. An item waits
+for events by link, and the availability rule (§3.3 rule 2b) is computed with
+the others, so changing an event needs no callback: the next read of whatever
+waits for it is the callback. A first draft stored the links in the open map
+to avoid a schema step; it was dropped for the table, because a schema bump
+costs nothing here and a dependency the database cannot see cannot be checked
+by it.
+
 Everything else set with `--set k=v` is an ordinary member of the open map and
 is flattened alongside the required fields in `--json`, exactly as before.
 
@@ -227,8 +243,12 @@ An item is **available** when all of these hold:
 1. Its `status` is `active`.
 2. Its `defer_at` is absent or in the past.
 2a. No tag it carries is `on_hold` or `dropped`.
-3. Every ancestor is `active`, no ancestor has a future `defer_at`, and no
-   ancestor carries a tag that is `on_hold` or `dropped`.
+2b. It waits for no event that has not `occurred`. A `cancelled` event still
+    holds it: the wait is unresolved, not satisfied. A link to an event that is
+    gone holds nothing.
+3. Every ancestor is `active`, no ancestor has a future `defer_at`, no
+   ancestor carries a tag that is `on_hold` or `dropped`, and no ancestor
+   waits for an event that has not `occurred`.
 4. For itself and for **every ancestor**: if that item's parent is
    `sequential`, the item is the first child of that parent which is not
    `done`, `dropped` or deleted. The rule is transitive on purpose — an action
@@ -960,6 +980,16 @@ and ignored by `tdo project <ref>`, and an order that could not be changed
 without recreating the item. The single-item `--json` envelope was merged into
 the listing shape at the same time, which is a breaking change and is why it
 happened now rather than later.
+
+**Done — events, schema version 3.** `events` and `task_events`, the two
+availability rules (`event`, `ancestor_event`), `tdo event`, `--wait-on` on
+`add` and `project add`, `waits_on` on every task object, events and links in
+`export`/`import`, and the viewer's Events list. The `Store` interface gains
+eight methods and both providers and the conformance suite follow. While
+wiring events into listings the Turso provider turned out to build the tree
+for a filtered listing without the tag statuses, so `tdo ls` there showed a
+task whose tag was on hold; the same pipeline now carries both, and the suite
+has a case for it.
 
 **Dropped — Firestore.** Built, tested and green against the pre-GTD
 interface with no new dependency, then removed when the GTD model landed; the

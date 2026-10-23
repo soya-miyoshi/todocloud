@@ -86,10 +86,39 @@ const historicalV2: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS tags_status_idx ON tags(status)`,
 ];
 
+/**
+ * historicalV3 is the schema of version 3, which added events and the links
+ * from the tasks that wait for them. Frozen on the day version 3 shipped. Do
+ * not edit it, ever.
+ */
+const historicalV3: readonly string[] = [
+  ...historicalV2,
+  `CREATE TABLE IF NOT EXISTS events (
+  id          TEXT PRIMARY KEY NOT NULL,
+  title       TEXT NOT NULL,
+  project_id  TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  note        TEXT,
+  expected_at TEXT,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  occurred_at TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+)`,
+  `CREATE INDEX IF NOT EXISTS events_status_idx ON events(status)`,
+  `CREATE INDEX IF NOT EXISTS events_project_idx ON events(project_id)`,
+  `CREATE TABLE IF NOT EXISTS task_events (
+  task_id  TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  PRIMARY KEY (task_id, event_id)
+)`,
+  `CREATE INDEX IF NOT EXISTS task_events_event_idx ON task_events(event_id)`,
+];
+
 /** historicalDDL maps a released version to the schema it created. */
 const historicalDDL: ReadonlyMap<number, readonly string[]> = new Map([
   [1, historicalV1],
   [2, historicalV2],
+  [3, historicalV3],
 ]);
 
 /**

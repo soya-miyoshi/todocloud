@@ -35,6 +35,7 @@ import {
   KeySeriesID,
   KeyStatus,
   KeyTags,
+  KeyWaitsOn,
   KeyTitle,
   KeyUpdatedAt,
   KindFolder,
@@ -443,6 +444,7 @@ test('every stored and derived name is reserved', () => {
     KeyAvailable,
     KeyBlockedBy,
     KeyNextReview,
+    KeyWaitsOn,
   ]) {
     assert.ok(
       Reserved(key),
@@ -452,7 +454,7 @@ test('every stored and derived name is reserved', () => {
   for (const key of [KeyPriority, 'client', 'due', 'notes']) {
     assert.ok(!Reserved(key), `Reserved(${key}) = true, want false: it is an ordinary open field`);
   }
-  assert.strictEqual(ReservedKeys().length, 27);
+  assert.strictEqual(ReservedKeys().length, 28);
   assert.deepStrictEqual(ReservedKeys(), [...ReservedKeys()].sort(), 'ReservedKeys is sorted');
 });
 

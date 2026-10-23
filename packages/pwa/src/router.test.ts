@@ -23,7 +23,9 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { New as newID } from '@todocloud/core/id';
 import type { Store } from '@todocloud/core/store';
+import { newEvent } from '@todocloud/core/store/event';
 
 import { openStore } from '../../store-turso/src/fakeserver.test.ts';
 import { Router } from './router.ts';
@@ -317,4 +319,56 @@ test('a store that cannot be reached fails rather than pretending', async (t) =>
   // queue and no cached list, which is the decision recorded in `main.ts`.
   assert.equal(res.status, 500);
   assert.notEqual(res.payload.error?.message, undefined);
+});
+
+test('an event is listed in the state, and occurring releases what waits for it', async (t) => {
+  const { router, st } = await newRouter(t);
+  const task = await add(router, 'Send the order');
+  const event = newEvent(newID(), 'Vendor reply', now);
+  await st.addEvent(event);
+  await st.setWaits(task.id, [event.id]);
+
+  const state = await call(router, 'GET', '/api/state');
+  const events = (state.payload as { events?: { id: string; waiting: string[] }[] }).events;
+  assert.deepEqual(events?.map((e) => e.id), [event.id]);
+  assert.deepEqual(events?.[0]?.waiting, [task.id], 'the event says who waits for it');
+  assert.equal(
+    state.payload.tasks?.find((x) => x.id === task.id)?.available,
+    false,
+    'the waiting task is blocked through the wire as well',
+  );
+
+  const res = await call(router, 'POST', `/api/events/${event.id}/status`, { status: 'occurred' });
+  assert.equal(res.status, 200, JSON.stringify(res.payload));
+  const released = (res.payload as { released?: TaskJSON[] }).released;
+  assert.deepEqual(released?.map((x) => x.id), [task.id]);
+
+  const after = await call(router, 'GET', '/api/state');
+  assert.equal(after.payload.tasks?.find((x) => x.id === task.id)?.available, true);
+
+  const bad = await call(router, 'POST', `/api/events/${event.id}/status`, { status: 'done' });
+  assert.equal(bad.status, 400);
+  const unknown = await call(router, 'POST', `/api/events/${newID()}/status`, { status: 'occurred' });
+  assert.equal(unknown.status, 404);
+});
+
+test('an event is edited through the router too', async (t) => {
+  const { router, st } = await newRouter(t);
+  const project = await add(router, 'Launch', { kind: 'project' });
+  const event = newEvent(newID(), 'Vendor reply', now);
+  await st.addEvent(event);
+
+  const res = await call(router, 'PATCH', `/api/events/${event.id}`, {
+    title: 'Vendor reply (Friday)',
+    project_id: project.id,
+    expected_at: '2026-11-05',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.payload));
+  const stored = await st.getEvent(event.id);
+  assert.equal(stored.title, 'Vendor reply (Friday)');
+  assert.equal(stored.projectID, project.id, 'filed in the project, through the wire');
+
+  const bad = await call(router, 'PATCH', `/api/events/${event.id}`, { project_id: newID() });
+  assert.equal(bad.status, 404);
+  assert.equal((await st.getEvent(event.id)).projectID, project.id, 'a refused edit changed nothing');
 });

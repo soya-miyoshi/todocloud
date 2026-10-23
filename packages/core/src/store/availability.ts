@@ -22,6 +22,7 @@ import {
   statusClosed,
   Task,
 } from '../task.ts';
+import { type EventItem, type EventLink, EventOccurred } from './event.ts';
 import {
   type Tag,
   Availability,
@@ -33,11 +34,13 @@ import {
   ErrCycle,
   RuleAncestorDeferred,
   RuleAncestorDeleted,
+  RuleAncestorEvent,
   RuleAncestorSequential,
   RuleAncestorStatus,
   RuleAncestorTagStatus,
   RuleDeferred,
   RuleDeleted,
+  RuleEvent,
   RuleMissingParent,
   RuleNotActionable,
   RuleSequential,
@@ -69,6 +72,14 @@ export class Tree {
    * names the tag the way the user wrote it.
    */
   private tagSpelling = new Map<string, string>();
+  /**
+   * eventsByID and waiting are what the event rule reads: every event, and
+   * for each task the ids of the events it waits for, in id order. A tree
+   * built without setEvents has neither, so it answers exactly as it did
+   * before events existed.
+   */
+  private eventsByID = new Map<string, EventItem>();
+  private waiting = new Map<string, string[]>();
 
   /**
    * Indexes tasks. Tombstoned tasks belong in it: they still occupy a place
@@ -112,6 +123,58 @@ export class Tree {
       this.tagStatus.set(key, tag.status);
       this.tagSpelling.set(key, tag.name);
     }
+  }
+
+  /**
+   * setEvents tells the tree which events exist and which tasks wait for
+   * them. It is separate from the constructor for the reason setTagStatuses
+   * is: the rows are further queries, and a provider that has them passes
+   * them in.
+   *
+   * A link to an event that is not in `events` is ignored, so a dangling
+   * link — a hand-edited store, a half-finished sync — never strands a task.
+   */
+  setEvents(events: readonly EventItem[], links: readonly EventLink[]): void {
+    this.eventsByID = new Map();
+    for (const e of events) {
+      this.eventsByID.set(e.id, e);
+    }
+    const waiting = new Map<string, string[]>();
+    for (const l of links) {
+      if (!this.eventsByID.has(l.eventID)) {
+        continue;
+      }
+      const ids = waiting.get(l.taskID);
+      if (ids === undefined) {
+        waiting.set(l.taskID, [l.eventID]);
+      } else if (!ids.includes(l.eventID)) {
+        ids.push(l.eventID);
+      }
+    }
+    for (const ids of waiting.values()) {
+      ids.sort(compareStrings);
+    }
+    this.waiting = waiting;
+  }
+
+  /** waitsOf returns the ids of the events a task waits for, in id order. */
+  waitsOf(id: string): string[] {
+    return [...(this.waiting.get(id) ?? [])];
+  }
+
+  /**
+   * pendingEvent reports the first event t waits for that has not occurred.
+   * Only `occurred` satisfies the wait; a cancelled event keeps holding its
+   * items (see EventCancelled).
+   */
+  private pendingEvent(t: Task): string | undefined {
+    for (const id of this.waiting.get(t.id) ?? []) {
+      const e = this.eventsByID.get(id);
+      if (e !== undefined && e.status !== EventOccurred) {
+        return e.id;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -239,6 +302,13 @@ export class Tree {
    * the way.
    */
   availability(id: string, now: Date): Availability {
+    const a = this.rules(id, now);
+    a.waitsOn = this.waitsOf(id);
+    return a;
+  }
+
+  /** rules is availability without the list of what the item waits for. */
+  private rules(id: string, now: Date): Availability {
     const t = this.byID.get(id);
     if (t === undefined) {
       return blocked(RuleMissingParent, id);
@@ -264,6 +334,12 @@ export class Tree {
     if (ownTag !== undefined) {
       return blockedByTag(RuleTagStatus, t.id, ownTag);
     }
+    // An event that has not occurred is the item's own state as well: after
+    // the tag, before its place among its siblings.
+    const ownEvent = this.pendingEvent(t);
+    if (ownEvent !== undefined) {
+      return blocked(RuleEvent, ownEvent);
+    }
     const next = this.blockingSibling(t);
     if (next !== undefined) {
       return blocked(RuleSequential, next);
@@ -285,6 +361,10 @@ export class Tree {
       const tag = this.blockingTag(a);
       if (tag !== undefined) {
         return blockedByTag(RuleAncestorTagStatus, a.id, tag);
+      }
+      const event = this.pendingEvent(a);
+      if (event !== undefined) {
+        return blocked(RuleAncestorEvent, event);
       }
       if (this.blockingSibling(a) !== undefined) {
         // §3.3 rule 4 speaks of the item's own parent, but the rule is

@@ -24,6 +24,7 @@
     "./store/historical": "./src/store/historical.ts",
     "./store/availability": "./src/store/availability.ts",
     "./store/completion": "./src/store/completion.ts",
+    "./store/event": "./src/store/event.ts",
     "./store/filter": "./src/store/filter.ts",
     "./store/version": "./src/store/version.ts",
     "./output": "./src/output/output.ts",

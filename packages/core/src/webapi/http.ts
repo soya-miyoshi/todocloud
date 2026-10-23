@@ -213,6 +213,25 @@ export function taskPath(tail: string): PathMatch {
 }
 
 /**
+ * eventPath matches `/api/events/{id}` and `/api/events/{id}/<tail>`,
+ * capturing the id, the way taskPath does for a task.
+ */
+export function eventPath(tail: string): PathMatch {
+  return (pathname) => {
+    const parts = pathname.split('/');
+    // '', 'api', 'events', id, …tail
+    if (parts.length !== (tail === '' ? 4 : 5) || parts[1] !== 'api' || parts[2] !== 'events') {
+      return undefined;
+    }
+    const eventID = parts[3] ?? '';
+    if (eventID === '' || (tail !== '' && parts[4] !== tail)) {
+      return undefined;
+    }
+    return { id: eventID };
+  };
+}
+
+/**
  * Settings is what `GET /api/settings` answers, in both front ends. The page's
  * server dialog is one piece of code; what differs is whether the front end
  * lets it change anything. `tdo serve` does not — its connection is the CLI's

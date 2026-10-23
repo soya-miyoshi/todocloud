@@ -102,6 +102,7 @@ const SHELL = [
   '/store-turso/src/client.js',
   '/store-turso/src/protocol.js',
   '/store-turso/src/query.js',
+  '/store-turso/src/events.js',
   '/store-turso/src/schema.js',
 
   '/core/src/exit.js',
@@ -114,6 +115,7 @@ const SHELL = [
   '/core/src/store/store.js',
   '/core/src/store/availability.js',
   '/core/src/store/completion.js',
+  '/core/src/store/event.js',
   '/core/src/store/filter.js',
   '/core/src/store/schema.js',
   '/core/src/store/version.js',

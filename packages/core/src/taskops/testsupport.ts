@@ -276,6 +276,38 @@ export class MemStore implements Store {
     return Promise.reject(new Error('removeTag is not used by these tests'));
   }
 
+  addEvent(): Promise<void> {
+    return Promise.reject(new Error('events are not used by these tests'));
+  }
+
+  getEvent(): Promise<never> {
+    return Promise.reject(new Error('events are not used by these tests'));
+  }
+
+  findEventByPrefix(): Promise<never> {
+    return Promise.reject(new Error('events are not used by these tests'));
+  }
+
+  events(): Promise<never[]> {
+    return Promise.resolve([]);
+  }
+
+  updateEvent(): Promise<void> {
+    return Promise.reject(new Error('events are not used by these tests'));
+  }
+
+  removeEvent(): Promise<number> {
+    return Promise.reject(new Error('events are not used by these tests'));
+  }
+
+  setWaits(): Promise<void> {
+    return Promise.reject(new Error('events are not used by these tests'));
+  }
+
+  waits(): Promise<never[]> {
+    return Promise.resolve([]);
+  }
+
   savePerspective(): Promise<void> {
     return Promise.reject(
       new Error('savePerspective is not used by these tests'),

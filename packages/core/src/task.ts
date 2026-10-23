@@ -80,6 +80,12 @@ export const KeyDone = 'done';
 export const KeyAvailable = 'available';
 export const KeyBlockedBy = 'blocked_by';
 export const KeyNextReview = 'next_review_at';
+/**
+ * KeyWaitsOn is the ids of the events an item waits for. It is derived like
+ * the others: it comes from the links table, not from the task, so a
+ * user-defined field of the same name would be shadowed by it.
+ */
+export const KeyWaitsOn = 'waits_on';
 
 // Well-known keys live in Fields but have dedicated flags and a documented
 // place in the JSON output, so they are always present in it. Priority is not
@@ -116,6 +122,7 @@ const reserved = new Set<string>([
   KeyAvailable,
   KeyBlockedBy,
   KeyNextReview,
+  KeyWaitsOn,
 ]);
 
 /**

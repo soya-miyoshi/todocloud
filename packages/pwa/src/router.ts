@@ -42,6 +42,7 @@ import {
   messageOf,
   statusOf,
   perspectivePath,
+  eventPath,
   tagPath,
   taskPath,
 } from '@todocloud/core/webapi/http';
@@ -90,6 +91,8 @@ export class Router {
       { method: 'POST', match: taskPath('date'), handler: this.api.handleDate },
       { method: 'POST', match: taskPath('move'), handler: this.api.handleMove },
       { method: 'POST', match: taskPath('reorder'), handler: this.api.handleReorder },
+      { method: 'POST', match: eventPath('status'), handler: this.api.handleEventStatus },
+      { method: 'PATCH', match: eventPath(''), handler: this.api.handleEventEdit },
       // The same three the local viewer serves. The store runs the saved
       // filter here too — in this front end that is Turso answering over
       // `fetch` rather than SQLite, which is exactly why the page must not
