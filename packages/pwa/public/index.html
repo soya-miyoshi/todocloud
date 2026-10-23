@@ -116,7 +116,7 @@
            gear the local viewer has: the theme and the server each had a
            word of their own down here, which is two controls for two of the
            several things this browser remembers. -->
-      <button type="button" id="prefs" class="icon" aria-label="Settings" aria-haspopup="dialog">&#x2699;</button>
+      <button type="button" id="prefs" class="icon" aria-label="Settings">&#x2699;</button>
       <span id="store" title="where these tasks live"></span>
       <!-- The badge on the app icon needs a permission on iOS, and a
            permission needs a tap. app.js keeps this hidden unless it is
@@ -169,6 +169,111 @@
         <span><kbd>n</kbd> capture</span>
       </span>
     </footer>
+  </section>
+
+  <!-- Settings: a page of its own, not a dialog. What is in it is what this
+       browser remembers about how the list is read; none of it is in the
+       store. -->
+  <section id="prefs-page" aria-label="Settings">
+    <header class="navbar">
+      <button type="button" id="prefs-close" class="back"><span class="chevron">&#x2039;</span><span>Back</span></button>
+      <h2>Settings</h2>
+    </header>
+
+    <div class="pane-body">
+      <form id="prefs-form" class="prefs" autocomplete="off">
+        <section class="dialog-body">
+          <h3>Appearance</h3>
+          <label>Theme
+            <select id="prefs-theme">
+              <option value="auto">auto</option>
+              <option value="light">light</option>
+              <option value="dark">dark</option>
+            </select>
+          </label>
+          <label>Sidebar width
+            <select id="prefs-sidebar">
+              <option value="small">small</option>
+              <option value="narrow">narrow</option>
+              <option value="medium">medium</option>
+              <option value="wide">wide</option>
+            </select>
+          </label>
+          <label>Inspector width
+            <select id="prefs-inspector">
+              <option value="narrow">narrow</option>
+              <option value="medium">medium</option>
+              <option value="wide">wide</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="dialog-body">
+          <h3>Forecast</h3>
+          <label>Order
+            <select id="prefs-forecast">
+              <option value="defer">defer date</option>
+              <option value="due">due date</option>
+            </select>
+          </label>
+          <label class="check">
+            <input id="prefs-forecast-done" type="checkbox">
+            Show completed tasks on a day
+          </label>
+        </section>
+
+        <section class="dialog-body">
+          <h3>Forecast badge</h3>
+          <label>Count a task when
+            <select id="prefs-badge-mode">
+              <option value="all">all of the conditions match (AND)</option>
+              <option value="any">any of the conditions match (OR)</option>
+            </select>
+          </label>
+          <label class="check">
+            <input id="prefs-badge-due" type="checkbox">
+            Due within
+            <select id="prefs-badge-days" aria-label="Days">
+              <option value="0">today</option>
+              <option value="1">1 day</option>
+              <option value="2">2 days</option>
+              <option value="3">3 days</option>
+              <option value="7">7 days</option>
+            </select>
+          </label>
+          <label>Defer state
+            <select id="prefs-badge-defer">
+              <option value="any">ignore</option>
+              <option value="deferred">deferred</option>
+              <option value="available">available</option>
+            </select>
+          </label>
+          <label class="check">
+            <input id="prefs-badge-flagged" type="checkbox">
+            Flagged
+          </label>
+        </section>
+
+        <section class="dialog-body">
+          <h3>Projects</h3>
+          <label class="check">
+            <input id="prefs-project-done" type="checkbox">
+            Show completed tasks inside a project
+          </label>
+          <label class="check"><input id="prefs-projects-active" type="checkbox"> List active projects</label>
+          <label class="check"><input id="prefs-projects-on_hold" type="checkbox"> List on-hold projects</label>
+          <label class="check"><input id="prefs-projects-done" type="checkbox"> List completed projects</label>
+          <label class="check"><input id="prefs-projects-dropped" type="checkbox"> List dropped projects</label>
+        </section>
+
+        <section class="dialog-body">
+          <h3>Data</h3>
+          <div class="actions">
+            <button type="button" id="prefs-server">Server&#8230;</button>
+          </div>
+        </section>
+      </form>
+    </div>
   </section>
 
   <!-- The inspector: one item in full. -->
@@ -453,77 +558,6 @@
      may change it. `tdo serve` may not (its connection is the CLI's
      configuration, so the fieldset below is disabled and the notice says what
      to run), and the PWA saves it in this browser. -->
-<!-- Settings: what this browser remembers about how the list is looked at.
-     Nothing in here is in the store — a preference that followed the tasks
-     would be a preference about somebody else's screen — so it is all
-     localStorage, and the dialog is filled from the live state every time
-     it opens rather than kept in step with the controls elsewhere that set
-     the same things. The database is a different question and keeps its own
-     dialog; the button at the end opens it. -->
-<dialog id="prefs-editor" aria-label="Settings">
-  <form id="prefs-form" method="dialog" autocomplete="off">
-    <header class="dialog-head">
-      <h2>Settings</h2>
-      <button type="button" class="icon" id="prefs-close" aria-label="Close">&#x2715;</button>
-    </header>
-
-    <div class="dialog-body">
-      <div class="pair">
-        <label>Theme
-          <select id="prefs-theme" name="theme">
-            <option value="auto">auto</option>
-            <option value="light">light</option>
-            <option value="dark">dark</option>
-          </select>
-        </label>
-        <label>Sidebar width
-          <select id="prefs-sidebar" name="sidebar">
-            <option value="small">small</option>
-            <option value="narrow">narrow</option>
-            <option value="medium">medium</option>
-            <option value="wide">wide</option>
-          </select>
-        </label>
-        <label>Inspector width
-          <select id="prefs-inspector" name="inspector">
-            <option value="narrow">narrow</option>
-            <option value="medium">medium</option>
-            <option value="wide">wide</option>
-          </select>
-        </label>
-      </div>
-
-      <label>Forecast order
-        <select id="prefs-forecast" name="forecast">
-          <option value="defer">defer date</option>
-          <option value="due">due date</option>
-        </select>
-      </label>
-
-      <label class="check">
-        <input id="prefs-project-done" name="project_done" type="checkbox">
-        Keep completed actions on screen inside a project
-      </label>
-      <p class="hint">A project is a plan, so what is finished is part of
-        where it has got to. Every other view is a list of work and never
-        shows it; the Completed perspective is the whole store's history.</p>
-
-      <label class="check">
-        <input id="prefs-forecast-done" name="forecast_done" type="checkbox">
-        Keep completed actions on screen on a Forecast day
-      </label>
-      <p class="hint">A single day is a record as well as a plan, so what was
-        finished on it can be part of what it says. The whole Forecast never
-        shows completed actions; this is one day of it, and the rows go after
-        the work, in the order they were done.</p>
-
-      <div class="actions">
-        <button type="button" id="prefs-server">Server&#8230;</button>
-      </div>
-    </div>
-  </form>
-</dialog>
-
 <dialog id="settings-editor" aria-label="Server">
   <form id="settings-form" method="dialog" autocomplete="off">
     <header class="dialog-head">
