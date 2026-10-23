@@ -651,13 +651,13 @@ function setProjectsShow(status, on) {
 const ForecastBadgeKey = 'tdo.badge.forecast';
 
 /**
- * @typedef {{mode: 'all' | 'any', dueOn: boolean, dueDays: number, defer: 'any' | 'deferred' | 'available', flagged: boolean}} BadgeRule
+ * @typedef {{mode: 'all' | 'any', dueOn: boolean, dueDays: number, defer: 'any' | 'deferred' | 'started', flagged: boolean}} BadgeRule
  */
 
 /** @type {BadgeRule} */
 const forecastBadgeDefault = { mode: 'all', dueOn: true, dueDays: 0, defer: 'any', flagged: false };
 const badgeDueDays = [0, 1, 2, 3, 7];
-const badgeDeferStates = ['any', 'deferred', 'available'];
+const badgeDeferStates = ['any', 'deferred', 'started'];
 
 /** @returns {BadgeRule} */
 function loadForecastBadge() {
@@ -678,17 +678,20 @@ function loadForecastBadge() {
 
 let forecastBadge = loadForecastBadge();
 
-// Due within N days counts what is overdue as well. Deferred is a defer date
-// still ahead of us; a task with no defer date is available.
+// Due within N days counts what is overdue as well. A defer date is the day
+// work is meant to start, so `started` is a defer date that has come (today
+// or earlier, by the calendar like `arrived`) and `deferred` one still ahead.
+// A task with no defer date is neither.
 function forecastBadgeMatches(t) {
   const r = forecastBadge;
-  const deferred = Boolean(t.defer_at) && !passed(t.defer_at);
+  const deferred = Boolean(t.defer_at) && calendarDays(t.defer_at) > 0;
+  const started = Boolean(t.defer_at) && calendarDays(t.defer_at) <= 0;
   // Only the conditions that are switched on take part. None on is the whole
   // Forecast, whichever way they are combined.
   const checks = [];
   if (r.dueOn) checks.push(Boolean(t.due_at) && calendarDays(t.due_at) <= r.dueDays);
   if (r.defer === 'deferred') checks.push(deferred);
-  if (r.defer === 'available') checks.push(!deferred);
+  if (r.defer === 'started') checks.push(started);
   if (r.flagged) checks.push(Boolean(t.flagged));
   if (checks.length === 0) return true;
   return r.mode === 'any' ? checks.some(Boolean) : checks.every(Boolean);
@@ -3544,7 +3547,7 @@ $select('#prefs-theme').onchange = (event) => setTheme(/** @type {HTMLInputEleme
     setForecastBadge({ dueDays: Number(/** @type {HTMLSelectElement} */ (event.target).value) });
   $select('#prefs-badge-defer').onchange = (event) => {
     const value = /** @type {HTMLSelectElement} */ (event.target).value;
-    if (value === 'any' || value === 'deferred' || value === 'available') setForecastBadge({ defer: value });
+    if (value === 'any' || value === 'deferred' || value === 'started') setForecastBadge({ defer: value });
   };
   $input('#prefs-badge-flagged').onchange = (event) =>
     setForecastBadge({ flagged: /** @type {HTMLInputElement} */ (event.target).checked });
