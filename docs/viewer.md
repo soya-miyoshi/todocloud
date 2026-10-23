@@ -22,9 +22,13 @@ knowing:
   allows it the icon carries a badge: how many tasks are due today or are
   already late.
 - **Events are there too.** An event is something you are waiting for (a
-  reply, a delivery); `tdo event` makes them. *Other Perspectives → Events*
-  lists what is pending, with the ones that occurred under their own caption,
-  and a project's own view lists the events that belong to it — filed there, or waited for by one of its tasks, even after they occurred — above its tasks; in the sidebar's Projects list, a project that is open shows them (marked ◷, with how many items wait for each) before its tasks.
+  reply, a delivery); `tdo event` makes them. The *Events* tile, above Review,
+  lists what is pending; the ones that occurred stay out of it until *Show
+  occurred* (or the Events section of the settings page) turns them on, and
+  then they sit under their own caption. The settings page also has *Count
+  blocked tasks in the calendar*, which decides whether the week's day
+  numbers (and the day each one opens) include tasks that are waiting on
+  something. and a project's own view lists a project's own view lists the events that belong to it — filed there, or waited for by one of its tasks, even after they occurred — above its tasks; in the sidebar's Projects list, a project that is open shows them (marked ◷, with how many items wait for each) before its tasks.
   Tapping a row opens the event in the inspector — its full title, note,
   expected date, project and the items waiting for it, all editable except the
   waiting items — and the circle on a row, or the button there, says it

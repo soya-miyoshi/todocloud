@@ -527,6 +527,18 @@ const PERSPECTIVES = [
     pick: () => false,
   },
   {
+    // What is being waited for, above Review: the events that have not
+    // occurred. They are not tasks, so this is a list of its own like Tags
+    // (`rows: 'events'`); tapping an event's circle says it occurred, which
+    // releases what waited for it. The tile's number is the events still
+    // pending; the occurred ones are listed only while `eventsShowOccurred`
+    // is on. `pick` still has to exist, because every tile asks its spec for
+    // a count, and `badge` stands in for it here.
+    key: 'events', label: 'Events', tint: 'teal', glyph: '◔', rows: 'events', wide: true,
+    pick: () => false,
+    badge: () => pendingEvents().length,
+  },
+  {
     key: 'review', label: 'Review', tint: 'violet', glyph: '↻', wide: true,
     pick: (t) => t.next_review_at && isOpen(t),
     badge: (items) => items.filter((t) => passed(t.next_review_at)).length,
@@ -536,11 +548,6 @@ const PERSPECTIVES = [
 // Other Perspectives, which OmniFocus keeps collapsed behind a Show: the
 // views that answer a question about the list rather than offering work.
 const OTHERS = [
-  // What is being waited for: the events that have not occurred yet. They are
-  // not tasks, so this is a list of its own like Tags (`rows: 'events'`);
-  // tapping an event's circle says it occurred, which releases what waited
-  // for it. `count` stands in for `pick`, which counts tasks.
-  { key: 'events', label: 'Events', rows: 'events', pick: () => false, count: () => pendingEvents().length },
   { key: 'blocked', label: 'Blocked', pick: (t) => isOpen(t) && t.available === false },
   { key: 'all', label: 'All', pick: (t) => isOpen(t) },
   { key: 'done', label: 'Completed', pick: (t) => isClosed(t), sort: (a, b) => (b.completed_at || '').localeCompare(a.completed_at || '') },
@@ -684,6 +691,21 @@ function loadForecastBlocked() {
 
 let forecastBlocked = loadForecastBlocked();
 const forecastHides = (t) => forecastBlocked === 'hide' && hasBlocker(t);
+
+// Whether the week's calendar counts a task something is blocking. Its own
+// switch, apart from `forecastBlocked`: a day can keep its blocked tasks out
+// of the number while the Forecast list still shows them dimmed. The day's
+// rows follow the count, since a day that says 2 must open on two.
+const CalendarBlockedKey = 'tdo.calendar.blocked';
+let calendarCountsBlocked = remembered(CalendarBlockedKey, '') !== 'skip';
+const calendarSkips = (t) => !calendarCountsBlocked && hasBlocker(t);
+
+/** @param {boolean} on */
+function setCalendarCountsBlocked(on) {
+  calendarCountsBlocked = on;
+  remember(CalendarBlockedKey, on ? 'count' : 'skip');
+  render();
+}
 
 /** @param {string} mode */
 function setForecastBlocked(mode) {
@@ -1598,10 +1620,10 @@ const forecastCell = (key) => forecastDays().find((c) => c.key === key);
 // the number of rows the day opens, and a project with a due date was in
 // both the count and the list.
 const dueOn = (cell) => state.tasks.filter(
-  (t) => t.kind === 'task' && t.due_at && isOpen(t) && !forecastHides(t) && cell.dueMatch(calendarDays(t.due_at)));
+  (t) => t.kind === 'task' && t.due_at && isOpen(t) && !forecastHides(t) && !calendarSkips(t) && cell.dueMatch(calendarDays(t.due_at)));
 
 const startsOn = (cell) => state.tasks.filter(
-  (t) => t.kind === 'task' && t.defer_at && isOpen(t) && !forecastHides(t) && cell.startMatch(calendarDays(t.defer_at)));
+  (t) => t.kind === 'task' && t.defer_at && isOpen(t) && !forecastHides(t) && !calendarSkips(t) && cell.startMatch(calendarDays(t.defer_at)));
 
 // completedOn is the day as a record rather than a plan: what was finished
 // on it. Not counted on the cell and not in any badge — a day's number means
@@ -1932,13 +1954,29 @@ function eventHeading(text) {
   return el('li', { className: 'group-head', textContent: text });
 }
 
-// eventRows is the Events perspective: what is being waited for, then — under
-// their own caption, so the list stays about what is still to come — the
-// events that occurred or were cancelled, each with its undo.
+// Whether the Events list also shows what occurred or was cancelled. Off by
+// default: the list is for what is still to come, and the occurred ones are
+// one tap away. This browser's, like the other list preferences.
+const EventsShowOccurredKey = 'tdo.events.occurred';
+let eventsShowOccurred = remembered(EventsShowOccurredKey, '') === 'shown';
+
+/** @param {boolean} on */
+function setEventsShowOccurred(on) {
+  eventsShowOccurred = on;
+  remember(EventsShowOccurredKey, on ? 'shown' : 'hidden');
+  render();
+}
+
+// eventRows is the Events perspective: what is being waited for, then — when
+// `eventsShowOccurred` is on, under their own caption so the list stays about
+// what is still to come — the events that occurred or were cancelled, each
+// with its undo. When it is off, a row at the bottom says how many are
+// hidden and turns them on.
 function eventRows() {
   const all = state.events || [];
   const pending = all.filter((e) => e.status === 'pending');
-  const done = all.filter((e) => e.status !== 'pending')
+  const finished = all.filter((e) => e.status !== 'pending');
+  const done = (eventsShowOccurred ? finished : [])
     .sort((a, b) => (b.occurred_at || b.updated_at || '').localeCompare(a.occurred_at || a.updated_at || ''));
   const rows = [];
   if (pending.length === 0) {
@@ -1949,6 +1987,14 @@ function eventRows() {
   rows.push(...pending.map((e) => eventRow(e, true)));
   if (done.length) {
     rows.push(eventHeading('Occurred'), ...done.map((e) => eventRow(e, true)));
+  }
+  if (finished.length) {
+    rows.push(el('li', { className: 'group-head' }, [el('button', {
+      type: 'button',
+      className: 'disclose',
+      textContent: eventsShowOccurred ? 'Hide occurred' : `Show occurred (${finished.length})`,
+      onclick: () => setEventsShowOccurred(!eventsShowOccurred),
+    })]));
   }
   return rows;
 }
@@ -3881,6 +3927,8 @@ function fillPrefs() {
   $input('#prefs-badge-flagged').checked = forecastBadge.flagged;
   $input('#prefs-badge-skip-blocked').checked = forecastBadge.skipBlocked;
   $select('#prefs-forecast-blocked').value = forecastBlocked;
+  $input('#prefs-calendar-blocked').checked = calendarCountsBlocked;
+  $input('#prefs-events-occurred').checked = eventsShowOccurred;
 }
 
 if (maybe('#prefs')) {
@@ -3913,6 +3961,10 @@ $select('#prefs-theme').onchange = (event) => setTheme(/** @type {HTMLInputEleme
     setForecastBadge({ skipBlocked: /** @type {HTMLInputElement} */ (event.target).checked });
   $select('#prefs-forecast-blocked').onchange = (event) =>
     setForecastBlocked(/** @type {HTMLSelectElement} */ (event.target).value);
+  $input('#prefs-calendar-blocked').onchange = (event) =>
+    setCalendarCountsBlocked(/** @type {HTMLInputElement} */ (event.target).checked);
+  $input('#prefs-events-occurred').onchange = (event) =>
+    setEventsShowOccurred(/** @type {HTMLInputElement} */ (event.target).checked);
   $input('#prefs-badge-flagged').onchange = (event) =>
     setForecastBadge({ flagged: /** @type {HTMLInputElement} */ (event.target).checked });
   // Where the database is is a question about the store and not about this

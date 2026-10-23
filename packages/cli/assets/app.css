@@ -37,6 +37,7 @@
   --mint: #30c86b;
   --purple: #bf5af2;
   --violet: #8e63d9;
+  --teal: #14a8b8;        /* events */
 
   --over: #ff3b30;        /* overdue */
   --soon: #ff9f0a;        /* due soon */
@@ -1113,7 +1114,18 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   }
   .pane-body { overflow: visible; }
   .navbar { position: sticky; top: 0; z-index: 5; }
-  .toolbar { position: sticky; bottom: 0; z-index: 5; }
+  /* Pinned to the screen's bottom edge rather than `sticky`. A sticky bar
+     is placed by where its pane ends, so under a tall list (Projects opened
+     on Home) it travelled with the content and came to rest mid-screen on
+     iOS. The pane body's bottom padding is what keeps the last row clear of
+     it. */
+  .toolbar {
+    position: fixed;
+    left: env(safe-area-inset-left);
+    right: env(safe-area-inset-right);
+    bottom: 0;
+    z-index: 5;
+  }
 
   body[data-pane="home"] #sidebar,
   body[data-pane="outline"] #list,
