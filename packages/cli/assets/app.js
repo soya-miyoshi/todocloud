@@ -1062,6 +1062,20 @@ function eventByID(id) {
   return id ? (state.events || []).find((e) => e.id === id) : undefined;
 }
 
+// selectInProject is a click on a row under a project in the Projects tree:
+// the item goes to the inspector, as `selectItem` does, and the outline
+// becomes the project it is under, so it is read in place among its
+// siblings rather than beside whatever list happened to be open. `peekSide`
+// does the same for `j` and `k`.
+/**
+ * @param {Task} project
+ * @param {string} id
+ */
+function selectInProject(project, id) {
+  view = { kind: 'project', key: project.id };
+  selectItem(id);
+}
+
 function selectItem(id) {
   // A pending edit belongs to the item that was on screen when it was
   // typed, so it goes up before the inspector shows another one.
@@ -1897,7 +1911,7 @@ function treeRows() {
     const own = eventsInProject(p);
     for (const e of [...own.filter((x) => x.status === 'pending'), ...own.filter((x) => x.status !== 'pending')]) {
       const waiting = (e.waiting || []).length;
-      rows.push(navRow(e.title, waiting > 0 ? waiting : null, selected === e.id, () => selectItem(e.id), {
+      rows.push(navRow(e.title, waiting > 0 ? waiting : null, selected === e.id, () => selectInProject(p, e.id), {
         depth: 1,
         held: e.status !== 'pending',
         mark: el('span', { textContent: '\u25f7' }),
@@ -1905,7 +1919,7 @@ function treeRows() {
     }
     for (const x of kids) {
       const depth = parentsOf(x).filter((q) => q.id !== p.id && inSubtree(q, p.id)).length + 1;
-      const child = navRow(x.title, null, selected === x.id, () => selectItem(x.id), { depth, id: x.id });
+      const child = navRow(x.title, null, selected === x.id, () => selectInProject(p, x.id), { depth, id: x.id });
       draggable(child.querySelector('.nav-row'), x, x);
       rows.push(child);
     }
