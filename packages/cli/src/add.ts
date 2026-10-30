@@ -50,7 +50,7 @@ export function addFlags(): Flags {
     project: { type: 'string', placeholder: 'P', usage: 'put the task in project P' },
     parent: { type: 'string', placeholder: 'REF', usage: 'put the task under REF, making an action group' },
     inbox: { type: 'boolean', usage: 'capture to the inbox, which is the default' },
-    defer: { type: 'string', placeholder: 'D', usage: 'not available before D' },
+    defer: { type: 'string', placeholder: 'D', usage: 'not available before D, YYYY-MM-DD or RFC 3339' },
     due: { type: 'string', placeholder: 'D', usage: 'due date, YYYY-MM-DD or RFC 3339' },
     flag: { type: 'boolean', usage: 'flag the new item' },
     tag: { type: 'string', multiple: true, placeholder: 'TAGS', usage: 'comma-separated TAGS; may be repeated' },
@@ -69,7 +69,7 @@ export function addFlags(): Flags {
     repeat: {
       type: 'string',
       placeholder: 'EVERY[:method]',
-      usage: 'repeat EVERY[:method], for example 1w or 1mo:last-friday:fixed',
+      usage: 'repeat EVERY[:method], for example 1w or 1mo:last-friday; `tdo repeat --help` lists both',
     },
     ...setFlags(),
   };
@@ -205,6 +205,16 @@ export function newItem(ctx: Context, kind: Kind, title: string, parent: Task | 
 }
 
 /**
+ * whenHelp is how a date is written, for the help of every command that takes
+ * one. parseDue reads these two forms and nothing else, so there is no
+ * relative spelling to document, and the help says so rather than leaving
+ * `tomorrow` to be found out by trying it.
+ */
+export const whenHelp = `A date (D, <when>) is YYYY-MM-DD or RFC 3339. A plain date is 00:00 UTC on
+that day; for a local time, write the offset: 2026-11-05T09:00:00+09:00.
+There is no relative form such as tomorrow or +3d.`;
+
+/**
  * parseInstant reads a --defer / --due value. A plain date means that day at
  * midnight UTC, which is what task.parseDue returns.
  */
@@ -226,6 +236,17 @@ export function addCommand(a: App): Command {
     name: 'add',
     usage: 'capture a task, to the inbox unless it is given a home',
     argsUsage: '<title...>',
+    details: `The title is every argument joined, so quoting it is optional. Without
+--project or --parent the task goes to the inbox; \`tdo inbox process\` files it
+later.
+
+${whenHelp}
+
+Examples:
+  tdo add Call the dentist
+  tdo add "Send the invoice" --project Work --defer 2026-11-03 --due 2026-11-07
+  tdo add "Water the plants" --repeat 3d:from_completion --tag home
+  tdo add "Send the order" --wait-on "Vendor reply"`,
     flags: addFlags(),
     store: 'write',
     async run(ctx: Context): Promise<void> {

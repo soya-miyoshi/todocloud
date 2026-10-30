@@ -111,7 +111,7 @@ import { open as openTurso, openExisting as openExistingTurso } from '@todocloud
 
 import * as config from './config.ts';
 import * as keyring from './keyring.ts';
-import { addCommand } from './add.ts';
+import { addCommand, whenHelp } from './add.ts';
 import { configCommand, doctorCommand, initCommand, migrateCommand, versionCommand } from './admin.ts';
 import { editCommand } from './edit.ts';
 import { forecastCommand } from './forecast.ts';
@@ -129,6 +129,7 @@ import {
   unflagCommand,
   unholdCommand,
 } from './mark.ts';
+import { refHelp } from './refs.ts';
 import { removeAliasCommand, removeCommand } from './remove.ts';
 import { perspectiveCommand, repeatCommand, reviewCommand, seriesCommand } from './repeat.ts';
 import { serveCommand } from './serve.ts';
@@ -1090,16 +1091,59 @@ function writeHelp(a: App, cmd: Command | undefined, commands: readonly Command[
   a.out.printf(cmd === undefined ? rootHelp(commands) : commandHelp(cmd));
 }
 
+/**
+ * helpGroups sorts `tdo --help` by what a command is for, so that add, ls and
+ * done are not read in the same list as init and migrate. The groups follow
+ * the registry's order. A command in no group is still listed, under Other,
+ * rather than dropped; app.test.ts keeps that group empty.
+ */
+export const helpGroups: readonly { title: string; names: readonly string[] }[] = [
+  { title: 'Capture', names: ['add', 'inbox'] },
+  { title: 'Look', names: ['ls', 'show', 'next', 'forecast', 'serve'] },
+  {
+    title: 'Change',
+    names: ['done', 'undone', 'drop', 'hold', 'unhold', 'flag', 'unflag', 'defer', 'due', 'mv', 'edit', 'rm'],
+  },
+  { title: 'Organise', names: ['project', 'folder', 'event', 'tag'] },
+  { title: 'Repeat and review', names: ['repeat', 'series', 'review', 'perspective'] },
+  {
+    title: 'Set up and move data',
+    names: ['init', 'migrate', 'config', 'login', 'doctor', 'export', 'import', 'version'],
+  },
+];
+
 function rootHelp(commands: readonly Command[]): string {
   const lines: string[] = [
     'tdo - keep a todo list in a database you own',
     '',
     'Usage:',
     '  tdo [global flags] <command> [flags] [arguments]',
-    '',
-    'Commands:',
   ];
-  lines.push(...commandLines(commands));
+  const shown = commands.filter((c) => c.hidden !== true);
+  // One width over every group, so the summaries line up down the page.
+  const width = shown.reduce((w, c) => Math.max(w, c.name.length), 0);
+  const grouped = new Set(helpGroups.flatMap((g) => g.names));
+  const groups = [
+    ...helpGroups.map((g) => ({ title: g.title, cmds: shown.filter((c) => g.names.includes(c.name)) })),
+    { title: 'Other', cmds: shown.filter((c) => !grouped.has(c.name)) },
+  ];
+  for (const g of groups) {
+    if (g.cmds.length > 0) {
+      lines.push('', `${g.title}:`, ...commandLines(g.cmds, width));
+    }
+  }
+  lines.push(
+    '',
+    refHelp,
+    '',
+    whenHelp,
+    '',
+    'Examples:',
+    '  tdo add "Send the invoice" --project Work --defer 2026-11-03 --due 2026-11-07',
+    '  tdo ls',
+    '  tdo done 2',
+    '  tdo defer 3 2026-11-10',
+  );
   lines.push('', 'Global flags:', ...flagLines(globalFlags));
   lines.push('', 'Run `tdo <command> --help` for a command and its flags.');
   return `${lines.join('\n')}\n`;
@@ -1127,9 +1171,9 @@ function commandHelp(cmd: Command): string {
   return `${lines.join('\n')}\n`;
 }
 
-function commandLines(commands: readonly Command[]): string[] {
+function commandLines(commands: readonly Command[], width?: number): string[] {
   const shown = commands.filter((c) => c.hidden !== true);
-  const width = shown.reduce((w, c) => Math.max(w, c.name.length), 0);
+  width ??= shown.reduce((w, c) => Math.max(w, c.name.length), 0);
   return shown.map((c) => `  ${c.name.padEnd(width)}  ${c.usage}`);
 }
 

@@ -16,6 +16,7 @@ import {
   type Context,
   commandTable,
   hasFlag,
+  helpGroups,
   usagef,
 } from './app.ts';
 import { newHarness } from './testsupport.ts';
@@ -186,6 +187,17 @@ test('the root help lists every command and the global flags', async (t: TestCon
     assert.ok(got.stdout.includes(want), `the help omits ${want}: ${got.stdout}`);
   }
   assert.equal(got.stderr, '', 'help is the result, so it goes to stdout');
+});
+
+// A command left out of helpGroups would still be listed, under Other, but
+// that group is a safety net, not a place for a command to live.
+test('every command the help shows is in exactly one group', () => {
+  const a = new App({});
+  const names = helpGroups.flatMap((g) => g.names);
+  assert.equal(new Set(names).size, names.length, 'a command is in two groups');
+  for (const c of commandTable(a).filter((c) => c.hidden !== true)) {
+    assert.ok(names.includes(c.name), `${c.name} is in no help group`);
+  }
 });
 
 test("a command's help names its own flags", async (t: TestContext) => {

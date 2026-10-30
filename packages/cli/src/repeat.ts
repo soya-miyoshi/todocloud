@@ -27,6 +27,26 @@ export function repeatCommand(a: App): Command {
     name: 'repeat',
     usage: 'make an item repeat, or end its series',
     argsUsage: '<ref> <every>[:method] | <ref> --stop',
+    details: `When a repeating item is completed, \`tdo done\` creates the next one. <every>
+is a number and a unit: d (days), w (weeks), mo (months) or y (years), as in
+3d, 2w, 1mo or 1y. A month or year interval may name a weekday in it, as
+first-, second-, third-, fourth-, fifth- or last- with monday to sunday:
+1mo:last-friday, 1y:first-monday.
+
+The method says what the next dates are counted from:
+  fixed            the previous instance's own dates, a calendar that can fall
+                   behind when it is done late (the default)
+  from_completion  the moment it was done: "3 days after I last did it"; the
+                   gap between its defer and due dates is kept
+  defer_another    the moment it was done, moving only the defer date; the
+                   due date stays where it was
+
+Examples:
+  tdo repeat 3 1w
+  tdo repeat 3 1mo:last-friday
+  tdo repeat 3 3d:from_completion
+  tdo repeat 3 1mo:last-friday:defer_another
+  tdo repeat 3 --stop`,
     store: 'write',
     flags: {
       stop: { type: 'boolean', usage: 'end the series, leaving its history in place' },
@@ -200,6 +220,21 @@ export function perspectiveCommand(a: App): Command {
     name: 'perspective',
     usage: 'save, list, show or remove a saved query',
     argsUsage: 'save <name> -- <ls flags...> | ls | show <name> | rm <name>',
+    details: `A perspective is a named \`tdo ls\`: the filter is saved, never its results, so
+it always lists what matches now. The \`tdo ls\` flags to save come after
+\`--\`, which marks them as belonging to the saved query rather than to this
+command; without it they are refused. The viewer lists perspectives too.
+
+Verbs:
+  save <name> -- <ls flags...>  save the query, replacing one of the same name
+  ls                            list the saved queries
+  show <name>                   print one saved query
+  rm <name>                     remove one; nothing it listed is touched
+
+Examples:
+  tdo perspective save errands -- --tag errands --flagged
+  tdo ls --perspective errands
+  tdo perspective save this-week -- --due-before 2026-11-08 --sort due`,
     async run(ctx: Context): Promise<void> {
       const args = ctx.args;
       if (args.length === 0) {

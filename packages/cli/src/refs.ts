@@ -20,6 +20,16 @@ import * as shortref from './shortref.ts';
 export const shortRefDigits = 6;
 
 /**
+ * refHelp is how an item is named on the command line, for `tdo --help` and
+ * the commands that take a <ref>. It is the order resolveRef and
+ * resolveContainer follow, and the listings that call saveListing.
+ */
+export const refHelp = `An item (<ref>, REF) is named by its short number, the row number the last
+listing printed (ls, inbox, forecast, review, series, project ls), or by a
+prefix of its id, as in \`tdo done 01J3\`. A listing with --json does not
+renumber. A project (P) or folder (F) may also be named by its title.`;
+
+/**
  * resolveRef turns a reference typed on the command line into a task.
  *
  * The order is fixed: a short number from the last `tdo ls` first, because

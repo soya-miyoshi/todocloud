@@ -22,9 +22,9 @@ import {
   setStatus,
 } from '@todocloud/core/taskops';
 
-import { parseInstant } from './add.ts';
+import { parseInstant, whenHelp } from './add.ts';
 import { type App, type Command, type CommandFactory, type Context, usagef } from './app.ts';
-import { resolveContainer, resolveRef, resolveRefs } from './refs.ts';
+import { refHelp, resolveContainer, resolveRef, resolveRefs } from './refs.ts';
 import { availabilityOf, renderTasks, report, treeError, views } from './view.ts';
 
 /** doneCommand is `tdo done`: completion, and the successor of a repeat. */
@@ -114,6 +114,14 @@ export function dateCommand(a: App, name: string, usage: string, field: DateFiel
     name,
     usage,
     argsUsage: '<ref...> <when|--clear>',
+    details: `${whenHelp}
+
+${refHelp}
+
+Examples:
+  tdo ${name} 3 2026-11-10
+  tdo ${name} 1 2 4 2026-11-10T18:00:00+09:00
+  tdo ${name} 3 --clear`,
     store: 'write',
     flags: {
       clear: { type: 'boolean', usage: 'remove the date instead of setting one' },

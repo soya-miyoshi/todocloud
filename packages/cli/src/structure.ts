@@ -60,7 +60,7 @@ export function projectCommand(a: App): Command {
         usage: 'complete the project when its last child is done',
       },
       'needs-review': { type: 'boolean', usage: 'list only the projects due for review' },
-      defer: { type: 'string', placeholder: 'D', usage: 'not available before D' },
+      defer: { type: 'string', placeholder: 'D', usage: 'not available before D, YYYY-MM-DD or RFC 3339' },
       due: { type: 'string', placeholder: 'YYYY-MM-DD', usage: 'due date, YYYY-MM-DD or RFC 3339' },
       estimate: {
         type: 'string',
