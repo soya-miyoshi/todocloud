@@ -111,9 +111,21 @@ function rejectForeignFlags(ctx: Context, verb: string): void {
 export function eventCommand(a: App): Command {
   return {
     name: 'event',
-    usage: 'things that happen outside the list, and the items waiting for them',
+    usage: 'blockers: things you wait for to happen, and the items waiting for them',
     argsUsage: '<verb> [arguments]',
-    details: `Verbs:
+    details: `An event is a blocker: something outside your control that has to happen
+before you can carry out a task, such as a vendor's reply, a delivery or a
+colleague's sign-off. It is a passive item. There is nothing to do about it
+but watch for it and wait, which is why it is not a task: a task is something
+you do and complete, while an event is something you observe, and it occurs.
+
+Add an event to record what you are waiting for, and link the tasks or
+projects it blocks to it. They stay blocked, out of \`tdo ls\`, until you mark
+the event occurred, and then they are available again without your touching
+them. Use an event rather than a deferred date when you do not know when the
+blocker will clear: --expected records a guess and releases nothing.
+
+Verbs:
   add <title...>           add an event that has not happened yet (--project P files it)
   ls                       list events; the pending ones unless --status or --all
                            (--project P: only that project's)
