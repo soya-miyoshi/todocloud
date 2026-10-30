@@ -372,3 +372,18 @@ test('an event is edited through the router too', async (t) => {
   assert.equal(bad.status, 404);
   assert.equal((await st.getEvent(event.id)).projectID, project.id, 'a refused edit changed nothing');
 });
+
+test('an event is made and linked through the router too', async (t) => {
+  const { router, st } = await newRouter(t);
+  const task = await add(router, 'Send the order');
+
+  const made = await call(router, 'POST', '/api/events', { title: 'Vendor reply', for: [task.id] });
+  assert.equal(made.status, 200, JSON.stringify(made.payload));
+  const [event] = await st.events();
+  assert.equal(event?.title, 'Vendor reply');
+  assert.deepEqual((await st.waits()).map((l) => l.taskID), [task.id], 'made already waited for');
+
+  const unlinked = await call(router, 'PUT', `/api/tasks/${task.id}/waits`, { events: [] });
+  assert.equal(unlinked.status, 200, JSON.stringify(unlinked.payload));
+  assert.deepEqual(await st.waits(), []);
+});

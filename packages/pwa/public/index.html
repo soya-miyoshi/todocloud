@@ -370,10 +370,13 @@
         </fieldset>
         <!-- What the item waits for, apart from the facts: it is the first thing to
              know about why it is not available, and each event wants a row of
-             its own that can hold a long title. -->
+             its own that can hold a long title. The menu under the cards adds
+             one — an event that exists, or a new one made for this item — and
+             app.js fills it; a folder never waits, so it has no block. -->
         <section id="waiting" hidden>
           <h3>Waiting for</h3>
           <ul class="waits"></ul>
+          <select id="wait-pick" aria-label="Add an event this item waits for"></select>
         </section>
         <dl id="facts"></dl>
         <div class="actions">
@@ -410,13 +413,14 @@
      at the bottom right, and a menu of what it makes. There were two before —
      a ⊕ at the bottom left of Home and an Add at the bottom right of the
      outline — which did the same thing in different places and made only one
-     kind of item between them. What is being added is a question with four
+     kind of item between them. What is being added is a question with five
      answers here, so the button asks it rather than assuming "task". -->
 <div id="fab-wrap">
   <div id="fab-menu" role="menu" aria-label="What to add" hidden>
     <button type="button" role="menuitem" data-new="task">Task</button>
     <button type="button" role="menuitem" data-new="project">Project</button>
     <button type="button" role="menuitem" data-new="folder">Folder</button>
+    <button type="button" role="menuitem" data-new="event">Event</button>
     <button type="button" role="menuitem" data-new="perspective">Perspective</button>
   </div>
   <button type="button" id="fab" aria-haspopup="menu" aria-expanded="false" aria-label="Add">&#x2b;</button>
@@ -468,6 +472,35 @@
 
     <div class="actions">
       <button type="submit" id="capture-save">Add</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- A new event: `tdo event add` as a form. An event is not a task, so it is
+     not one more kind in the capture dialog above — it has four fields of its
+     own and goes to `POST /api/events`. Opened from the + menu, or from an
+     item's "Waiting for" menu, in which case the event is made with that item
+     already waiting for it and #event-new-for says which item. -->
+<dialog id="event-new" aria-label="New event">
+  <form id="event-new-form" method="dialog">
+    <header class="dialog-head">
+      <h2>New event</h2>
+      <button type="button" class="icon" id="event-new-close" aria-label="Close">&#x2715;</button>
+    </header>
+
+    <div class="dialog-body">
+      <label>Title <input name="title" type="text" required autocomplete="off"></label>
+      <label>Note <textarea name="note" rows="2"></textarea></label>
+      <div class="pair">
+        <label>Expected <input name="expected_at" type="date"></label>
+        <label>Project <select name="project_id"></select></label>
+      </div>
+      <p class="hint" id="event-new-for"></p>
+      <p class="hint" id="event-new-note"></p>
+    </div>
+
+    <div class="actions">
+      <button type="submit" id="event-new-save">Add</button>
     </div>
   </form>
 </dialog>

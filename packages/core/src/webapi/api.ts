@@ -50,7 +50,7 @@
 
 import type { Perspective, Store, Tag } from '../store/store.ts';
 import { Availability, OrderPosition, tagKey } from '../store/store.ts';
-import { EventOccurred, EventPending, eventStatusValid } from '../store/event.ts';
+import { EventOccurred, EventPending, eventStatusValid, newEvent } from '../store/event.ts';
 import { Filter, filterFromJSON } from '../store/filter.ts';
 import * as id from '../id.ts';
 import { NewTaskView, Views } from '../output/view.ts';
@@ -525,8 +525,7 @@ export class API {
 
   /**
    * handleEventStatus is `POST /api/events/{id}/status`: an event occurs, is
-   * cancelled, or is reopened. Nothing else about an event is writable from
-   * the page; `tdo event` is the way to make, edit and link them.
+   * cancelled, or is reopened. Removing one is still only `tdo event rm`.
    *
    * The answer is the event and what the change released or held, the same
    * keys `tdo event occur --json` carries, so the viewer can say so.
@@ -615,6 +614,77 @@ export class API {
       ],
       count: 1,
     };
+  };
+
+  /**
+   * handleEventCreate is `POST /api/events`: `tdo event add` from the page.
+   * `for` is the ids of the items that wait for it from the start, which is
+   * how the inspector makes an event for the item it is showing in one
+   * request. They are resolved before anything is written, as the CLI does,
+   * so an id that means nothing leaves no event behind.
+   */
+  handleEventCreate: Handler = async (r) => {
+    const o = body(r, ['title', 'note', 'expected_at', 'project_id', 'for']);
+    const title = reqString(o, 'title');
+    if (title.trim() === '') {
+      throw usagef('a new event needs a title');
+    }
+    const waiters: Task[] = [];
+    for (const raw of reqStrings(o, 'for')) {
+      const want = raw.trim();
+      if (!id.Valid(want)) {
+        throw usagef(`${quote(want)} is not a task id`);
+      }
+      waiters.push(waitable(await this.st.get(want)));
+    }
+    const now = this.now();
+    const e = newEvent(id.New(), title, now);
+    e.note = reqString(o, 'note');
+    e.expectedAt = parseInstant(optString(o, 'expected_at'), 'expected_at');
+    const project = reqString(o, 'project_id').trim();
+    if (project !== '' && !id.Valid(project)) {
+      throw usagef(`${quote(project)} is not a project id`);
+    }
+    e.projectID = project;
+    const invalid = e.validate();
+    if (invalid !== undefined) {
+      throw usagef(invalid.message);
+    }
+    await this.st.addEvent(e);
+    if (waiters.length > 0) {
+      const links = await this.st.waits();
+      for (const w of waiters) {
+        const have = links.filter((l) => l.taskID === w.id).map((l) => l.eventID);
+        await this.st.setWaits(w.id, [...have, e.id]);
+      }
+    }
+    return {
+      events: [{ ...e.toJSON(), waiting: waiters.map((t) => t.id) }],
+      count: 1,
+    };
+  };
+
+  /**
+   * handleWaits is `PUT /api/tasks/{id}/waits`: the whole set of events the
+   * item waits for, replaced the way `tags` replaces a task's tags. One
+   * request for link and unlink both, because the inspector shows the set and
+   * a set is what it has to send; `tdo event link` and `unlink` are the same
+   * write one event at a time.
+   */
+  handleWaits: Handler = async (r) => {
+    const t = waitable(await this.task(r));
+    const o = body(r, ['events']);
+    const events = [...new Set(reqStrings(o, 'events').map((s) => s.trim()))];
+    for (const e of events) {
+      if (!id.Valid(e)) {
+        throw usagef(`${quote(e)} is not an event id`);
+      }
+      // A 404 naming the event, rather than whatever the store's link table
+      // says about a dangling reference.
+      await this.st.getEvent(e);
+    }
+    await this.st.setWaits(t.id, events);
+    return this.taskPayload(await this.st.get(t.id));
   };
 
   handleFlag: Handler = async (r) => {
@@ -885,6 +955,17 @@ function parseInstant(raw: string | undefined, field: string): Date | undefined 
   } catch (err) {
     throw usagef(`${field}: ${messageOf(err)}`);
   }
+}
+
+/**
+ * waitable refuses a folder as something that waits for an event, in the
+ * words `tdo event link` uses: a folder organises, it is never blocked.
+ */
+function waitable(t: Task): Task {
+  if (t.kind === 'folder') {
+    throw usagef(`${t.id} is a folder; a folder organises, so there is nothing for it to wait for`);
+  }
+  return t;
 }
 
 /**

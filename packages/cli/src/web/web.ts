@@ -312,6 +312,8 @@ export class Server {
       this.write('POST', taskPath('date'), this.api.handleDate),
       this.write('POST', taskPath('move'), this.api.handleMove),
       this.write('POST', taskPath('reorder'), this.api.handleReorder),
+      this.write('PUT', taskPath('waits'), this.api.handleWaits),
+      this.write('POST', exact('/api/events'), this.api.handleEventCreate),
       this.write('POST', eventPath('status'), this.api.handleEventStatus),
       this.write('PATCH', eventPath(''), this.api.handleEventEdit),
       // Renaming a tag is a write over many tasks at once, so it carries

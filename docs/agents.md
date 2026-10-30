@@ -957,6 +957,15 @@ and the server reads it with the same parser, so `3` is a number in both and
 `3.0.1` a string in both. `priority` is not in the block; it has a control of
 its own above it.
 
+Above the facts is **Waiting for**: the events the item waits for, each with
+Occurred (or Undo) and a cross that unlinks it, and a menu under them that
+links a pending event or makes a new one the item waits for from the start.
+The menu is there for every item but a folder. Linking and unlinking is one
+`PUT /api/tasks/{id}/waits` carrying the whole set, as `tags` carries the
+whole set of tags; `tdo event link` and `unlink` are the same write. A new
+event, from that menu or from **Event** in the Add menu, is one
+`POST /api/events` — `tdo event add` with `--for` as a list of ids.
+
 A container is an item too, so a project has a note, dates, tags and fields
 like anything else — and the one row a project's own list leaves out is the
 project. Opening one therefore draws what is written on it above the items:

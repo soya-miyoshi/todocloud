@@ -872,3 +872,85 @@ test("an event edit refuses what it should and changes nothing", async (t) => {
   assert.equal(stored.projectID, "");
   assert.equal(stored.status, "pending");
 });
+
+test("an event is made from the page, filed and already waited for", async (t) => {
+  const h = await Harness.start(t);
+  const projectID = await h.add({ title: "launch", kind: "project" });
+  const taskID = await h.add({ title: "send the order", parent_id: projectID });
+
+  const res = await h.do("POST", "/api/events", {
+    title: "vendor reply",
+    note: "asked on Monday",
+    expected_at: "2026-03-06",
+    project_id: projectID,
+    for: [taskID],
+  });
+  assert.equal(res.status, 200, res.text);
+  const [e] = list(res.payload, "events") as Record<string, unknown>[];
+  assert.equal(e?.["title"], "vendor reply");
+  assert.equal(e?.["project_id"], projectID);
+  assert.equal(e?.["expected_at"], "2026-03-06T00:00:00Z");
+  assert.equal(e?.["status"], "pending");
+  assert.deepEqual(e?.["waiting"], [taskID]);
+
+  const waiting = await h.find(taskID);
+  assert.deepEqual(waiting["waits_on"], [e?.["id"]]);
+  assert.equal(waiting[KeyAvailable], false, "the item is blocked by the event it was made for");
+
+  const bare = await h.do("POST", "/api/events", { title: "a call back" });
+  assert.equal(bare.status, 200, "everything but the title is optional: " + bare.text);
+});
+
+test("making an event refuses what it should and leaves nothing behind", async (t) => {
+  const h = await Harness.start(t);
+  const folderID = await h.add({ title: "home", kind: "folder" });
+
+  const blank = await h.do("POST", "/api/events", { title: "  " });
+  assert.equal(blank.status, 400, blank.text);
+  const folder = await h.do("POST", "/api/events", { title: "x", for: [folderID] });
+  assert.equal(folder.status, 400, "a folder never waits: " + folder.text);
+  const ghost = await h.do("POST", "/api/events", { title: "x", for: [newID()] });
+  assert.equal(ghost.status, 404, ghost.text);
+  const notID = await h.do("POST", "/api/events", { title: "x", for: ["not-an-id"] });
+  assert.equal(notID.status, 400, notID.text);
+  const badDate = await h.do("POST", "/api/events", { title: "x", expected_at: "next week" });
+  assert.equal(badDate.status, 400, badDate.text);
+  const unknownKey = await h.do("POST", "/api/events", { title: "x", status: "occurred" });
+  assert.equal(unknownKey.status, 400, unknownKey.text);
+  const noToken = await h.send("POST", "/api/events", { title: "x" }, "", "");
+  assert.notEqual(noToken.status, 200, "a write without the token is refused");
+
+  assert.deepEqual(await h.st.events(), [], "no refused request made an event");
+});
+
+test("an item's waits are replaced as a set, and refuse what they should", async (t) => {
+  const h = await Harness.start(t);
+  const taskID = await h.add({ title: "send the order" });
+  const folderID = await h.add({ title: "home", kind: "folder" });
+  const one = await event(h, "vendor reply");
+  const two = await event(h, "budget sign-off");
+
+  const linked = await h.do("PUT", `/api/tasks/${taskID}/waits`, { events: [one, two] });
+  assert.equal(linked.status, 200, linked.text);
+  const [after] = list(linked.payload, "tasks") as Record<string, unknown>[];
+  assert.deepEqual([...(after?.["waits_on"] as string[])].sort(), [one, two].sort());
+  assert.equal(after?.[KeyAvailable], false);
+
+  const unlinked = await h.do("PUT", `/api/tasks/${taskID}/waits`, { events: [two] });
+  assert.equal(unlinked.status, 200, unlinked.text);
+  assert.deepEqual((await h.find(taskID))["waits_on"], [two]);
+
+  const none = await h.do("PUT", `/api/tasks/${taskID}/waits`, { events: [] });
+  assert.equal(none.status, 200, none.text);
+  assert.equal((await h.find(taskID))[KeyAvailable], true, "waiting for nothing frees it");
+
+  const folder = await h.do("PUT", `/api/tasks/${folderID}/waits`, { events: [one] });
+  assert.equal(folder.status, 400, "a folder never waits: " + folder.text);
+  const ghost = await h.do("PUT", `/api/tasks/${taskID}/waits`, { events: [newID()] });
+  assert.equal(ghost.status, 404, ghost.text);
+  const notID = await h.do("PUT", `/api/tasks/${taskID}/waits`, { events: ["nope"] });
+  assert.equal(notID.status, 400, notID.text);
+  const noTask = await h.do("PUT", `/api/tasks/${newID()}/waits`, { events: [one] });
+  assert.equal(noTask.status, 404, noTask.text);
+  assert.equal((await h.st.waits()).length, 0, "no refused request linked anything");
+});

@@ -2425,18 +2425,23 @@ function itemRow(t, depthOf) {
 // waiting for is the first thing to know about why it is not available.
 //
 // Each event is a card: its title, which opens the event (a long title wraps
-// instead of being cut), where it stands, and the button that changes it. An
-// event that is not in the snapshot (removed since) is shown by its id rather
-// than left out: a dependency the page cannot name is still one.
+// instead of being cut), where it stands, the button that changes it, and the
+// cross that unlinks it. An event that is not in the snapshot (removed since)
+// is shown by its id rather than left out: a dependency the page cannot name
+// is still one. Under the cards is the menu that adds one, which is why the
+// block is there for every item that can wait — everything but a folder —
+// and not only for one that already does.
 /** @param {Task | null} t */
 function renderWaiting(t) {
   const block = $('#waiting');
-  const ids = t && Array.isArray(t.waits_on) ? t.waits_on : [];
-  block.hidden = ids.length === 0;
-  if (ids.length === 0) {
-    block.querySelector('ul')?.replaceChildren();
+  const list = block.querySelector('ul');
+  block.hidden = !t || t.kind === 'folder';
+  if (!t || block.hidden) {
+    list?.replaceChildren();
     return;
   }
+  /** @type {string[]} */
+  const ids = Array.isArray(t.waits_on) ? t.waits_on : [];
   const cards = ids.map((eventID) => {
     const event = eventByID(eventID);
     const status = event ? event.status : 'unknown';
@@ -2462,9 +2467,77 @@ function renderWaiting(t) {
         onclick: () => setEventStatus(event, occurred || status === 'cancelled' ? 'pending' : 'occurred'),
       }));
     }
+    const drop = el('button', {
+      type: 'button',
+      className: 'icon wait-drop',
+      textContent: '\u2715',
+      onclick: () => setWaits(t, ids.filter((x) => x !== eventID), 'unlinked'),
+    });
+    drop.setAttribute('aria-label', `stop waiting for ${event ? event.title : eventID}`);
+    foot.append(drop);
     return el('li', { className: `wait ${status}` }, [title, foot]);
   });
-  block.querySelector('ul')?.replaceChildren(...cards);
+  list?.replaceChildren(...cards);
+  renderWaitPick(t, ids);
+}
+
+// NEW_EVENT is the menu's last choice, which is not an event but the way to
+// make one. It cannot collide with an event's value: an id is a ULID.
+const NEW_EVENT = 'new';
+
+// renderWaitPick fills the menu under the cards: every pending event the item
+// does not already wait for, the ones in the item's own project first, and
+// "New event…" for the one that does not exist yet. An event that occurred or
+// was cancelled is not offered — waiting for something that has already
+// happened holds nothing — and the CLI's `event link` is there for the odd
+// case that wants it anyway.
+/**
+ * @param {Task} t
+ * @param {string[]} ids the events it waits for now
+ */
+function renderWaitPick(t, ids) {
+  const pick = $select('#wait-pick');
+  const home = projectOf(t);
+  const linked = new Set(ids);
+  const offered = pendingEvents()
+    .filter((e) => !linked.has(e.id))
+    .sort((a, b) => Number(b.project_id === home?.id) - Number(a.project_id === home?.id));
+  pick.replaceChildren(
+    el('option', { value: '', textContent: ids.length ? 'Also wait for…' : 'Wait for an event…' }),
+    ...offered.map((e) => el('option', { value: e.id, textContent: e.title })),
+    el('option', { value: NEW_EVENT, textContent: 'New event…' }));
+  pick.value = '';
+  pick.onchange = () => {
+    const chosen = pick.value;
+    pick.value = '';
+    if (chosen === NEW_EVENT) openEventNew(t);
+    else if (chosen) setWaits(t, [...ids, chosen], 'waiting');
+  };
+}
+
+// The menu is inside the item's form, whose `change` and `input` save the
+// form. Choosing an event is a write of its own, and must not also send the
+// rest of the form up behind it.
+for (const type of ['change', 'input']) {
+  $('#wait-pick').addEventListener(type, (event) => event.stopPropagation());
+}
+
+// setWaits replaces the set of events an item waits for: the one write behind
+// both linking and unlinking, as `tags` is behind adding and removing a tag.
+/**
+ * @param {Task} t
+ * @param {string[]} events
+ * @param {string} done what the status line says when it worked
+ */
+function setWaits(t, events, done) {
+  return act('PUT', `/api/tasks/${t.id}/waits`, { events }, done);
+}
+
+// projectOf is the project an item belongs to: itself, if it is one, or the
+// nearest one above it. An inbox task and a folder have none.
+/** @param {Task} t @returns {Task | undefined} */
+function projectOf(t) {
+  return [t, ...parentsOf(t).reverse()].find((x) => x.kind === 'project');
 }
 
 function facts(t) {
@@ -2607,7 +2680,7 @@ function renderInspectorTitle(t, event) {
   // An event's title is the project it belongs to, like an item's, or Events
   // when it belongs to none: the list it is in.
   const home = event && event.project_id ? byID.get(event.project_id) : undefined;
-  const project = event ? home : t ? [t, ...parentsOf(t).reverse()].find((x) => x.kind === 'project') : null;
+  const project = event ? home : t ? projectOf(t) : null;
   button.textContent = event ? (home ? home.title : 'Events') : project ? project.title : t ? (t.kind === 'folder' ? t.title : 'Inbox') : '';
   button.disabled = !project;
   button.onclick = project ? () => openContainer(project) : null;
@@ -3061,10 +3134,65 @@ function openCapture(kind = 'task') {
   form.elements.title.focus();
 }
 
+// --- a new event -----------------------------------------------------------
+
+// The + menu makes an event on its own; an item's "Waiting for" menu makes
+// one the item waits for from the start. Both are this dialog, and `eventFor`
+// is the difference: the item, or null.
+const eventNew = $dialog('#event-new');
+/** @type {Task | null} */
+let eventFor = null;
+
+/** @param {Task | null} forItem */
+function openEventNew(forItem) {
+  eventFor = forItem;
+  const form = $form('#event-new-form');
+  form.reset();
+  $('#event-new-note').textContent = '';
+  $('#event-new-for').textContent = forItem ? `\u201c${forItem.title}\u201d will wait for it.` : '';
+  const select = form.elements.project_id;
+  select.replaceChildren(
+    el('option', { value: '', textContent: '(no project)' }),
+    ...state.tasks.filter((p) => p.kind === 'project' && isOpen(p))
+      .map((p) => el('option', { value: p.id, textContent: p.title })));
+  // Filed where it is about: the project of the item that will wait for it,
+  // or the project on screen. Either can be changed before Add.
+  const home = forItem ? projectOf(forItem) : view.kind === 'project' ? byID.get(view.key) : undefined;
+  if (home && home.kind === 'project' && isOpen(home)) select.value = home.id;
+  eventNew.showModal();
+  form.elements.title.focus();
+}
+
+$('#event-new-close').onclick = () => eventNew.close();
+
+$form('#event-new-form').onsubmit = async (event) => {
+  event.preventDefault();
+  const form = formOf(event);
+  const title = form.elements.title.value.trim();
+  if (!title) return;
+  /** @type {Object.<string, any>} */
+  const body = { title };
+  const note = String(form.elements.note.value).trim();
+  if (note) body.note = note;
+  if (form.elements.expected_at.value) body.expected_at = form.elements.expected_at.value;
+  if (form.elements.project_id.value) body.project_id = form.elements.project_id.value;
+  if (eventFor) body.for = [eventFor.id];
+  try {
+    await api('POST', '/api/events', body);
+  } catch (err) {
+    // Kept open with what was typed, as the capture form is: a date that
+    // would not parse is a correction, not a loss.
+    $('#event-new-note').textContent = messageOf(err);
+    return;
+  }
+  eventNew.close();
+  await reload(eventFor ? 'waiting' : 'event added');
+};
+
 // --- the floating button ------------------------------------------------
 
 // One control, bottom right, on every pane. It opens a menu rather than
-// capturing straight away, because "add" has four answers here and a button
+// capturing straight away, because "add" has five answers here and a button
 // that silently picks one of them is a button you have to undo.
 const fabMenu = $('#fab-menu');
 
@@ -3085,6 +3213,10 @@ fabMenu.addEventListener('click', (event) => {
   showFabMenu(false);
   if (what.dataset.new === 'perspective') {
     openEditor('');
+    return;
+  }
+  if (what.dataset.new === 'event') {
+    openEventNew(null);
     return;
   }
   openCapture(what.dataset.new);

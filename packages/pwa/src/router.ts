@@ -91,6 +91,8 @@ export class Router {
       { method: 'POST', match: taskPath('date'), handler: this.api.handleDate },
       { method: 'POST', match: taskPath('move'), handler: this.api.handleMove },
       { method: 'POST', match: taskPath('reorder'), handler: this.api.handleReorder },
+      { method: 'PUT', match: taskPath('waits'), handler: this.api.handleWaits },
+      { method: 'POST', match: exact('/api/events'), handler: this.api.handleEventCreate },
       { method: 'POST', match: eventPath('status'), handler: this.api.handleEventStatus },
       { method: 'PATCH', match: eventPath(''), handler: this.api.handleEventEdit },
       // The same three the local viewer serves. The store runs the saved

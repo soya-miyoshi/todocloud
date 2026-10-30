@@ -1221,6 +1221,7 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 
 #perspective-editor,
 #capture-editor,
+#event-new,
 #settings-editor,
 #prefs-editor {
   width: min(560px, calc(100vw - 24px));
@@ -1236,10 +1237,12 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 }
 #perspective-editor::backdrop,
 #capture-editor::backdrop,
+#event-new::backdrop,
 #settings-editor::backdrop,
 #prefs-editor::backdrop { background: rgba(0, 0, 0, 0.42); }
 #perspective-form,
 #capture-form,
+#event-new-form,
 #settings-form,
 #prefs-form { display: flex; flex-direction: column; max-height: inherit; }
 
@@ -1303,6 +1306,7 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 @media (max-width: 559px) {
   #perspective-editor,
   #capture-editor,
+  #event-new,
   #settings-editor,
   #prefs-editor {
     width: calc(100vw - 16px);
@@ -1318,14 +1322,16 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 .dialog-body { padding-bottom: calc(12px + var(--safe-bottom)); }
 
 #perspective-form .actions,
-#capture-form .actions {
+#capture-form .actions,
+#event-new-form .actions {
   display: flex;
   gap: 8px;
   padding: 12px 14px;
   border-top: 1px solid var(--hair);
 }
 #perspective-form .actions button,
-#capture-form .actions button {
+#capture-form .actions button,
+#event-new-form .actions button {
   border: 1px solid var(--edge);
   border-radius: 8px;
   background: var(--raised);
@@ -1333,7 +1339,8 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   cursor: pointer;
 }
 #perspective-form .actions #perspective-save,
-#capture-form .actions #capture-save { background: var(--accent); border-color: var(--accent); color: #fff; }
+#capture-form .actions #capture-save,
+#event-new-form .actions #event-new-save { background: var(--accent); border-color: var(--accent); color: #fff; }
 /* Delete sits at the far end, away from Save: the two are one tap apart and
    only one of them can be undone by typing it again. */
 #perspective-form .actions #perspective-delete { margin-left: auto; }
@@ -1453,6 +1460,14 @@ button.wait-title:hover { color: var(--accent); }
   cursor: pointer;
 }
 .wait-occurred:hover { background: var(--select); }
+/* The state on the left, the two buttons together on the right: Occurred,
+   and the cross that unlinks — which forgets the link and releases nothing
+   that is not otherwise free. */
+.wait-foot .wait-occurred { margin-left: auto; }
+.wait-foot .wait-drop { flex: 0 0 auto; }
+/* The menu that adds one reads as the Fields block's Add button does: quiet,
+   below what it adds to. */
+#wait-pick { margin-top: 8px; width: 100%; font-size: 12px; color: var(--dim); }
 
 /* A caption above a group of rows in a list: "Waiting for", "Occurred", "Tasks"
    in a project's view and in the Events list. Quiet, like the Home groups. */
