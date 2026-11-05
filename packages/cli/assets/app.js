@@ -2144,7 +2144,7 @@ function renderAbout(t) {
   // The note is this project's description, and a blank one says so rather
   // than leaving a gap whose meaning has to be guessed.
   kids.push(t.note
-    ? el('div', { className: 'about-note', textContent: t.note })
+    ? el('div', { className: 'about-note' }, linkify(t.note))
     : el('div', { className: 'about-note empty', textContent: 'No note on this ' + t.kind + '.' }));
 
   // Then everything else written on it: the two dates, the tags, the
@@ -2707,6 +2707,7 @@ function renderEventDetail(e) {
     select.value = e.project_id || '';
     grow(form.elements.title);
     grow(form.elements.note);
+    showNoteLinks(form);
   }
   form.dataset.id = e.id;
 
@@ -2767,6 +2768,7 @@ function fillInspector(form, t) {
   renderFields(t);
   grow(form.elements.title);
   grow(form.elements.note);
+  showNoteLinks(form);
 }
 
 // grow sizes a box to its contents: a note is read far more often than it is
@@ -2780,6 +2782,78 @@ function fillInspector(form, t) {
 function grow(area) {
   area.style.height = 'auto';
   area.style.height = `${area.scrollHeight}px`;
+}
+
+// A note is where a link to the ticket, the thread or the document gets
+// pasted, and a link that has to be selected and copied out of a box is half
+// a link. Only http and https are recognised: a `javascript:` or `data:` URL
+// in a note is text, never something to click. The character class is the
+// set RFC 3986 allows, so a URL written straight up against a Japanese
+// sentence, or inside 「」, stops where the URL does.
+const URL_PATTERN = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
+
+/**
+ * urlsIn finds the links in a note. Punctuation that ends a sentence is not
+ * part of the URL it follows, and neither is a closing parenthesis the URL
+ * did not open — "(see https://example.com/a)" links to `/a`, while a
+ * Wikipedia URL with parentheses in it keeps them.
+ *
+ * @param {string} text
+ * @returns {{start: number, url: string}[]}
+ */
+function urlsIn(text) {
+  const found = [];
+  for (const m of text.matchAll(URL_PATTERN)) {
+    let url = m[0];
+    for (;;) {
+      const last = url.slice(-1);
+      if (/[.,;:!?'*]/.test(last)) url = url.slice(0, -1);
+      else if (last === ')' && url.split('(').length < url.split(')').length) url = url.slice(0, -1);
+      else if (last === ']' && url.split('[').length < url.split(']').length) url = url.slice(0, -1);
+      else break;
+    }
+    if (url.length > 'https://'.length) found.push({ start: m.index, url });
+  }
+  return found;
+}
+
+/** @param {string} url */
+const outLink = (url) => el('a', { href: url, target: '_blank', rel: 'noopener noreferrer', textContent: url });
+
+/**
+ * linkify turns a note into text with its URLs as links, for the places a
+ * note is read rather than edited. Everything that is not a URL stays a text
+ * node, so nothing in a note is ever parsed as markup.
+ *
+ * @param {string} text
+ * @returns {(Node | string)[]}
+ */
+function linkify(text) {
+  /** @type {(Node | string)[]} */
+  const out = [];
+  let at = 0;
+  for (const { start, url } of urlsIn(text)) {
+    if (start > at) out.push(text.slice(at, start));
+    out.push(outLink(url));
+    at = start + url.length;
+  }
+  if (at < text.length) out.push(text.slice(at));
+  return out;
+}
+
+/**
+ * showNoteLinks lists the URLs in a form's note under the note. The note
+ * itself is a textarea and stays one — it is edited in place — so its links
+ * are drawn beside it rather than in it, and the list follows each keystroke.
+ *
+ * @param {HTMLFormElement & {elements: FormFields}} form
+ */
+function showNoteLinks(form) {
+  const list = /** @type {HTMLUListElement} */ (form.querySelector('.note-links'));
+  if (!list) return;
+  const urls = [...new Set(urlsIn(form.elements.note.value).map((u) => u.url))];
+  list.hidden = urls.length === 0;
+  list.replaceChildren(...urls.map((url) => el('li', {}, outLink(url))));
 }
 
 // canContain mirrors task.Kind.CanContain: a folder holds folders and
@@ -3388,6 +3462,7 @@ async function writeInspector(edited, t) {
 
 $form('#detail').oninput = (event) => {
   if (nodeOf(event).tagName === 'TEXTAREA') grow(nodeOf(event));
+  if (/** @type {HTMLTextAreaElement} */ (nodeOf(event)).name === 'note') showNoteLinks($form('#detail'));
   scheduleSave();
 };
 
@@ -3441,6 +3516,7 @@ eventForm.elements.title.addEventListener('keydown', (event) => {
 });
 eventForm.addEventListener('input', (event) => {
   if (event.target instanceof HTMLTextAreaElement) grow(event.target);
+  if (event.target instanceof HTMLTextAreaElement && event.target.name === 'note') showNoteLinks(eventForm);
 });
 $form('#detail').onsubmit = (event) => {
   event.preventDefault();

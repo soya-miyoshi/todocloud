@@ -576,6 +576,11 @@ input, textarea, select {
 /* Pushed to the far end, where the inspector is. */
 .about-open { margin-left: auto; border: 0; background: none; padding: 2px 0; font-size: 12px; color: var(--accent); cursor: pointer; }
 .about-note { font-size: 14px; color: var(--ink); white-space: pre-wrap; overflow-wrap: break-word; }
+.about-note a, .note-links a { color: var(--accent); overflow-wrap: anywhere; }
+/* The links a note holds, listed under the box it is edited in. */
+.note-links { list-style: none; margin: -4px 0 8px; padding: 0; font-size: 12px; }
+.note-links li { padding: 2px 0; }
+.note-links li::before { content: '\2197 '; color: var(--dim); }
 .about-note.empty { color: var(--dim); font-style: italic; }
 /* The same two-column shape as #facts in the inspector, so a field reads
    the same way in both places. */
