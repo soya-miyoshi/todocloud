@@ -26,6 +26,10 @@
   --faint: #a9a7b0;
   --accent: #7a4fd4;      /* OmniFocus is purple; so is this */
   --select: #ece6fb;
+  /* A tag pill. Its own token rather than `--bg`, which is the colour
+     behind the panes: in the dark palette that is near black, and a pill
+     painted with it read as a hole punched in the row. */
+  --chip: #efeef3;
 
   /* The perspective tints the manual names: forecast salmon, inbox slate,
      flagged orange creamsicle, projects sky blue, tags purple, review
@@ -52,16 +56,17 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #000000;
+    --bg: #121214;
     --panel: #1c1c1e;
     --raised: #2c2c2e;
     --edge: #38383a;
     --hair: #38383a;
     --ink: #f2f2f7;
-    --dim: #9d9ca5;
-    --faint: #6b6a73;
+    --dim: #a1a1aa;
+    --faint: #8b8b93;
     --accent: #b08cf5;
     --select: #33264d;
+    --chip: #3a3a3c;
     --salmon: #ff7b70;
     --slate: #8795a9;
     --mint: #32d74b;
@@ -78,16 +83,17 @@
    attribute selector. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-    --bg: #000000;
+    --bg: #121214;
     --panel: #1c1c1e;
     --raised: #2c2c2e;
     --edge: #38383a;
     --hair: #38383a;
     --ink: #f2f2f7;
-    --dim: #9d9ca5;
-    --faint: #6b6a73;
+    --dim: #a1a1aa;
+    --faint: #8b8b93;
     --accent: #b08cf5;
     --select: #33264d;
+    --chip: #3a3a3c;
     --salmon: #ff7b70;
     --slate: #8795a9;
     --mint: #32d74b;
@@ -108,6 +114,7 @@
     --faint: #a9a7b0;
     --accent: #7a4fd4;
     --select: #ece6fb;
+    --chip: #efeef3;
     --salmon: #ff6a5e;
     --slate: #6b7a90;
     --mint: #30c86b;
@@ -452,6 +459,25 @@ input, textarea, select {
      columns of anything, and the Forecast's own week is on screen beside
      it anyway. */
   .week.forecast { display: none; }
+  /* The projects listed under the Projects tile are its children, and read
+     as them: they start where the perspective names start (past the 22px
+     glyph and its gap), a point smaller and in the quieter colour, so the
+     column is perspectives with a few projects tucked under one of them
+     rather than two lists of equal weight. The open one keeps the accent. */
+  #tiles .tile-list .nav-row { padding-left: 39px; min-height: 30px; font-size: 13px; color: var(--dim); }
+  #tiles .tile-list .nav-row.depth1 { padding-left: 53px; }
+  #tiles .tile-list .nav-row.depth2 { padding-left: 67px; }
+  #tiles .tile-list .nav-row:hover { color: var(--ink); }
+  #tiles .tile-list .nav-row[aria-current="true"] { color: var(--accent); }
+  /* Two lines on purpose: the heading on the first, New and Show together
+     under its start, like the links under a section title. A flex row on
+     its own wraps one word at a time and left New beside the heading and
+     Show alone below it, so the break is forced: a full-width `::before`,
+     ordered after the heading's text (which is an anonymous item and has
+     the default order) and before the two buttons. */
+  #sidebar .group h2 { flex-wrap: wrap; column-gap: 12px; row-gap: 2px; }
+  #sidebar .group h2::before { content: ''; order: 1; flex-basis: 100%; }
+  #sidebar .group h2 > .disclose { order: 2; }
 }
 
 /* --- Home: the lists under it -------------------------------------- */
@@ -462,6 +488,12 @@ input, textarea, select {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  /* The heading never breaks inside itself. In a 208px sidebar "Other
+     Perspectives" and its New and Show do not fit on one line, and the text
+     used to give way — two lines of capitals beside two words. Now it is
+     the words that move (see the wide layout below), and the heading stays
+     one line. */
+  white-space: nowrap;
   margin: 0 4px 6px;
   font-size: 11px;
   font-weight: 600;
@@ -506,6 +538,32 @@ input, textarea, select {
 .nav-row.depth1 { padding-left: 24px; }
 .nav-row.depth2 { padding-left: 40px; }
 .nav-row.held .name { color: var(--dim); text-decoration: line-through; }
+
+/* The same rows in the outline (Projects, Tags) start their names where a
+   task's title starts: past a 21px column — where a task has its circle and
+   a tag row has its `#` — and the row's 10px gap. Without that the names
+   stood 30px left of every title in every other list. Counts stay at the
+   far end, as they do on Home and in the sidebar; a count is read down the
+   column, not along the row. */
+#items .nav-row { gap: 10px; padding-left: 6px; }
+#items .nav-row .mark { width: 21px; }
+#items .nav-row:not(:has(> .mark)) { padding-left: 37px; }
+#items .nav-row.depth1 { padding-left: 57px; }
+#items .nav-row.depth2 { padding-left: 77px; }
+#items .nav-row.depth1:has(> .mark) { padding-left: 26px; }
+#items .nav-row.depth2:has(> .mark) { padding-left: 46px; }
+
+/* Touch. A 38px row and a bare 11px word are both under the 44px a thumb
+   needs; the words keep their place in the heading by paying the padding
+   back as a negative margin, so the heading does not grow with them. The
+   count goes a step darker as well: at arm's length `--faint` on a phone
+   screen in daylight is not a number anyone can read. */
+@media (pointer: coarse) {
+  .nav-row { min-height: 44px; }
+  .nav-row .count { color: var(--dim); }
+  .disclose { padding: 12px 8px; margin: -12px 0; }
+  .weekbar button.seg { height: 34px; }
+}
 
 /* A folder in the sidebar can be shut, and the triangle that shuts it is a
    button beside the row rather than inside it — a button within a button is
@@ -554,8 +612,11 @@ input, textarea, select {
 /* The block above a project's list. It reads as a heading rather than as a
    row: no border of its own, a rule underneath to separate it from the
    items, and the note at the size the note is read at in the inspector. */
-#about { padding: 10px 14px 12px; border-bottom: 1px solid var(--edge); }
-.about-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+/* The left edge is the title edge of the rows under it (6px of row padding,
+   the 21px circle, the 10px gap), and the head's type glyph hangs out into
+   the circle column, so the block and the list read as one column of text. */
+#about { padding: 10px 14px 12px 37px; border-bottom: 1px solid var(--edge); }
+.about-head { display: flex; align-items: center; gap: 10px; margin: 0 0 6px -31px; }
 .about-head .type { color: var(--dim); }
 .about-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
 /* Whether what is finished stays on screen. Drawn like the Forecast's
@@ -584,9 +645,20 @@ input, textarea, select {
 .about-note.empty { color: var(--dim); font-style: italic; }
 /* The same two-column shape as #facts in the inspector, so a field reads
    the same way in both places. */
-.about-fields { font-size: 12px; color: var(--dim); margin: 8px 0 0; }
-.about-fields dt { float: left; clear: left; width: 8.5em; }
-.about-fields dd { margin: 0 0 3px 8.5em; overflow-wrap: anywhere; }
+.about-fields {
+  font-size: 12px;
+  color: var(--dim);
+  margin: 8px 0 0;
+  /* The key column is as wide as the longest key and no wider. A fixed
+     8.5em column, like the inspector's, left "completes" and "with its last
+     action" a hand's width apart across a list pane, read as two unrelated
+     words. */
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 10px;
+}
+.about-fields dt { margin: 0; }
+.about-fields dd { margin: 0; color: var(--ink); font-weight: 400; overflow-wrap: anywhere; }
 .about-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 
 /* --- the outline --------------------------------------------------- */
@@ -669,17 +741,18 @@ input, textarea, select {
 .circle.soon { border-color: var(--soon); }
 .circle.over { border-color: var(--over); }
 .circle.flagged { border-color: var(--flag); }
-/* Several at once is a real state in OmniFocus — flagged and overdue — and
-   there the circle takes both colours. A conic gradient is the cheap way to
-   say the same thing. */
-.circle.flagged.over { border-color: transparent; background: conic-gradient(var(--over) 0 50%, var(--flag) 50% 100%); }
-.circle.flagged.soon { border-color: transparent; background: conic-gradient(var(--soon) 0 50%, var(--flag) 50% 100%); }
-.circle.flagged.over::before, .circle.flagged.soon::before {
-  content: '';
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--panel);
+/* Flagged and overdue at once is a real state, and the circle says only
+   the first: `.flagged` comes last, so it wins. A half-red, half-orange ring
+   is what OmniFocus draws, and at 21px it read as two rings drawn over each
+   other. Lateness is not lost — the row's red edge and the red date carry
+   it, and those are what a list is scanned by. */
+/* The circle is 21px to look at and needs 44px to hit with a thumb. An
+   invisible box around it is the target, so the row keeps its proportions
+   and a tap that lands just beside the ring still completes the item rather
+   than opening it. */
+@media (pointer: coarse) {
+  .circle { position: relative; }
+  .circle::before { content: ''; position: absolute; inset: -12px; border-radius: 50%; }
 }
 .circle.done { border-color: var(--accent); background: var(--accent); color: #fff; }
 .circle.done::after { content: '\2713'; }
@@ -712,26 +785,42 @@ input, textarea, select {
 .item.dated .title { color: var(--ink); }
 .item.waiting .title, .item.waiting.dated .title { color: var(--faint); }
 .item.waiting { opacity: 0.6; }
-.item.closed .title { text-decoration: line-through; }
+.item.closed .title { text-decoration: line-through; color: var(--dim); }
+/* A finished row is a record, not a call to act: the check keeps its shape
+   in a tint of the accent rather than the solid purple an open row's colour
+   is measured against, and a dropped project's cross is grey — in red it
+   read as a delete button. */
+.item.closed .circle.done { background: color-mix(in srgb, var(--accent) 35%, var(--panel)); border-color: transparent; }
 
 .item .dates { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .item .due.over { color: var(--over); font-weight: 600; }
 .item .due.soon { color: var(--soon); font-weight: 600; }
 .item .count { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
 
-.item .tag { font-size: 11px; color: var(--dim); background: var(--bg); border-radius: 9px; padding: 1px 7px; }
-.item .tag.held { text-decoration: line-through; }
-.item .note { font-size: 11px; color: var(--faint); }
+/* The same pill in a row and in the block above a project's list, so a tag
+   looks like a tag wherever it is. */
+.item .tag, .about-tags .tag { font-size: 11px; color: var(--dim); background: var(--chip); border-radius: 9px; padding: 1px 7px; }
+.item .tag.held, .about-tags .tag.held { text-decoration: line-through; }
+.item .note { font-size: 11px; color: var(--dim); }
 
 /* A project or a folder has no status circle: it is not something to do.
    It carries its type icon instead — a sequential project's three joined
    dots, a parallel one's two dotted lines, a folder's folder. */
 .type { flex: none; width: 21px; height: 21px; margin-top: 1px; display: grid; place-items: center; color: var(--dim); }
 .type svg { display: block; }
+/* A folder or a project in a list of tasks reads as a heading over them:
+   its title in the ink colour and a weight heavier, and its glyph at the
+   size of the circle it stands in for. Before, `quiet` greyed the container
+   while its own tasks stayed black, which read the hierarchy backwards. A
+   finished one goes grey with the rest of the finished rows. */
+.item.container .title { color: var(--ink); font-weight: 600; }
+.item.container.closed .title, .item.container.closed .type { color: var(--dim); }
+.item.container .type { color: var(--ink); }
+.item.container .type svg { width: 18px; height: 18px; }
 .item .state { flex: none; margin-top: 3px; width: 12px; }
 .item .state.hold { color: var(--hold); }
 .item .state.done { color: var(--done); }
-.item .state.dropped { color: var(--dropped); }
+.item .state.dropped { color: var(--faint); }
 
 /* The Forecast's week, under the navigation bar and above the list: seven
    columns, each a weekday over its date over what it holds. The same seven
@@ -760,6 +849,11 @@ input, textarea, select {
 .week .day.none .when,
 .week .day.none .date,
 .week .day.none .n { color: var(--faint); }
+/* A day with nothing due keeps its count line — the cells stay one height,
+   so the dates stay level — but not the dot that stood in it: seven columns
+   of dots read as content, and the days that do hold something are the ones
+   that should stand out. */
+.week .n.empty { visibility: hidden; }
 .week .day.today .when { color: var(--soon); font-weight: 600; }
 /* A day holding work from an earlier day — which, since nothing is filed
    under a day that has gone, can only be today. There is no Past column, so
@@ -768,16 +862,19 @@ input, textarea, select {
    they read its numbers. */
 .week .day.late .n { color: var(--over); font-weight: 700; }
 .week .day.late { box-shadow: inset 0 -2px 0 var(--over); }
-/* The day being read. It is a filled tile rather than an underline because
-   on a phone this row is the navigation, and the thing that says where you
-   are has to survive being looked at through a thumb. */
+/* The day being read. A tile rather than an underline because on a phone
+   this row is the navigation, and the thing that says where you are has to
+   survive being looked at through a thumb — but a light one: a thin ring
+   over half the selection tint. The full tint with a heavier ring was the
+   loudest thing on Home, louder than the counts it is there to point at. */
 .week .day[aria-current="true"] {
-  background: var(--select);
-  /* A ring as well as a fill: the fill alone is the same tint as every other
-     selected row and, in the dark palette, close to the bar above it. */
-  box-shadow: inset 0 0 0 1.5px var(--accent);
+  background: color-mix(in srgb, var(--select) 55%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
-.week .day.late[aria-current="true"] { box-shadow: inset 0 0 0 1.5px var(--accent), inset 0 -2px 0 var(--over); }
+/* Selected and late: the ring alone. The red rule under it met the accent
+   ring at the corners and the two read as one pinkish outline that was
+   neither; the red count in the cell still says late. */
+.week .day.late[aria-current="true"] { box-shadow: inset 0 0 0 1px var(--accent); }
 .week .day[aria-current="true"] .when,
 .week .day[aria-current="true"] .date { color: var(--accent); font-weight: 600; }
 
@@ -798,13 +895,16 @@ input, textarea, select {
   background: none;
   color: var(--dim);
   font: inherit;
-  font-size: 13px;
-  padding: 5px 9px;
-  min-height: 32px;
-  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 8px;
+  height: 28px;
+  border-radius: 7px;
   cursor: pointer;
 }
-.weekbar .seg.small { font-size: 12px; padding: 3px 7px; min-height: 26px; border-radius: 7px; }
+/* The filters and the sort order were two sizes on one line, a point and
+   6px apart, which put them off one baseline. They are one control size
+   now; `.small` is kept on the markup for what it says, not for a size. */
 .weekbar .seg[aria-pressed="true"] { background: var(--select); color: var(--accent); font-weight: 600; }
 
 /* The fold at the end of the Forecast. A row like any other, so that the
@@ -942,6 +1042,16 @@ input, textarea, select {
   /* The same turn the menu opens with, so the two read as one control. */
   transition: transform 140ms ease-out;
 }
+/* On the wide layout the button belongs to the outline: bottom right of the
+   list pane, above its toolbar, rather than at the window's corner — which
+   is the inspector's corner, where it sat over the item's own fields and
+   its Complete button. The inspector's width is a token for this reason. */
+@media (min-width: 860px) {
+  #fab-wrap {
+    right: calc(var(--inspector-w, 320px) + 20px + env(safe-area-inset-right));
+    bottom: 56px;
+  }
+}
 #fab.open { transform: rotate(45deg); }
 #fab:hover { filter: brightness(1.08); }
 
@@ -982,13 +1092,20 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 
 /* --- the inspector ------------------------------------------------- */
 
-#inspector label { display: block; margin-bottom: 9px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
+/* One style for every heading in the pane — a field's label, the Fields
+   legend, Waiting for, the event's own heading: 11px capitals, semibold,
+   the same tracking and the same 4px down to what they head. There were
+   three, which made one form look like three stacked together. */
+#inspector label { display: block; margin-bottom: 9px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
 #inspector label input, #inspector label textarea, #inspector label select {
   display: block;
   width: 100%;
   margin-top: 4px;
   color: var(--ink);
   font-size: 15px;
+  /* The label is semibold and a control inherits its font; what is typed
+     into a field is not a heading. */
+  font-weight: 400;
   text-transform: none;
   letter-spacing: 0;
 }
@@ -1006,7 +1123,7 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   #inspector .pair { flex-wrap: wrap; }
   #inspector .pair label { flex-basis: 100%; }
 }
-#inspector label.check { display: flex; gap: 7px; align-items: center; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--ink); }
+#inspector label.check { display: flex; gap: 7px; align-items: center; text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 400; color: var(--ink); }
 #inspector label.check input { width: auto; margin: 0; }
 #inspector .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 #inspector .actions button {
@@ -1015,6 +1132,22 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   background: var(--raised);
   padding: 8px 12px;
   cursor: pointer;
+}
+/* On the wide layout the buttons stay on screen at the foot of the pane,
+   however long the item: they were the last thing in a scrolling column and
+   ended up below the fold, cut in half by the window's edge. The negative
+   margins take the band across the pane's padding so the fields scroll
+   under a full-width strip rather than under a floating pair of buttons. */
+@media (min-width: 860px) {
+  #inspector .actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin: 12px -12px 0;
+    padding: 10px 12px;
+    background: var(--panel);
+    border-top: 1px solid var(--hair);
+  }
 }
 #inspector .actions #complete,
 #inspector .actions #event-occurred { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -1030,14 +1163,16 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 #inspector textarea { overflow: hidden; resize: vertical; min-height: 56px; overflow-wrap: break-word; }
 #inspector textarea[name="title"] { min-height: 0; }
 #inspector .actions button.danger:hover { color: var(--over); border-color: var(--over); }
-#no-selection { color: var(--dim); }
+/* Nothing chosen. A quiet line in the middle of the pane rather than a
+   sentence at the top of it, where it read as the first field of a form. */
+#no-selection { color: var(--faint); text-align: center; margin: 30vh 16px 0; }
 
 /* A task's own fields. The `fieldset` is drawn as a block of the inspector
    rather than as a box: a border around three rows of boxes is one border
    too many, so only the rule above the legend survives. The key is narrower
    than the value because a key is a word and a value is anything. */
-#fields { border: 0; border-top: 1px solid var(--edge); margin: 14px 0 0; padding: 10px 0 0; }
-#fields legend { padding: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
+#fields { border: 0; margin: 12px 0 0; padding: 0; min-width: 0; }
+#fields legend { padding: 0; margin-bottom: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
 /* One field reads like one labelled box above it: the key on the small caps
    line a field's name is drawn in everywhere in this pane, the value in a
    box beneath it that wraps and grows. Stacked rather than side by side,
@@ -1093,11 +1228,19 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 }
 #field-add:hover { color: var(--ink); }
 
-#facts { font-size: 12px; color: var(--dim); margin: 14px 0 0; }
-#facts dt { float: left; clear: left; width: 8.5em; }
+#facts { font-size: 12px; color: var(--dim); margin: 14px 0 0; font-variant-numeric: tabular-nums; }
+/* The keys a step quieter than the values: this block is about the item,
+   not part of it, and should read as the footnote it is. */
+#facts dt { float: left; clear: left; width: 7em; color: var(--faint); }
 /* An id is 26 characters with nowhere to break, and the inspector is 320px
    wide at its narrowest: without this it runs off the edge of the pane. */
-#facts dd { margin: 0 0 3px 8.5em; overflow-wrap: anywhere; }
+#facts dd { margin: 0 0 3px 7em; overflow-wrap: anywhere; }
+/* The id in a monospace a point smaller, which is what fits all 26
+   characters on one line in the narrowest inspector — in the proportional
+   face it broke two letters from the end, and an id split across lines is
+   one nobody copies correctly. If it still has to break, it breaks
+   anywhere, as above. */
+#facts dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--ink); }
 
 /* --- compact: one pane at a time ----------------------------------- */
 
@@ -1167,6 +1310,11 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
      zooms back, so every control is full size here — which also makes them
      big enough to hit. */
   input, textarea, select { font-size: 16px; padding: 9px 11px; }
+  /* The inspector sets its fields to 15px with an id in the selector, which
+     outranked the line above and left every one of them a size under what
+     stops iOS zooming. Same selectors, later in the file, so these win. */
+  #inspector label input, #inspector label textarea, #inspector label select,
+  .field-row .field-value { font-size: 16px; }
   /* An inline field keeps its row's own box rather than the padding above,
      but it still has to be 16px or iOS zooms into the row and never zooms
      back out. The row's text is a point smaller, so a name grows slightly
@@ -1174,6 +1322,9 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
      at 1.4x zoom. */
   .inline { padding: 0 2px; }
   .item { padding: 9px 4px; }
+  /* The title edge moves 2px left with the row padding; the block over a
+     project's list moves with it. */
+  #about { padding-left: 35px; }
   .tile { min-height: 62px; }
 
   /* Room under the last row for the floating button, which would otherwise
@@ -1286,8 +1437,20 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 .dialog-body label { display: grid; gap: 4px; font-size: 12px; color: var(--dim); }
 .dialog-body label.check { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; }
 .dialog-body input, .dialog-body select { color: var(--ink); }
+/* A field's name the way the inspector writes it — small capitals in the
+   quiet colour over the box — so New task and the inspector read as two
+   views of one form rather than two forms. Dialogs only: the Settings page
+   shares `.dialog-body` and its labels are sentences, not field names. */
+dialog .dialog-body label:not(.check) { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+dialog .dialog-body label:not(.check) :is(input, select, textarea) { font-size: 15px; text-transform: none; letter-spacing: 0; }
+/* 16px on a phone, or iOS zooms into the field and never zooms back: the
+   rule above outranks the compact layout's own 16px. */
+@media (max-width: 859px) { dialog .dialog-body label:not(.check) :is(input, select, textarea) { font-size: 16px; } }
 .dialog-body .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
-@media (max-width: 460px) { .dialog-body .pair { grid-template-columns: 1fr; } }
+/* Two to a row down to a small phone. A 390px screen leaves each date field
+   about 165px, which a date input fits in; stacking them made Defer and Due
+   look unrelated and pushed the last fields under the footer. */
+@media (max-width: 340px) { .dialog-body .pair { grid-template-columns: 1fr; } }
 
 .dialog-body fieldset {
   display: flex;
@@ -1321,6 +1484,24 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
     margin: calc(8px + var(--safe-top)) auto auto;
   }
 }
+/* Capture and a new event are short forms, and on a phone they are a sheet
+   that comes up from the bottom edge — where the thumb that tapped the +
+   is — rather than a card floating with a gap under it. The top of the
+   sheet, where the title field is, still sits above where the keyboard
+   comes up, which was the reason the long forms are pinned to the top
+   instead. The footer pays the home indicator, as a toolbar does. */
+@media (max-width: 559px) {
+  #capture-editor,
+  #event-new {
+    width: 100vw;
+    max-width: 100vw;
+    margin: auto 0 0;
+    border-width: 1px 0 0;
+    border-radius: 14px 14px 0 0;
+  }
+  #capture-form .actions,
+  #event-new-form .actions { padding-bottom: calc(12px + var(--safe-bottom)); }
+}
 /* A dialog that reaches most of the way down the screen ends where the home
    indicator is, and the body is the part that scrolls. The inset goes on its
    last line for the same reason it goes on a pane's. */
@@ -1333,6 +1514,12 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   gap: 8px;
   padding: 12px 14px;
   border-top: 1px solid var(--hair);
+  /* A shadow upward as well as the rule: the body scrolls under the footer,
+     and on a phone the last field stopped at the footer's edge with nothing
+     to say there was more of it. */
+  position: relative;
+  background: var(--panel);
+  box-shadow: 0 -6px 12px -8px rgba(0, 0, 0, 0.22);
 }
 #perspective-form .actions button,
 #capture-form .actions button,
@@ -1349,6 +1536,11 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
 /* Delete sits at the far end, away from Save: the two are one tap apart and
    only one of them can be undone by typing it again. */
 #perspective-form .actions #perspective-delete { margin-left: auto; }
+/* A form with one button puts it where a sheet's confirm goes, at the right,
+   on both layouts — it was on the left on one and nowhere in particular on
+   the other. */
+#capture-form .actions,
+#event-new-form .actions { justify-content: flex-end; }
 
 /* The settings dialog. Its controls are menus and a checkbox, so it needs
    nothing the dialog styles above do not already give it; what is here is
@@ -1407,14 +1599,29 @@ body[data-pane="settings"] #prefs-page { display: flex; }
 .prefs label.check select { width: auto; }
 .prefs .actions button { font: inherit; }
 .prefs .actions { border: 0; margin: 0; padding: 0; }
+/* On a wide screen a setting is a line: its name on the left, the control
+   on the right at the width a one-word choice needs. Stretched across the
+   card a menu reading "auto" was a 530px box. On a phone the stacked label
+   over a full-width control is the better fit and stays. The name is an
+   anonymous grid item (it is the label's text), which is why there is no
+   class for it. */
+@media (min-width: 560px) {
+  .prefs .dialog-body label:not(.check) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 260px);
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    color: var(--ink);
+  }
+}
 
 /* What an item waits for, in the inspector above its facts: a card per event.
    The title is the first line and opens the event, the state and the one
    button that changes it are the second, so a long title has the whole width
    and nothing is squeezed beside it. An event that has occurred is struck
    through, the way a finished project is in the list. */
-#waiting { margin: 14px 0 0; }
-#waiting h3 { margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); }
+#waiting { margin: 12px 0 0; }
+#waiting h3 { margin: 0 0 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
 .waits { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .wait {
   display: grid;
@@ -1491,7 +1698,7 @@ button.wait-title:hover { color: var(--accent); }
    heading over what is waiting for it. The rows that wait are buttons that
    open the item. */
 .event-state { margin: 0; font-size: 12px; color: var(--dim); }
-.event-heading { margin: 8px 0 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); }
+.event-heading { margin: 12px 0 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
 .event-waiting { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .event-waiting .none { color: var(--dim); font-size: 13px; }
 .event-waiting .linklike { text-align: left; border: 0; background: none; color: var(--accent); padding: 4px 0; font: inherit; cursor: pointer; overflow-wrap: anywhere; }

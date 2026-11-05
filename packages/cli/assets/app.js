@@ -1495,6 +1495,26 @@ function render() {
   renderList();
   renderInspector();
   renderBadgeAsk();
+  shortenStore();
+}
+
+// shortenStore cuts the sidebar's "sqlite: /a/long/path/tasks.db" down to
+// the file's name, with the whole path in the tooltip. The full text was an
+// ellipsis two folders in, which said where the path started and not which
+// database it was. Only the SQLite form is touched: it is a path, which is
+// not a credential (`describe` says so in the store), and the Turso form is
+// a database name that is already short. A text with no folder in it is
+// either already short or has been shortened, so a second call does
+// nothing — `render` runs this every time, because the PWA writes the line
+// after it connects rather than when the page loads.
+function shortenStore() {
+  const where = maybe('#store');
+  if (where === null) return;
+  const full = where.textContent || '';
+  const m = /^sqlite: (.*[\\/])([^\\/]+)$/.exec(full);
+  if (m === null || m[2] === undefined) return;
+  where.textContent = `sqlite: ${m[2]}`;
+  where.title = full;
 }
 
 function navRow(label, count, isCurrent, onClick, options = {}) {
@@ -1778,7 +1798,9 @@ function weekCells() {
     cell.append(
       el('span', { className: 'when', textContent: c.today ? 'Today' : c.weekday }),
       el('span', { className: 'date', textContent: String(c.day) }),
-      el('span', { className: 'n', textContent: due.length ? String(due.length) : '\u00b7' }));
+      // The dot stays as text so the cell keeps its height; `.empty` hides
+      // it, because a week of dots read as a week of something.
+      el('span', { className: due.length ? 'n' : 'n empty', textContent: due.length ? String(due.length) : '\u00b7' }));
     // The second number is only there when there is something to say. An
     // arrow rather than a plus, because it is the same `↓` the rows use for
     // a defer date.
@@ -2365,6 +2387,9 @@ function itemRow(t, depthOf) {
     row.setAttribute('aria-level', String(depth + 1));
   }
   if (isClosed(t)) row.classList.add('closed');
+  // A folder or a project is drawn as a heading over its tasks (see
+  // `.item.container` in app.css), so the stylesheet needs to know which.
+  if (isContainer(t)) row.classList.add('container');
   // Grey for what cannot be worked on — completed, blocked, on hold, a
   // container — and black again for anything due soon or overdue, which is
   // the exception the manual makes and the reason the rule is useful.
@@ -2388,8 +2413,10 @@ function itemRow(t, depthOf) {
   // title shared its width with the path, the tags and the date, and the
   // thing being read was the first to be cut.
   const where = parentsOf(t).map((p) => p.title).join(' \u203a ');
+  // Nothing when there is no project. The Inbox used to say "No project"
+  // over every row, which is what being in the Inbox already means — a line
+  // of the same two words thirty times, each one pushing a title down.
   if (where && view.kind !== 'project') lines.append(el('div', { className: 'where', textContent: where }));
-  if (!where && view.kind === 'inbox') lines.append(el('div', { className: 'where', textContent: 'No project' }));
   lines.append(el('div', { className: 'title', textContent: t.title }));
 
   const under = el('div', { className: 'under' });
@@ -2398,9 +2425,10 @@ function itemRow(t, depthOf) {
   if (isContainer(t)) {
     const inside = state.tasks.filter((x) => x.id !== t.id && inSubtree(x, t.id) && isOpen(x) && x.kind === 'task');
     const late = inside.filter(overdue).length;
+    const items = `${inside.length} item${inside.length === 1 ? '' : 's'}`;
     under.append(el('span', {
       className: 'count',
-      textContent: late ? `${inside.length} items \u00b7 ${late} overdue` : `${inside.length} items`,
+      textContent: late ? `${items} \u00b7 ${late} overdue` : items,
     }));
   }
   if (under.childNodes.length) lines.append(under);
@@ -2554,7 +2582,9 @@ function facts(t) {
   const list = [];
   for (const [key, value] of rows) {
     list.push(el('dt', { textContent: key }));
-    list.push(el('dd', { textContent: value || '—' }));
+    // The id is set in monospace (`#facts dd.mono`): it is a thing to copy,
+    // not to read, and the fixed width is what keeps it on one line.
+    list.push(el('dd', { className: key === 'id' ? 'mono' : '', textContent: value || '—' }));
   }
   return list;
 }
