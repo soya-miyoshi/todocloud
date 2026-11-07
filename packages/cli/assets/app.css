@@ -616,7 +616,9 @@ input, textarea, select {
    the 21px circle, the 10px gap), and the head's type glyph hangs out into
    the circle column, so the block and the list read as one column of text. */
 #about { padding: 10px 14px 12px 37px; border-bottom: 1px solid var(--edge); }
-.about-head { display: flex; align-items: center; gap: 10px; margin: 0 0 6px -31px; }
+/* Wraps rather than squeezing: with the sort words beside the Completed
+   toggle, a phone-width pane has no room for all of it on one line. */
+.about-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0 0 6px -31px; }
 .about-head .type { color: var(--dim); }
 .about-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
 /* Whether what is finished stays on screen. Drawn like the Forecast's
@@ -632,8 +634,11 @@ input, textarea, select {
   border-radius: 8px;
   color: var(--dim);
   cursor: pointer;
+  white-space: nowrap;
 }
 .about-toggle[aria-pressed="true"] { background: var(--select); color: var(--accent); }
+/* The project's sort words sit together as one group. */
+.about-order { display: inline-flex; gap: 2px; }
 /* Pushed to the far end, where the inspector is. */
 .about-open { margin-left: auto; border: 0; background: none; padding: 2px 0; font-size: 12px; color: var(--accent); cursor: pointer; }
 .about-note { font-size: 14px; color: var(--ink); white-space: pre-wrap; overflow-wrap: break-word; }

@@ -622,6 +622,42 @@ const ProjectDoneKey = 'tdo.project.done';
 
 let projectDoneShown = remembered(ProjectDoneKey, '') === 'shown';
 
+// Inside a project, the order the rows are read in.
+//
+// `Order` is the project's own: the position each item was put at, which is
+// the plan as it was written and, in a sequential project, the order the
+// work is released in. The other two answer the Forecast's two questions
+// about the same rows — what may be started first, and what is closest to
+// going wrong — for a project that is a list of dated things rather than a
+// sequence of steps (a set of bills, say), where position says nothing.
+//
+// A date order sorts siblings and keeps the tree: a sub-task stays under
+// its parent, and the parents are sorted among themselves. Flattening it
+// would read faster and would lose the one thing the indentation says. The
+// date that is missing is stood in for by the other one, as in the
+// Forecast (see `byDateThen`), and an item with neither goes last.
+//
+// One setting for every project, remembered per browser, for the reason
+// `projectDoneShown` above gives.
+const ProjectOrderKey = 'tdo.project.order';
+
+const PROJECT_ORDERS = [
+  { key: 'position', label: 'Order' },
+  { key: 'defer', label: 'Defer' },
+  { key: 'due', label: 'Due' },
+];
+
+let projectOrder = PROJECT_ORDERS.some((o) => o.key === remembered(ProjectOrderKey, ''))
+  ? remembered(ProjectOrderKey, 'position')
+  : 'position';
+
+/** @param {string} key */
+function setProjectOrder(key) {
+  projectOrder = key;
+  remember(ProjectOrderKey, key);
+  render();
+}
+
 // On one day of the Forecast, whether what was finished that day is on it.
 //
 // A day is the one part of the Forecast where a completed item is not noise.
@@ -869,6 +905,41 @@ function forecastList() {
   };
 }
 
+// sortSiblings reorders a subtree's rows by `compare` one level at a time,
+// so every item still follows its own parent (see `projectOrder`). `items`
+// arrives in tree order, which is what keeps the sort stable for rows that
+// compare equal. An item whose parent is not among the rows — its parent is
+// finished and finished rows are hidden — is placed as if it sat at the top
+// level, rather than dropped from the list.
+/**
+ * @param {Task[]} items
+ * @param {string} rootID
+ * @param {(a: Task, b: Task) => number} compare
+ * @returns {Task[]}
+ */
+function sortSiblings(items, rootID, compare) {
+  const present = new Set(items.map((t) => t.id));
+  /** @type {Map<string, Task[]>} */
+  const kids = new Map();
+  for (const t of items) {
+    const parent = t.parent_id && present.has(t.parent_id) ? t.parent_id : rootID;
+    const list = kids.get(parent);
+    if (list) list.push(t);
+    else kids.set(parent, [t]);
+  }
+  /** @type {Task[]} */
+  const out = [];
+  /** @param {string} id */
+  const walk = (id) => {
+    for (const t of (kids.get(id) || []).slice().sort(compare)) {
+      out.push(t);
+      walk(t.id);
+    }
+  };
+  walk(rootID);
+  return out;
+}
+
 // A saved perspective is a stored filter the server runs, and running one
 // here would mean reimplementing it in JavaScript — which is exactly the
 // drift this UI is written to avoid. So Home lists them and says what to
@@ -881,7 +952,10 @@ function currentItems() {
     // the plan is not a record of what was considered. What is completed is
     // the toggle above the list.
     const keep = (t) => (projectDoneShown ? t.status !== 'dropped' : isOpen(t));
-    return state.tasks.filter((t) => t.id !== root.id && inSubtree(t, root.id) && keep(t));
+    const items = state.tasks.filter((t) => t.id !== root.id && inSubtree(t, root.id) && keep(t));
+    return projectOrder === 'defer' || projectOrder === 'due'
+      ? sortSiblings(items, root.id, FORECAST_SORTS[projectOrder])
+      : items;
   }
   if (view.kind === 'event') {
     // What the event is holding, the way a project lists what is in it. Only
@@ -2151,10 +2225,24 @@ function renderAbout(t) {
   });
   done.setAttribute('aria-pressed', projectDoneShown ? 'true' : 'false');
 
+  // The order beside it, as three words with the one in force marked, the
+  // way the Forecast offers its two (see `projectOrder`).
+  const orders = PROJECT_ORDERS.map((o) => {
+    const button = el('button', {
+      type: 'button',
+      className: 'about-toggle',
+      textContent: o.label,
+      onclick: () => setProjectOrder(o.key),
+    });
+    button.setAttribute('aria-pressed', projectOrder === o.key ? 'true' : 'false');
+    return button;
+  });
+
   kids.push(el('div', { className: 'about-head' }, [
     el('span', { className: 'type' }, typeIcon(t)),
     el('span', { className: 'about-kind', textContent: t.kind }),
     done,
+    el('span', { className: 'about-order', role: 'group', ariaLabel: 'Sort' }, orders),
     el('button', {
       type: 'button',
       className: 'about-open',

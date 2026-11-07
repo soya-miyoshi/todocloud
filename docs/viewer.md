@@ -21,6 +21,13 @@ knowing:
   project on it. Long titles wrap rather than being cut, and where the browser
   allows it the icon carries a badge: how many tasks are due today or are
   already late.
+- **A project can be read in date order.** The words at the top of a
+  project — *Order*, *Defer*, *Due* — choose how its rows are sorted. *Order*
+  is the project's own position order; *Defer* and *Due* sort by that date,
+  with the other date standing in where it is missing and undated rows last,
+  as the Forecast does. Sub-tasks stay under their parent and are sorted
+  among themselves. The choice applies to every project and is remembered by
+  the browser.
 - **Events are there too.** An event is something you are waiting for (a
   reply, a delivery); `tdo event` makes them. The *Events* tile, above Review,
   unfolds its list under itself like Projects: what is pending, and the ones
