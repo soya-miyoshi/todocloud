@@ -2778,8 +2778,21 @@ function renderInspector() {
   // fields then would delete whatever was typed in the meantime, so the
   // inputs are left alone while this item is being edited; the facts below
   // them, which nobody types into, are refreshed either way.
+  //
+  // "Being edited" means something typed and not yet written, though, not
+  // merely the cursor sitting in a box. A form that still says exactly what
+  // it was filled with is refilled even with the focus in it: otherwise a
+  // note rewritten elsewhere — by `tdo edit`, by an agent, on another device
+  // — stays stale on screen for as long as the box keeps the focus, and the
+  // next keystroke in it would be typed into, and saved from, the old text.
+  // A refill under the cursor is only made when the store says something the
+  // form does not, because assigning a box's value moves the caret to its
+  // end — after every save of the reader's own typing, it otherwise would.
   const sameItem = form.dataset.id === t.id;
-  if (!sameItem || !form.contains(document.activeElement)) {
+  const focused = form.contains(document.activeElement);
+  if (!sameItem || !focused) {
+    fillInspector(form, t);
+  } else if (!inspectorDirty(form, t.id) && JSON.stringify(baselineOf(t)) !== JSON.stringify(readInspector(form))) {
     fillInspector(form, t);
   }
   form.dataset.id = t.id;
@@ -2887,6 +2900,32 @@ function fillInspector(form, t) {
   grow(form.elements.title);
   grow(form.elements.note);
   showNoteLinks(form);
+  // What the form was filled with, read back the way a save reads it, is the
+  // baseline a save is measured against: see `inspectorBase`.
+  inspectorBase = { id: t.id, values: readInspector(form) };
+}
+
+// inspectorBase is what the inspector's fields said when they were last
+// filled from the store, or last written to it. A save sends only the fields
+// that differ from it, never the whole form.
+//
+// Sending the whole form is what used to happen, and it made every keystroke
+// in one box a write of all the others as they stood when the item was
+// opened: a note rewritten by `tdo edit` while the item sat open here was put
+// back to the old text the moment a tag was typed. Measuring against the
+// snapshot `t` instead would not fix that — `t` is refreshed while the form
+// is not, so a stale box would read as an edit of the newer value and be
+// sent. The baseline has to be what this form itself was showing.
+/** @type {{ id: string, values: ReturnType<typeof readInspector> } | null} */
+let inspectorBase = null;
+
+// inspectorDirty answers whether the form holds anything typed that has not
+// been written: a save waiting on its timer, or a field that no longer says
+// what the form was filled with.
+function inspectorDirty(form, id) {
+  if (saveTimer !== null) return true;
+  if (!inspectorBase || inspectorBase.id !== id) return true;
+  return JSON.stringify(readInspector(form)) !== JSON.stringify(inspectorBase.values);
 }
 
 // grow sizes a box to its contents: a note is read far more often than it is
@@ -3479,6 +3518,7 @@ function scheduleSave(delay = 700) {
 
 async function saveNow() {
   clearTimeout(saveTimer);
+  saveTimer = null;
   const form = $form('#detail');
   const t = byID.get(form.dataset.id ?? '');
   if (!t) return;
@@ -3491,9 +3531,12 @@ async function saveNow() {
   // item's title and note to `t`, the item being saved — losing the edit
   // that asked for the save and corrupting a second item with it.
   const edited = readInspector(form);
+  // The baseline is taken now, with the fields, for the same reason: by the
+  // time a queued save runs the form may have been refilled for another item.
+  const base = inspectorBase && inspectorBase.id === t.id ? inspectorBase : null;
   // One save at a time, in order: two overlapping PATCHes of the same item
   // are a race whose loser silently wins.
-  saving = saving.then(() => writeInspector(edited, t)).catch(() => {});
+  saving = saving.then(() => writeInspector(edited, base, t)).catch(() => {});
   return saving;
 }
 
@@ -3530,11 +3573,13 @@ function readInspector(form) {
 }
 
 // fieldEdit turns the rows into the `set_text` and `unset` of one PATCH: a
-// row whose text differs from what is stored is sent, a key that no longer
-// has a row is unset, and a key that was renamed is both. A row with no key
-// is one being typed and is left alone — it is not an instruction yet.
-function fieldEdit(rows, t) {
-  const before = new Map(customFields(t));
+// row whose text differs from what the form was filled with is sent, a key
+// that no longer has a row is unset, and a key that was renamed is both. A
+// row with no key is one being typed and is left alone — it is not an
+// instruction yet. `beforeRows` is the baseline's rows, not the stored
+// fields, for the reason given at `inspectorBase`.
+function fieldEdit(rows, beforeRows) {
+  const before = new Map(beforeRows.filter(([key]) => key !== ''));
   const set_text = {};
   const kept = new Set();
   for (const [key, value] of rows) {
@@ -3546,32 +3591,65 @@ function fieldEdit(rows, t) {
   return { set_text, unset };
 }
 
-async function writeInspector(edited, t) {
-  const { defer_at, due_at, status, parent_id, fields, ...edit } = edited;
-  if (!edit.title.trim()) return;        // an empty title is refused by the store
-  const { set_text, unset } = fieldEdit(fields, t);
+// baselineOf is what `fillInspector` would put in the form for `t`, in the
+// shape `readInspector` reads it back in. It stands in for `inspectorBase`
+// only when there is none for this item, which a save should never meet.
+function baselineOf(t) {
+  return {
+    title: t.title,
+    note: t.note || '',
+    tags: [...(t.tags || [])],
+    estimate: t.estimated_minutes ? `${t.estimated_minutes}m` : '0',
+    priority: t.priority || 0,
+    flagged: Boolean(t.flagged),
+    defer_at: t.defer_at ? t.defer_at.slice(0, 10) : '',
+    due_at: t.due_at ? t.due_at.slice(0, 10) : '',
+    status: t.status === 'done' ? 'active' : t.status,
+    parent_id: t.parent_id || '',
+    fields: customFields(t),
+  };
+}
+
+// writeInspector sends what the form changed since `base` and nothing else:
+// a field the reader did not touch is left out of the PATCH, which the API
+// reads as "leave it alone", so a newer value written from elsewhere
+// survives a save made from a form that was showing an older one.
+async function writeInspector(edited, base, t) {
+  const before = base ? base.values : baselineOf(t);
+  if (!edited.title.trim()) return;      // an empty title is refused by the store
+  /** @type {Record<string, unknown>} */
+  const edit = {};
+  for (const key of /** @type {const} */ (['title', 'note', 'estimate', 'priority', 'flagged'])) {
+    if (edited[key] !== before[key]) edit[key] = edited[key];
+  }
+  if (edited.tags.join('\n') !== before.tags.join('\n')) edit.tags = edited.tags;
+  const { set_text, unset } = fieldEdit(edited.fields, before.fields);
   if (Object.keys(set_text).length) edit.set_text = set_text;
   if (unset.length) edit.unset = unset;
   try {
     say('saving…');
-    await api('PATCH', `/api/tasks/${t.id}`, edit);
+    // An empty PATCH is refused as "changes nothing", and there is nothing
+    // to send when only a date, the status or the parent moved.
+    if (Object.keys(edit).length) {
+      await api('PATCH', `/api/tasks/${t.id}`, edit);
+    }
     // The dates, the status and the parent are their own operations in the
     // shared layer — completing is not a status write, and a move is not an
     // update — so the inspector sends what actually changed, in that order.
-    const dates = [
-      ['defer', defer_at, t.defer_at],
-      ['due', due_at, t.due_at],
-    ];
-    for (const [field, next, before] of dates) {
-      if (next === (before ? before.slice(0, 10) : '')) continue;
+    for (const field of /** @type {const} */ (['defer', 'due'])) {
+      const next = edited[`${field}_at`];
+      if (next === before[`${field}_at`]) continue;
       await api('POST', `/api/tasks/${t.id}/date`, { field, at: next });
     }
-    if (status !== t.status) {
-      await api('POST', `/api/tasks/${t.id}/status`, { status });
+    if (edited.status !== before.status) {
+      await api('POST', `/api/tasks/${t.id}/status`, { status: edited.status });
     }
-    if (parent_id !== (t.parent_id || '')) {
-      await api('POST', `/api/tasks/${t.id}/move`, { parent_id });
+    if (edited.parent_id !== before.parent_id) {
+      await api('POST', `/api/tasks/${t.id}/move`, { parent_id: edited.parent_id });
     }
+    // What was just written is the new baseline, so the next save made
+    // before the form is refilled does not send it a second time.
+    if (inspectorBase && inspectorBase.id === t.id) inspectorBase = { id: t.id, values: edited };
     await reload('saved');
   } catch (err) {
     say(messageOf(err), true);
@@ -4117,6 +4195,34 @@ document.addEventListener('keydown', (event) => {
 });
 
 reload().catch((err) => say(messageOf(err), true));
+
+// Coming back to the viewer asks the store again. The page otherwise only
+// learns of a change it made itself, so a note rewritten by `tdo edit`, by an
+// agent or on another device stays as it was on screen until something here
+// is written — and an inspector showing the old text is one keystroke away
+// from being the thing that is edited. Returning to the tab is the moment
+// the reader is about to look, which is when it matters, and it costs one
+// request rather than a timer polling a store nobody is reading.
+//
+// `located` is the sign a snapshot has loaded at all: the PWA boots with no
+// store and must not be asked for one before its connect form has opened it.
+// A save waiting on its timer goes first, so the refresh cannot overtake it.
+let refreshing = false;
+async function refreshOnReturn() {
+  if (!located || refreshing || document.hidden) return;
+  refreshing = true;
+  try {
+    if (saveTimer !== null) await saveNow();
+    await saving;
+    await reload();
+  } catch (err) {
+    say(messageOf(err), true);
+  } finally {
+    refreshing = false;
+  }
+}
+document.addEventListener('visibilitychange', () => { refreshOnReturn(); });
+window.addEventListener('focus', () => { refreshOnReturn(); });
 
 // The permission the badge needs, asked for only when it is tapped: a
 // prompt nobody asked for is the thing that gets a permission denied
