@@ -292,8 +292,7 @@
             </select>
           </label>
           <label>Parent
-            <input id="inspector-parent-search" type="search" placeholder="Search projects and tasks" autocomplete="off">
-            <select name="parent_id"></select>
+            <span class="combo"><input id="inspector-parent-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="inspector-parent-list" placeholder="Type to search" autocomplete="off" spellcheck="false"><ul id="inspector-parent-list" class="combo-list" role="listbox" hidden></ul><select name="parent_id" hidden></select></span>
           </label>
         </div>
         <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
@@ -407,8 +406,7 @@
       <!-- A task goes in a project, a project in a folder: app.js writes
            both the word and the choices when it opens the form. -->
       <label><span id="capture-parent-label">Project</span>
-        <input id="capture-parent-search" type="search" placeholder="Search" autocomplete="off">
-        <select name="parent_id"></select></label>
+        <span class="combo"><input id="capture-parent-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="capture-parent-list" placeholder="Type to search" autocomplete="off" spellcheck="false"><ul id="capture-parent-list" class="combo-list" role="listbox" hidden></ul><select name="parent_id" hidden></select></span></label>
       <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
       <p class="hint" id="capture-note"></p>
     </div>

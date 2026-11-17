@@ -2219,8 +2219,11 @@ function renderAbout(t) {
   // Forecast's own segmented words.
   const done = el('button', {
     type: 'button',
-    className: 'about-toggle',
-    textContent: projectDoneShown ? 'Completed: shown' : 'Completed: hidden',
+    // A check box like the Forecast's: the word names what it adds, and the
+    // box says whether it is in. "Completed: hidden" was a state written
+    // out as a label, in the same pill as the sort beside it.
+    className: 'about-toggle toggle',
+    textContent: 'Completed',
     onclick: toggleProjectDone,
   });
   done.setAttribute('aria-pressed', projectDoneShown ? 'true' : 'false');
@@ -2242,7 +2245,8 @@ function renderAbout(t) {
     el('span', { className: 'type' }, typeIcon(t)),
     el('span', { className: 'about-kind', textContent: t.kind }),
     done,
-    el('span', { className: 'about-order', role: 'group', ariaLabel: 'Sort' }, orders),
+    el('span', { className: 'about-order', role: 'group', ariaLabel: 'Sort' },
+      [el('span', { className: 'about-sort', textContent: 'Sort' }), ...orders]),
     el('button', {
       type: 'button',
       className: 'about-open',
@@ -2369,7 +2373,7 @@ function renderList() {
  * @param {() => void} onclick
  */
 function weekToggle(label, on, onclick) {
-  const button = el('button', { type: 'button', className: 'seg small', textContent: label, onclick });
+  const button = el('button', { type: 'button', className: 'seg small toggle', textContent: label, onclick });
   button.setAttribute('aria-pressed', on ? 'true' : 'false');
   return button;
 }
@@ -2892,10 +2896,9 @@ function fillInspector(form, t) {
   // rules of §3.1 are a shape on screen rather than an error after a save.
   const parents = state.tasks.filter((p) =>
     p.id !== t.id && isOpen(p) && !inSubtree(p, t.id) && canContain(p.kind, t.kind));
-  // Seeded with the current parent alone, so fillParents keeps it chosen.
-  form.elements.parent_id.replaceChildren(el('option', { value: t.parent_id || '' }));
-  fillParents(form.elements.parent_id, $input('#inspector-parent-search'), parents,
-    t.kind === 'task' ? '(inbox)' : '(top level)');
+  fillParents(form.elements.parent_id, $input('#inspector-parent-search'),
+    $('#inspector-parent-list'), parents, t.kind === 'task' ? '(inbox)' : '(top level)',
+    t.parent_id || '');
   renderFields(t);
   grow(form.elements.title);
   grow(form.elements.note);
@@ -3016,41 +3019,115 @@ function showNoteLinks(form) {
 // canContain mirrors task.Kind.CanContain: a folder holds folders and
 // projects, a project holds tasks, a task holds tasks.
 /**
- * fillParents writes the choices of a parent menu, grouped by kind so a
- * project is not lost among a hundred tasks, and wires the search box beside
- * it to narrow them. The current value is always kept as a choice, so typing
- * a query never silently moves the item somewhere else.
+ * fillParents turns the parent field into a combobox: one text box that
+ * lists the matching projects, folders and tasks under it as you type, the
+ * way an address bar or a mail client's To field does. The hidden `<select>`
+ * stays the field the form reads and saves, so nothing downstream changes;
+ * the box only ever writes it by a choice — a click, or Enter on the
+ * highlighted row — and then fires `change` so the inspector saves it.
+ * Leaving the box without choosing puts the current parent's name back, so a
+ * half-typed query never moves the item anywhere.
  *
- * @param {HTMLSelectElement} select
- * @param {HTMLInputElement} search
+ * @param {HTMLSelectElement} select the field the form submits
+ * @param {HTMLInputElement} search the text box the user types into
+ * @param {HTMLElement} list the popup the matches are drawn in
  * @param {any[]} parents the containers that may be chosen
  * @param {string} empty the label of the no-parent choice
+ * @param {string} current the id chosen now, or '' for none
  */
-function fillParents(select, search, parents, empty) {
-  const groups = [['project', 'Projects'], ['folder', 'Folders'], ['task', 'Tasks']];
-  const render = () => {
-    const q = search.value.trim().toLowerCase();
-    const keep = select.value;
-    const shown = parents.filter((p) => p.id === keep || !q
-      || String(p.title).toLowerCase().includes(q));
-    select.replaceChildren(
-      el('option', { value: '', textContent: empty }),
-      ...groups
-        .map(([kind, label]) => [label, shown.filter((p) => p.kind === kind)])
-        .filter(([, list]) => list.length)
-        .map(([label, list]) => el('optgroup', { label },
-          /** @type {any[]} */ (list).map((p) =>
-            el('option', { value: p.id, textContent: p.title })))));
-    // Typing only narrows the menu; a choice is still made in the menu, so a
-    // keystroke never moves the item on its own.
-    select.value = keep;
+function fillParents(select, search, list, parents, empty, current) {
+  const groups = [['project', 'Project'], ['folder', 'Folder'], ['task', 'Task']];
+  // The select holds every choice so that `.value` can be any of them.
+  select.replaceChildren(
+    el('option', { value: '', textContent: empty }),
+    ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
+  select.value = parents.some((p) => p.id === current) ? current : '';
+  const nameOf = (id) => (id ? parents.find((p) => p.id === id)?.title ?? '' : '');
+  /** @type {{id: string, title: string, kind: string}[]} */
+  let rows = [];
+  let active = -1;
+
+  const close = () => {
+    list.hidden = true;
+    search.setAttribute('aria-expanded', 'false');
+    search.removeAttribute('aria-activedescendant');
   };
-  search.value = '';
-  search.oninput = render;
-  // Enter in the box would submit the form, and in the capture dialog that
-  // adds the task before a parent has been picked.
-  search.onkeydown = (e) => { if (e.key === 'Enter') e.preventDefault(); };
-  render();
+  const highlight = (i) => {
+    active = i;
+    list.querySelectorAll('[role="option"]').forEach((node, n) => {
+      node.setAttribute('aria-selected', n === i ? 'true' : 'false');
+      if (n === i) {
+        search.setAttribute('aria-activedescendant', node.id);
+        node.scrollIntoView({ block: 'nearest' });
+      }
+    });
+  };
+  const choose = (id) => {
+    select.value = id;
+    search.value = nameOf(id);
+    close();
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  const open = () => {
+    const q = search.value.trim().toLowerCase();
+    // The box still showing the current parent's name is not a query: focus
+    // lists everything, so the other choices are one look away.
+    const query = q && q !== nameOf(select.value).toLowerCase() ? q : '';
+    const words = query.split(/\s+/).filter(Boolean);
+    const hits = parents.filter((p) =>
+      words.every((w) => String(p.title).toLowerCase().includes(w)));
+    // Projects before folders before tasks: a project is what is usually
+    // being looked for, and it should not be lost among a hundred tasks.
+    hits.sort((a, b) => groups.findIndex(([k]) => k === a.kind) - groups.findIndex(([k]) => k === b.kind));
+    rows = [...(query ? [] : [{ id: '', title: empty, kind: '' }]), ...hits];
+    list.replaceChildren(...(rows.length ? rows.map((p, i) => {
+      const label = groups.find(([k]) => k === p.kind)?.[1];
+      const row = el('li', {
+        id: `${list.id}-${i}`,
+        className: p.id === select.value ? 'combo-row current' : 'combo-row',
+      }, [el('span', { className: 'combo-title', textContent: p.title || '(untitled)' })]);
+      if (label) row.append(el('span', { className: 'combo-kind', textContent: label }));
+      row.setAttribute('role', 'option');
+      // mousedown, not click: a click lands after the box's blur has closed
+      // the list, and preventing it keeps the focus in the box.
+      row.onmousedown = (e) => { e.preventDefault(); choose(p.id); };
+      return row;
+    }) : [el('li', { className: 'combo-none', textContent: 'No match' })]));
+    list.hidden = false;
+    search.setAttribute('aria-expanded', 'true');
+    highlight(query && rows.length ? 0 : -1);
+  };
+
+  search.value = nameOf(select.value);
+  search.placeholder = empty;
+  search.onfocus = () => { search.select(); open(); };
+  search.oninput = open;
+  // A click on a box that already has the focus — after a choice closed the
+  // list — opens it again, as any combobox does; focus alone would not.
+  search.onclick = () => { if (list.hidden) open(); };
+  search.onblur = () => { search.value = nameOf(select.value); close(); };
+  search.onkeydown = (e) => {
+    if (e.isComposing) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (list.hidden) { open(); return; }
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      highlight(Math.max(0, Math.min(rows.length - 1, active + step)));
+    } else if (e.key === 'Enter') {
+      // Never submits: in the capture dialog that would add the task before
+      // a parent has been picked.
+      e.preventDefault();
+      const row = rows[active];
+      if (!list.hidden && row) choose(row.id);
+    } else if (e.key === 'Escape' && !list.hidden) {
+      // Closes the list, not the dialog around it.
+      e.preventDefault();
+      e.stopPropagation();
+      search.value = nameOf(select.value);
+      close();
+    }
+  };
+  close();
 }
 
 function canContain(parent, child) {
@@ -3385,15 +3462,13 @@ function openCapture(kind = 'task') {
   // the tree rules of §3.1 are a shape on screen rather than an error after
   // a save.
   const parents = state.tasks.filter((p) => isOpen(p) && canContain(p.kind, capturing));
-  form.elements.parent_id.replaceChildren(el('option', { value: '' }));
-  fillParents(form.elements.parent_id, $input('#capture-parent-search'), parents, spec.empty);
-
   // Captured where you are standing: inside a project it goes there, and on
   // a day of the Forecast it is due that day. Both are what the screen was
   // already saying, and both can be changed before Add is pressed.
-  if (view.kind === 'project' && canContain(byID.get(view.key)?.kind || '', capturing)) {
-    form.elements.parent_id.value = view.key;
-  }
+  const here = view.kind === 'project' && canContain(byID.get(view.key)?.kind || '', capturing)
+    ? view.key : '';
+  fillParents(form.elements.parent_id, $input('#capture-parent-search'),
+    $('#capture-parent-list'), parents, spec.empty, here);
   const cell = capturing === 'task' && view.kind === 'due' && view.key !== 'all'
     ? forecastCell(view.key)
     : undefined;
@@ -3693,7 +3768,17 @@ async function writeInspector(edited, base, t) {
   }
 }
 
+// The parent menu's search box lives inside the form so it sits beside the
+// menu, but it is a filter, not a field: a keystroke in it narrows the menu
+// and nothing more. Letting it reach the save handlers would queue a save on
+// every letter, and the reload that follows refills the inspector and clears
+// the box — so the menu never stays narrowed and typing looks like it does
+// nothing. These handlers ignore it; `readInspector` never reads it either,
+// since it has no `name`.
+const isParentSearch = (event) => nodeOf(event).id === 'inspector-parent-search';
+
 $form('#detail').oninput = (event) => {
+  if (isParentSearch(event)) return;
   if (nodeOf(event).tagName === 'TEXTAREA') grow(nodeOf(event));
   if (/** @type {HTMLTextAreaElement} */ (nodeOf(event)).name === 'note') showNoteLinks($form('#detail'));
   scheduleSave();
@@ -3712,12 +3797,12 @@ $form('#detail').addEventListener('keydown', (event) => {
 
 // A menu, a checkbox or a date is finished the moment it changes, and a
 // date picker never fires `input` on every platform anyway.
-$form('#detail').onchange = () => saveNow();
+$form('#detail').onchange = (event) => { if (!isParentSearch(event)) saveNow(); };
 
 // Leaving a field commits it rather than waiting out the timer, and so does
 // Enter in a single-line field — which must not submit the form, since the
 // form has no submit left to do.
-$form('#detail').addEventListener('focusout', () => saveNow());
+$form('#detail').addEventListener('focusout', (event) => { if (!isParentSearch(event)) saveNow(); });
 
 // An event is saved when a field is left, not on every key: it has four
 // fields and none of them is typed into at the speed a task's title is.

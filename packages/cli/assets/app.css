@@ -26,6 +26,7 @@
   --faint: #a9a7b0;
   --accent: #7a4fd4;      /* OmniFocus is purple; so is this */
   --select: #ece6fb;
+  --on-accent: #ffffff;   /* text on an accent fill */
   /* A tag pill. Its own token rather than `--bg`, which is the colour
      behind the panes: in the dark palette that is near black, and a pill
      painted with it read as a hole punched in the row. */
@@ -66,6 +67,9 @@
     --faint: #8b8b93;
     --accent: #b08cf5;
     --select: #33264d;
+    /* The dark accent is light enough that white on it is ~2.6:1; the
+       panel's own near-black reads on it at well over 4.5:1. */
+    --on-accent: #1c1033;
     --chip: #3a3a3c;
     --salmon: #ff7b70;
     --slate: #8795a9;
@@ -93,6 +97,9 @@
     --faint: #8b8b93;
     --accent: #b08cf5;
     --select: #33264d;
+    /* The dark accent is light enough that white on it is ~2.6:1; the
+       panel's own near-black reads on it at well over 4.5:1. */
+    --on-accent: #1c1033;
     --chip: #3a3a3c;
     --salmon: #ff7b70;
     --slate: #8795a9;
@@ -114,6 +121,7 @@
     --faint: #a9a7b0;
     --accent: #7a4fd4;
     --select: #ece6fb;
+  --on-accent: #ffffff;   /* text on an accent fill */
     --chip: #efeef3;
     --salmon: #ff6a5e;
     --slate: #6b7a90;
@@ -346,6 +354,9 @@ button.back {
 button.back .chevron { font-size: 24px; line-height: 0.8; }
 
 input, textarea, select, button { font: inherit; color: inherit; }
+/* Check boxes and radios in the app's purple rather than the OS blue,
+   which was the one blue control on every screen. */
+:root { accent-color: var(--accent); }
 
 input, textarea, select {
   background: var(--raised);
@@ -638,7 +649,8 @@ input, textarea, select {
 }
 .about-toggle[aria-pressed="true"] { background: var(--select); color: var(--accent); }
 /* The project's sort words sit together as one group. */
-.about-order { display: inline-flex; gap: 2px; }
+.about-order { display: inline-flex; align-items: center; gap: 2px; }
+.about-sort { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); padding-right: 4px; }
 /* Pushed to the far end, where the inspector is. */
 .about-open { margin-left: auto; border: 0; background: none; padding: 2px 0; font-size: 12px; color: var(--accent); cursor: pointer; }
 .about-note { font-size: 14px; color: var(--ink); white-space: pre-wrap; overflow-wrap: break-word; }
@@ -759,7 +771,7 @@ input, textarea, select {
   .circle { position: relative; }
   .circle::before { content: ''; position: absolute; inset: -12px; border-radius: 50%; }
 }
-.circle.done { border-color: var(--accent); background: var(--accent); color: #fff; }
+.circle.done { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
 .circle.done::after { content: '\2713'; }
 .circle.repeating { color: var(--faint); }
 .circle.repeating::after { content: '\22ef'; }
@@ -866,7 +878,21 @@ input, textarea, select {
    cell in the same colour for anyone who reads the shape of the week before
    they read its numbers. */
 .week .day.late .n { color: var(--over); font-weight: 700; }
-.week .day.late { box-shadow: inset 0 -2px 0 var(--over); }
+.week .day.late { position: relative; }
+/* A short bar centred under the count, not a full-width inset rule: on a
+   rounded cell the rule curved up at both ends into a red smile. */
+.week .day.late::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 18px;
+  height: 2px;
+  margin-left: -9px;
+  border-radius: 1px;
+  background: var(--over);
+}
+.week .day.late[aria-current="true"]::after { display: none; }
 /* The day being read. A tile rather than an underline because on a phone
    this row is the navigation, and the thing that says where you are has to
    survive being looked at through a thumb — but a light one: a thin ring
@@ -879,7 +905,6 @@ input, textarea, select {
 /* Selected and late: the ring alone. The red rule under it met the accent
    ring at the corners and the two read as one pinkish outline that was
    neither; the red count in the cell still says late. */
-.week .day.late[aria-current="true"] { box-shadow: inset 0 0 0 1px var(--accent); }
 .week .day[aria-current="true"] .when,
 .week .day[aria-current="true"] .date { color: var(--accent); font-weight: 600; }
 
@@ -911,6 +936,26 @@ input, textarea, select {
    6px apart, which put them off one baseline. They are one control size
    now; `.small` is kept on the markup for what it says, not for a size. */
 .weekbar .seg[aria-pressed="true"] { background: var(--select); color: var(--accent); font-weight: 600; }
+/* Completed and Blocked are switches for what the list includes, not tabs
+   like All or choices like the sort: lit the same way, a lit Blocked read as
+   "showing only blocked tasks". A check box says include, and leaves the
+   fill to the controls that pick one thing. */
+.weekbar .seg.toggle, .about-toggle.toggle { display: inline-flex; align-items: center; gap: 5px; }
+.weekbar .seg.toggle::before, .about-toggle.toggle::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--faint);
+  border-radius: 3px;
+}
+.weekbar .seg.toggle[aria-pressed="true"], .about-toggle.toggle[aria-pressed="true"] { background: none; color: var(--ink); font-weight: 400; }
+.weekbar .seg.toggle[aria-pressed="true"]::before, .about-toggle.toggle[aria-pressed="true"]::before {
+  border-color: var(--accent);
+  background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.2 2.2 4.8-4.8' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 10px no-repeat;
+}
+/* Between the tab and the switches: they answer different questions. */
+.weekbar .seg:not(.toggle) + .seg.toggle { margin-left: 8px; }
 
 /* The fold at the end of the Forecast. A row like any other, so that the
    list ends in the list rather than in a control stuck below it. */
@@ -1037,7 +1082,7 @@ input, textarea, select {
   border: 0;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 28px;
   line-height: 1;
   display: grid;
@@ -1155,7 +1200,7 @@ kbd { border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 3p
   }
 }
 #inspector .actions #complete,
-#inspector .actions #event-occurred { background: var(--accent); border-color: var(--accent); color: #fff; }
+#inspector .actions #event-occurred { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 /* The note and the title grow with what is in them — app.js sets the height
    on every keystroke — so they need no scrollbar of their own. The floor is
@@ -1537,7 +1582,7 @@ dialog .dialog-body label:not(.check) :is(input, select, textarea) { font-size: 
 }
 #perspective-form .actions #perspective-save,
 #capture-form .actions #capture-save,
-#event-new-form .actions #event-new-save { background: var(--accent); border-color: var(--accent); color: #fff; }
+#event-new-form .actions #event-new-save { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 /* Delete sits at the far end, away from Save: the two are one tap apart and
    only one of them can be undone by typing it again. */
 #perspective-form .actions #perspective-delete { margin-left: auto; }
@@ -1708,3 +1753,70 @@ button.wait-title:hover { color: var(--accent); }
 .event-waiting .none { color: var(--dim); font-size: 13px; }
 .event-waiting .linklike { text-align: left; border: 0; background: none; color: var(--accent); padding: 4px 0; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
 .event-waiting .linklike:hover { text-decoration: underline; }
+
+/* --- The parent combobox ------------------------------------------------
+
+   One text box with its matches listed under it as you type, the way an
+   address bar does — not a search box beside a menu, which asked for the
+   query in one control and the choice in another. The popup is drawn over
+   what follows rather than pushing it down, and is anchored to the box's
+   right edge with a minimum width, because Parent is the right half of a
+   pair and half a phone is too narrow to read a project's name in. */
+.combo { position: relative; display: block; }
+.combo-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  width: max(100%, 260px);
+  max-width: min(360px, calc(100vw - 32px));
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
+  /* The popup sits inside an uppercase label; its rows are not headings. */
+  font-size: 15px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+.combo-list[hidden] { display: none; }
+.combo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.combo-row:hover, .combo-row[aria-selected="true"] { background: var(--select); }
+.combo-row.current .combo-title { color: var(--accent); font-weight: 600; }
+.combo-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combo-kind { flex: none; font-size: 11px; color: var(--dim); }
+.combo-none { padding: 8px 10px; color: var(--dim); }
+
+/* A check box that carries its own menu (Due within [today]) centres the
+   two on one line; top-aligned, the label sat above the menu's text. */
+#prefs-form label.check:has(select) { align-items: center; }
+#prefs-form label.check:has(select) input { margin-top: 0; }
+
+/* On a phone the inspector is the whole screen, and the add button floated
+   over its last fields and its Complete bar. Adding is what the list is for;
+   Back is one tap away. */
+@media (max-width: 859px) {
+  body[data-pane="inspector"] #fab-wrap { display: none; }
+}
+
+/* On a phone the project's head is one line only without its kind word,
+   which the title bar above already answers; wrapped, the sort fell to a
+   second line hung out past the rows' left edge by the head's own indent. */
+@media (max-width: 559px) {
+  .about-kind { display: none; }
+}
