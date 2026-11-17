@@ -2892,10 +2892,10 @@ function fillInspector(form, t) {
   // rules of §3.1 are a shape on screen rather than an error after a save.
   const parents = state.tasks.filter((p) =>
     p.id !== t.id && isOpen(p) && !inSubtree(p, t.id) && canContain(p.kind, t.kind));
-  form.elements.parent_id.replaceChildren(
-    el('option', { value: '', textContent: t.kind === 'task' ? '(inbox)' : '(top level)' }),
-    ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
-  form.elements.parent_id.value = t.parent_id || '';
+  // Seeded with the current parent alone, so fillParents keeps it chosen.
+  form.elements.parent_id.replaceChildren(el('option', { value: t.parent_id || '' }));
+  fillParents(form.elements.parent_id, $input('#inspector-parent-search'), parents,
+    t.kind === 'task' ? '(inbox)' : '(top level)');
   renderFields(t);
   grow(form.elements.title);
   grow(form.elements.note);
@@ -3015,6 +3015,44 @@ function showNoteLinks(form) {
 
 // canContain mirrors task.Kind.CanContain: a folder holds folders and
 // projects, a project holds tasks, a task holds tasks.
+/**
+ * fillParents writes the choices of a parent menu, grouped by kind so a
+ * project is not lost among a hundred tasks, and wires the search box beside
+ * it to narrow them. The current value is always kept as a choice, so typing
+ * a query never silently moves the item somewhere else.
+ *
+ * @param {HTMLSelectElement} select
+ * @param {HTMLInputElement} search
+ * @param {any[]} parents the containers that may be chosen
+ * @param {string} empty the label of the no-parent choice
+ */
+function fillParents(select, search, parents, empty) {
+  const groups = [['project', 'Projects'], ['folder', 'Folders'], ['task', 'Tasks']];
+  const render = () => {
+    const q = search.value.trim().toLowerCase();
+    const keep = select.value;
+    const shown = parents.filter((p) => p.id === keep || !q
+      || String(p.title).toLowerCase().includes(q));
+    select.replaceChildren(
+      el('option', { value: '', textContent: empty }),
+      ...groups
+        .map(([kind, label]) => [label, shown.filter((p) => p.kind === kind)])
+        .filter(([, list]) => list.length)
+        .map(([label, list]) => el('optgroup', { label },
+          /** @type {any[]} */ (list).map((p) =>
+            el('option', { value: p.id, textContent: p.title })))));
+    // Typing only narrows the menu; a choice is still made in the menu, so a
+    // keystroke never moves the item on its own.
+    select.value = keep;
+  };
+  search.value = '';
+  search.oninput = render;
+  // Enter in the box would submit the form, and in the capture dialog that
+  // adds the task before a parent has been picked.
+  search.onkeydown = (e) => { if (e.key === 'Enter') e.preventDefault(); };
+  render();
+}
+
 function canContain(parent, child) {
   if (parent === 'folder') return child === 'folder' || child === 'project';
   return child === 'task';
@@ -3347,9 +3385,8 @@ function openCapture(kind = 'task') {
   // the tree rules of §3.1 are a shape on screen rather than an error after
   // a save.
   const parents = state.tasks.filter((p) => isOpen(p) && canContain(p.kind, capturing));
-  form.elements.parent_id.replaceChildren(
-    el('option', { value: '', textContent: spec.empty }),
-    ...parents.map((p) => el('option', { value: p.id, textContent: p.title })));
+  form.elements.parent_id.replaceChildren(el('option', { value: '' }));
+  fillParents(form.elements.parent_id, $input('#capture-parent-search'), parents, spec.empty);
 
   // Captured where you are standing: inside a project it goes there, and on
   // a day of the Forecast it is due that day. Both are what the screen was

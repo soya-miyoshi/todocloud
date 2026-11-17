@@ -292,6 +292,7 @@
             </select>
           </label>
           <label>Parent
+            <input id="inspector-parent-search" type="search" placeholder="Search projects and tasks" autocomplete="off">
             <select name="parent_id"></select>
           </label>
         </div>
@@ -405,7 +406,9 @@
 
       <!-- A task goes in a project, a project in a folder: app.js writes
            both the word and the choices when it opens the form. -->
-      <label><span id="capture-parent-label">Project</span> <select name="parent_id"></select></label>
+      <label><span id="capture-parent-label">Project</span>
+        <input id="capture-parent-search" type="search" placeholder="Search" autocomplete="off">
+        <select name="parent_id"></select></label>
       <label class="check"><input name="flagged" type="checkbox"> Flagged</label>
       <p class="hint" id="capture-note"></p>
     </div>
